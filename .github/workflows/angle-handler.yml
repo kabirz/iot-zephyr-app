@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     tags:
-      - "v*.angle"
+      - "v*-angle-handler"
     paths:
       - applications/angle-handler/**
       - boards/nrf24_f103rct6/**
