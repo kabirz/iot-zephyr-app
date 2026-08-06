@@ -194,23 +194,43 @@ zip，命名为 **`<release_zip>`**（即 `<display_name>-v<version>.zip`，如 
   保持 `app.bin` 不变。
 - **打包时把 `app.bin` 改名为 `update.bin` 写入 zip**（OTA 升级镜像统一叫 update.bin）；
   `full_output.hex` 保持原名。
-- **`版本历史.txt` 由 CHANGELOG.md 转成纯文本得到**（去掉 markdown 标记），包含该 app 的
-  **全部历史记录**（不止本次版本）。转换规则：
-  - 一级标题 `# 手柄 变更记录` → 纯文本大标题（可保留文字、去掉 `#`，下加一行 `=` 或空行）。
-  - 二级标题 `## v1.0.1（2026-08-06）` → 去掉 `##`，文字保留，下加一行 `-` 分隔。
-  - 三级标题 `### 自 ... 以来的改动` → 去掉 `###`，文字保留。
-  - 行内反引号 `` `code` `` → 去掉反引号，保留里面的文字。
-  - 无序列表 `- xxx` → 保留 `- xxx`（`-` 在纯文本里也读得通）。
-  - 其余文本原样保留。务必用 UTF-8 编码写入。
+- **`版本历史.txt` 面向最终用户**，由 CHANGELOG.md 生成，包含该 app 的**全部历史记录**
+  （不止本次版本）。但**不是机械去 markdown 标记**——要在转换时**把每条改动改写成
+  面向用户的语言**。CHANGELOG.md 是给开发者看的（可含文件路径、代码、变量名、commit
+  SHA），版本历史.txt 是给刷固件的最终用户看的，两者内容不同。改写规则：
+  - **只讲硬件、逻辑、参数的改动**：例如把"RF24_SLEEP_MS 从 60 改成 50"写成"无线模块
+    采样间隔由 60ms 缩短为 50ms"；把"MCUboot 签名密钥路径改为 `${APP_DIR}/boards/${BOARD}.pem`"
+    写成"修了按板子名加载签名密钥的配置问题"或干脆省略（用户不关心构建配置）。
+  - **去掉一切代码/技术细节**：不得出现文件路径（如 `src/adc.c`）、变量名
+    （如 `RF24_SLEEP_MS`）、配置项（如 `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE`）、
+    代码片段、commit SHA、反引号。
+  - **省略对用户无感知的改动**：纯构建/打包/重构/文档类改动（如签名密钥路径调整、
+    提交 changelog 本身）一般对固件行为无影响，可以**整条省略**，不要硬翻译成用户语言。
+  - **去掉元信息行**：不要写"发布标签 / 发布提交 / 提交时间"三行——用户不需要 git
+    概念。每个版本小节只保留版本号标题（含日期）和改动列表。
+  - markdown 结构转纯文本的规则：一级标题 `# 手柄 变更记录` → 去掉 `#`，下加一行 `=`；
+    二级标题 `## v1.0.1（2026-08-06）` → 去掉 `##`，下加一行 `-`；三级标题
+    `### 自 ... 以来的改动` → **整个小节标题连同"发布标签/发布提交/提交时间"三行
+    一并删除**，直接进入改动列表；无序列表 `- xxx` → 保留 `- xxx`。
+  - 务必用 UTF-8 编码写入。
+  - 若某版本改写后**没有任何对用户可见的改动**（全是构建/文档类），改动列表写
+    `（本版本无面向用户的功能改动）`，不要留空，也不要把技术细节塞进去。
 - 解压后得到三个文件、不带任何目录层级：`full_output.hex`、`update.bin`、`版本历史.txt`。
 - 可用 Python 标准库完成，无需额外依赖，例如：
 
+  注意：**改动条目的改写是语义操作，必须由 agent 逐条完成**（agent 读 CHANGELOG.md
+  里某版本的每条改动，判断它对用户是否可见、如何用用户语言表述，省略纯构建/文档类），
+  不能靠正则自动完成。下面脚本只负责**结构裁剪**（删元信息行、删三级小节标题、把
+  markdown 标题转纯文本分隔线）。agent 先把改写后的用户语言条目拼成下面的
+  `history_md`（只含一级标题、各版本二级标题、`- 改动描述` 列表，**不含**三级小节标题
+  和元信息三行），再交给脚本：
+
   ```python
-  import re
   import zipfile
   from pathlib import Path
 
   def md_to_txt(md: str) -> str:
+      """history_md 只含一级标题、版本二级标题、改动列表，无元信息行/三级小节标题。"""
       lines = md.splitlines()
       out = []
       for ln in lines:
@@ -221,22 +241,25 @@ zip，命名为 **`<release_zip>`**（即 `<display_name>-v<version>.zip`，如 
               out.append("")
               out.append(ln[3:].strip())
               out.append("-" * max(len(out[-1]), 3))
-          elif ln.startswith("### "):
-              out.append("")
-              out.append(ln[4:].strip())
           else:
-              # 去掉行内反引号
-              out.append(re.sub(r"`([^`]*)`", r"\1", ln))
+              out.append(ln)   # 改动列表行已在 agent 侧改写为用户语言，原样保留
       return "\n".join(out).strip() + "\n"
 
+  # agent 逐条改写后拼出的、面向用户的版本历史（markdown 结构）。
+  # 例：
+  #   # 手柄 变更记录
+  #   ## v1.0.1（2026-08-06）
+  #   - 首个正式版本：摇杆/按键/无线/OLED 显示全功能上线
+  #   - 无线模块采样间隔由 60ms 缩短为 50ms
+  history_md = """<agent 改写后的 markdown 版本历史>"""
+
   images = Path("build/output/images")
-  changelog = Path("<app_path>/CHANGELOG.md")
   out = Path("<release_zip>")   # 如 "手柄-v1.0.1.zip"
-  history_txt = md_to_txt(changelog.read_text(encoding="utf-8"))
+  history_txt = md_to_txt(history_md)
   with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
       z.write(images / "full_output.hex", "full_output.hex")
       z.write(images / "app.bin", "update.bin")          # 改名为 update.bin
-      z.writestr("版本历史.txt", history_txt.encode("utf-8"))  # 全部历史，纯文本
+      z.writestr("版本历史.txt", history_txt.encode("utf-8"))
   ```
 
 - 失败则报告并停下。
