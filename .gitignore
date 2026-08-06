@@ -1,0 +1,19 @@
+# Build output
+build/
+out*
+
+# Generated / caches
+.cache/
+compile_commands.json
+*.raw
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Kconfig saved configs / local state
+.config
+.sisyphus

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# n2e-gw application configuration
+
+mainmenu "n2e-gw"
+
+source "Kconfig.zephyr"
+
+config N2E_GW_RF24_RX_STACK
+	int "RF24 RX thread stack size"
+	default 1024
+
+config N2E_GW_RF24_RX_PRIORITY
+	int "RF24 RX thread priority"
+	default 8
+
+config N2E_GW_DATA_RX_STACK
+	int "UDP data RX thread stack size"
+	default 1024
+
+config N2E_GW_DATA_RX_PRIORITY
+	int "UDP data RX thread priority"
+	default 10
+
+config N2E_GW_UDP_INIT_PRIORITY
+	int "UDP app handler init priority (must run before udp_fw_upgrade lib)"
+	default 80

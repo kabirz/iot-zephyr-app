@@ -1,0 +1,19 @@
+identifier: nrf24_f103rct6
+name: nrf24 F103RCT6 Board
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+ram: 48
+flash: 256
+supported:
+  - can
+  - gpio
+  - i2c
+  - spi
+  - pwm
+  - watchdog
+  - adc
+  - counter
+  - usbd
+vendor: st

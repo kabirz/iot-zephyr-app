@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# angle-handler application configuration
+
+mainmenu "angle-handler"
+
+source "Kconfig.zephyr"
+
+config ANGLE_HANDLER_ROW0_ASCII
+	bool "Row 0 uses ASCII text instead of icons for connection type"
+	default y
+	help
+	  Display "LoRa"/"CAN" text in Row 0 instead of bitmap icons.
+
+config ANGLE_HANDLER_SCANNER_8X16
+	bool "Use 8x16 font for scanner data rows"
+	default y
+	help
+	  Use 8x16 font for overbreak/distance/coordinate display rows.
+	  Disable to use 5x8 compact font.
+
+config ANGLE_HANDLER_SHOW_XYZ
+	bool "Show XYZ coordinate rows on display"
+	default n
+	help
+	  Display X/Y/Z coordinate rows (Row 2-3). Disable to show only
+	  overbreak and laser distance.

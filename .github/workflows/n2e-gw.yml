@@ -1,0 +1,87 @@
+name: n2e-gw
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - "v*.gw"
+    paths:
+      - applications/n2e-gw/**
+      - boards/nrf24_f103rct6/**
+      - libs/**
+      - drivers/**
+      - dts/**
+      - zephyr/**
+      - west.yml
+      - .github/workflows/n2e-gw.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build-and-release:
+    name: Build zephyr image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          path: workspace/apps
+
+      - name: Setup Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: 3.12
+
+      - name: Setup Zephyr
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          base-path: workspace
+          app-path: apps
+          toolchains: arm-zephyr-eabi
+          manifest-file-name: west.yml
+
+      - name: Build Firmware
+        working-directory: workspace
+        shell: bash
+        run: |
+          set -e
+          west build -b nrf24_f103rct6 apps/applications/n2e-gw --sysbuild
+          west archive --no-rebuild -o n2e-gw
+          echo "IMAGE_ZIP=n2e-gw.zip" >> $GITHUB_ENV
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: n2e-gw
+          path: workspace/build/output
+
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3.0.0
+        id: release
+        with:
+          name: n2e-gw ${{ github.ref_name }}
+          files: workspace/build/${{ env.IMAGE_ZIP }}
+
+      - name: Send Email
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: dawidd6/action-send-mail@v17
+        with:
+          server_address: smtp.126.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: Github Release zephyr APP ${{ github.ref_name }}
+          body: |
+            zephyr app Release: ${{ steps.release.outputs.url }}
+
+            - Repository: ${{ github.repository }}
+            - Workflow: ${{ github.workflow }}
+
+          to: ${{ secrets.TOLISTS }}
+          from: ${{ secrets.MAIL_USERNAME }}
+          attachments: workspace/build/${{ env.IMAGE_ZIP }}

@@ -1,0 +1,6 @@
+board:
+  name: nrf24_f103rct6
+  full_name: nrf24 f103rct6
+  vendor: st
+  socs:
+    - name: stm32f103xe

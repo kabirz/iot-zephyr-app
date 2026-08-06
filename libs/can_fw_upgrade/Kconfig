@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config CAN_FW_UPGRADE
+	bool "CAN firmware upgrade support"
+	default n
+	depends on FLASH && IMG_MANAGER
+	help
+	  Enable CAN-based firmware upgrade functionality.
+	  The library is self-contained: it initializes the CAN controller,
+	  owns the RX thread, handles firmware-upgrade frames (0x101/0x103)
+	  internally, and forwards all other frames to an application-
+	  registered callback. Apps only call can_fw_init() once and register
+	  a business-frame callback.
+
+config CAN_FW_UPGRADE_RX_STACK_SIZE
+	int "CAN FW upgrade RX thread stack size"
+	default 1024
+	depends on CAN_FW_UPGRADE
+
+config CAN_FW_UPGRADE_RX_PRIORITY
+	int "CAN FW upgrade RX thread priority"
+	default 8
+	depends on CAN_FW_UPGRADE
+
+config CAN_FW_UPGRADE_INIT_PRIORITY
+	int "CAN FW upgrade init priority"
+	default 70
+	depends on CAN_FW_UPGRADE
+	help
+	  SYS_INIT priority for CAN controller setup (bitrate/start/filter).
+	  Runs at APPLICATION level, after the CAN driver is up.
+
+config CAN_FW_UPGRADE_BITRATE
+	int "CAN FW upgrade bus bitrate (bps)"
+	default 250000
+	depends on CAN_FW_UPGRADE
+	help
+	  CAN bus bitrate the library uses when initializing the controller.
+
+config CAN_FW_UPGRADE_MAX_HANDLERS
+	int "Max number of app frame handlers"
+	default 4
+	depends on CAN_FW_UPGRADE
+	help
+	  Capacity of the business-frame callback array. Each registered
+	  callback receives every non-upgrade CAN frame (broadcast).

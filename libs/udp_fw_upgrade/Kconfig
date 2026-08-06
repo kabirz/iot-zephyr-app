@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config UDP_FW_UPGRADE
+	bool "UDP firmware upgrade support"
+	default n
+	depends on NET_SOCKETS && FLASH && IMG_MANAGER && NET_MGMT_EVENT
+	help
+	  Enable UDP-based firmware upgrade functionality.
+	  The library is self-contained: it creates the config-port UDP
+	  socket (binds INADDR_ANY:CONFIG_UDP_FW_CONFIG_PORT), owns the RX
+	  thread, handles firmware-upgrade commands (FW_START 0x1 /
+	  FW_DATA 0x2 / FW_END 0x3 / GET_VERSION 0x4 / REBOOT 0x5)
+	  internally, and forwards all other config commands to
+	  an application-registered callback. Apps only register a
+	  business-command callback and never touch the config socket.
+
+config UDP_FW_CONFIG_PORT
+	int "UDP config port (firmware upgrade + app commands)"
+	default 8600
+	depends on UDP_FW_UPGRADE
+	help
+	  UDP port the library binds to for receiving config commands
+	  and firmware upgrade requests.
+
+config UDP_FW_RX_STACK_SIZE
+	int "UDP FW upgrade RX thread stack size"
+	default 1024
+	depends on UDP_FW_UPGRADE
+
+config UDP_FW_RX_PRIORITY
+	int "UDP FW upgrade RX thread priority"
+	default 8
+	depends on UDP_FW_UPGRADE
+
+config UDP_FW_INIT_PRIORITY
+	int "UDP FW upgrade init priority"
+	default 90
+	depends on UDP_FW_UPGRADE
+	help
+	  SYS_INIT priority. Must run after networking is up
+	  (NET_L2/NET_MGMT level). The library waits for NET_EVENT_IF_UP
+	  internally before binding the socket.
+
+config UDP_FW_UPGRADE_MAX_HANDLERS
+	int "Max number of app command handlers"
+	default 4
+	depends on UDP_FW_UPGRADE
+	help
+	  Capacity of the business-command callback array. Each registered
+	  callback receives every non-firmware-upgrade command (broadcast).
+
+config UDP_FW_UPGRADE_MAX_BCAST_CMDS
+	int "Max commands allowed to broadcast-reply"
+	default 8
+	depends on UDP_FW_UPGRADE && UDP_FW_REPLY_BCAST_RESTRICT
+	help
+	  Capacity of the broadcast-reply allowlist. Only commands registered
+	  via udp_fw_allow_broadcast_cmd() get a cross-subnet broadcast reply;
+	  all others are silently dropped when received cross-subnet.
+
+config UDP_FW_REPLY_BCAST_RESTRICT
+	bool "Restrict cross-subnet broadcast replies to allowed commands"
+	default y
+	depends on UDP_FW_UPGRADE
+	help
+	  When enabled, cross-subnet (broadcast) replies on the config port are
+	  only sent for commands registered via udp_fw_allow_broadcast_cmd();
+	  all other commands received cross-subnet are silently dropped. This
+	  prevents a broadcast reply from flooding every device on the subnet
+	  for non-discovery commands (e.g. RF24/network/firmware config).
+	  Disable to restore the legacy behavior where any command received
+	  cross-subnet is answered with an unrestricted broadcast reply.

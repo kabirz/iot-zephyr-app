@@ -1,0 +1,97 @@
+/*
+ * n2e-gw board overlay for nrf24_f103rct6
+ *
+ * 硬件: nRF24L01+ (SPI2) <-> W5500 以太网 (SPI3)
+ * nRF24 收到的数据通过 W5500 UDP 转发给上位机。
+ */
+
+/ {
+	chosen {
+		zephyr,ethernet = &eth0;
+		zephyr,settings-partition = &cfg_partition;
+	};
+
+	aliases {
+		led-rf24 = &led_rf24;   /* PA1: 2.4G 状态灯 (低电平亮) */
+		led-err  = &led_err;    /* PA3: 错误灯 (低电平亮) */
+		led-sys  = &led_sys;    /* PA2: 系统灯 (低电平亮) */
+	};
+
+	gpio_leds: leds {
+		compatible = "gpio-leds";
+		led_rf24: led-rf24 {
+			gpios = <&gpioa 1 GPIO_ACTIVE_LOW>;
+		};
+		led_err: led-err {
+			gpios = <&gpioa 3 GPIO_ACTIVE_LOW>;
+		};
+		led_sys: led-sys {
+			gpios = <&gpioa 2 GPIO_ACTIVE_LOW>;
+		};
+	};
+};
+
+/* ================================================================
+ * SPI2: nRF24L01P (SCK=PB13, MISO=PB14, MOSI=PB15, CS=PB12)
+ * CE=PA9, IRQ=PC6
+ * ================================================================ */
+&spi2 {
+	pinctrl-0 = <&spi2_sck_master_pb13
+		     &spi2_miso_master_pb14
+		     &spi2_mosi_master_pb15>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiob 12 GPIO_ACTIVE_LOW>;    /* nRF24 CS */
+	status = "okay";
+
+	nrf24: nrf24l01p@0 {
+		compatible = "nordic,nrf24l01p";
+		reg = <0x0>;
+		spi-max-frequency = <8000000>;
+		ce-gpios = <&gpioa 9 GPIO_ACTIVE_HIGH>;
+		irq-gpios = <&gpioc 6 GPIO_ACTIVE_LOW>;
+		channel = <1>;
+		data-rate = "1m";
+		tx-power = "0dbm";
+		/* 半双工冲突优化: 缩短单次 TX 最坏占用 (ARD×ARC), 让冲突后更快切回
+		 * PRX 给对端 ACK 机会. ARD=1500us + ARC=9 → 最坏 ~13.5ms (默认 4ms×15=60ms). */
+		ard-us = <1500>;
+		arc = <9>;
+	};
+};
+
+&pinctrl {
+	swj-cfg = "jtag-disable";
+};
+/* ================================================================
+ * SPI3: W5500 以太网 (SCK=PB3, MISO=PB4, MOSI=PB5, CS=PA15)
+ * INT=PD2, RST=PC12
+ * 注: PB3/PB4/PA15 是 JTAG 引脚, Zephyr pinctrl 使用 SPI3_REMAP0 时
+ *     自动设置 AFIO_MAPR_SWJ_CFG 释放 JTAG (保留 SWD)。
+ * ================================================================ */
+&spi3 {
+	pinctrl-0 = <&spi3_sck_master_pb3
+		     &spi3_miso_master_pb4
+		     &spi3_mosi_master_pb5>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpioa 15 GPIO_ACTIVE_LOW>;    /* W5500 CS */
+	status = "okay";
+
+	eth0: w5500@0 {
+		compatible = "wiznet,w5500";
+		reg = <0x0>;
+		spi-max-frequency = <18000000>;
+		int-gpios = <&gpiod 2 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&gpioc 12 GPIO_ACTIVE_LOW>;
+		local-mac-address = [00 08 DC 01 02 03];
+		status = "okay";
+	};
+};
+
+/* ================================================================
+ * RTC
+ * ================================================================ */
+&rtc {
+	clocks = <&rcc STM32_CLOCK_BUS_APB1 0x10000000>,
+		 <&rcc STM32_SRC_LSI RTC_SEL(2)>;
+	status = "okay";
+};

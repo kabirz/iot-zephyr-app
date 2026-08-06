@@ -1,0 +1,59 @@
+description: Nordic nRF24L01+ 2.4GHz radio transceiver
+
+compatible: "nordic,nrf24l01p"
+
+include: [spi-device.yaml]
+
+properties:
+  ce-gpios:
+    type: phandle-array
+    required: true
+    description: Chip Enable control GPIO.
+  irq-gpios:
+    type: phandle-array
+    required: true
+    description: IRQ output GPIO (active-low, falling edge).
+  power-gpios:
+    type: phandle-array
+    required: false
+    description: Optional power-enable GPIO for the module regulator/switch.
+      When present, the driver powers the chip on during init (after a POR
+      stabilization delay) and exposes nrf24_power_enable() for sleep/wake.
+  channel:
+    type: int
+    default: 76
+    description: RF channel (0-125, 2400+channel MHz). Range enforced in driver.
+  data-rate:
+    type: string
+    default: "1m"
+    enum: ["250k", "1m", "2m"]
+  tx-power:
+    type: string
+    default: "0dbm"
+    enum: ["-18dbm", "-12dbm", "-6dbm", "0dbm"]
+  address-width:
+    type: int
+    default: 5
+    enum: [3, 4, 5]
+  payload-mode:
+    type: string
+    default: "dynamic"
+    enum: ["dynamic", "fixed"]
+  rx-payload-width:
+    type: int
+    default: 32
+    description: Payload length when payload-mode = "fixed" (0-32, enforced in driver).
+  crc-mode:
+    type: string
+    default: "2-byte"
+    enum: ["1-byte", "2-byte"]
+  ard-us:
+    type: int
+    default: 4000
+  arc:
+    type: int
+    default: 15
+    description: Auto retransmit count (0-15, enforced in driver).
+  tx-address:
+    type: uint8-array
+    default: [0xE7, 0xE7, 0xE7, 0xE7, 0xE7]

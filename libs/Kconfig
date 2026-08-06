@@ -1,0 +1,3 @@
+
+rsource "can_fw_upgrade/Kconfig"
+rsource "udp_fw_upgrade/Kconfig"

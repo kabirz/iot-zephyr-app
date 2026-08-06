@@ -1,0 +1,15 @@
+
+name: iot_zephyr_app
+
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    board_root: .
+    snippet_root: .
+    dts_root: .
+
+package-managers:
+  pip:
+    requirement-files:
+      - zephyr/requirements.txt

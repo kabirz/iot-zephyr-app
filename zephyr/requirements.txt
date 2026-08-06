@@ -1,0 +1,4 @@
+pydantic-settings>=2.12.0
+rich-argparse>=1.7.2
+smpclient>=6.1.0
+Markdown>=3.10.2

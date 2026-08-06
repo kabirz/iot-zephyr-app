@@ -1,0 +1,5 @@
+menu "Custom Device Drivers"
+
+rsource "nrf24l01p/Kconfig"
+
+endmenu
