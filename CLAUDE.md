@@ -46,6 +46,17 @@ west flash --domain angle-handler
 - 不要提交 `build/`、`*.log`、`compile_commands.json`、`.cache`。
 - 签名私钥（`*.pem`）在各 app 的 `boards/` 下，公开仓库需注意泄露风险。
 
+## Git 提交规范（重要）
+
+- **提交前必须先确认**：完成代码改动后不要直接 `git commit` / `git push`，先把待提交的改动、拟定
+  的 commit message 一并展示给用户确认，得到明确同意后再提交。绝不擅自提交或推送。
+- **commit message 一律用英文**：标题与正文都用英文书写，不要写中文。遵循常规风格——祈使句、
+  首行简短（建议 ≤ 72 字符），必要时空一行后写正文。例如：
+  - ✅ `ci: align tag trigger patterns with release skill naming`
+  - ✅ `release: angle-handler v1.0.1`
+  - ❌ `ci: tag 触发模式改为 v*-<app_name>...`（中文）
+- 仅在用户明确要求「提交」「commit」「push」时才执行提交与推送。
+
 ## 命名约定（重要）
 
 - 目录 / 文档用连字符名：`angle-handler`、`n2e-gw`。
