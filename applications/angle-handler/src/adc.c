@@ -18,7 +18,7 @@
 LOG_MODULE_REGISTER(adc_reader, LOG_LEVEL_INF);
 
 #define CAN_SLEEP_MS  20
-#define RF24_SLEEP_MS 60
+#define RF24_SLEEP_MS 50
 #define DT_SPEC_AND_COMMA(node_id, prop, idx) ADC_DT_SPEC_GET_BY_IDX(node_id, idx),
 
 static const struct adc_dt_spec adc_channels[] = {
