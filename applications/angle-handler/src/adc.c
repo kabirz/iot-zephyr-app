@@ -11,6 +11,8 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/drivers/adc.h>
+#include <zephyr/shell/shell.h>
+#include <stdlib.h>
 #include <common.h>
 #include <display.h>
 #include <mod-gpio.h>
@@ -103,7 +105,9 @@ void adc_read_thread(void)
 				if (ret < 0) {
 					LOG_ERR(" (value in mV not available)");
 				} else {
-					LOG_DBG("val[%d]: %d mv", i, val_mv);
+					if (global_params.adc_debug) {
+						LOG_INF("%c: %d mv", i == 0 ? 'x' : 'y', val_mv);
+					}
 				}
 				/* 500~4500mV → -20~+20 (1° 单位) */
 				if (i == 0) {
@@ -199,3 +203,29 @@ void adc_power_thread(void)
 }
 
 K_THREAD_DEFINE(thread_adc_power, 1024, adc_power_thread, NULL, NULL, NULL, 8, 0, 0);
+
+#ifdef CONFIG_SHELL
+
+/* adc log [0/1] — 手动开关 ADC 原始电压采样日志 (val[i]: <mv>).
+ * 默认编译期 LOG_LEVEL_INF 不打印每通道原始值, 此开关运行时打开用于调试. */
+static int cmd_adc_log(const struct shell *ctx, size_t argc, char **argv)
+{
+	if (argc < 2) {
+		shell_print(ctx, "adc log: %s", global_params.adc_debug ? "on" : "off");
+		return 0;
+	}
+	int val = (int)strtol(argv[1], NULL, 10);
+
+	global_params.adc_debug = (val != 0);
+	shell_print(ctx, "adc log: %s", global_params.adc_debug ? "on" : "off");
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(
+	sub_adc_cmds,
+	SHELL_CMD_ARG(log, NULL, "Enable/disable ADC raw sample log [0/1]", cmd_adc_log, 1, 1),
+	SHELL_SUBCMD_SET_END);
+
+SHELL_CMD_REGISTER(adc, &sub_adc_cmds, "ADC sample debug commands", NULL);
+
+#endif /* CONFIG_SHELL */

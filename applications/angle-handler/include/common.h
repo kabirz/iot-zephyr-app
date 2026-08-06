@@ -44,6 +44,7 @@ typedef struct {
 	atomic_t sleeping;
 	struct k_event event;
 	bool log;
+	bool adc_debug;   /* ADC 原始电压采样详细日志开关 (shell: adc log [0/1]) */
 #define RF24_ADDR_LEN 5
 #define RF24_FIXED_CH  1   /* nRF24 信道固定为 1, 不可配 */
 	uint8_t rf24_addr[RF24_ADDR_LEN];
