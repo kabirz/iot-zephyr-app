@@ -93,6 +93,7 @@ west flash
 | 0x13 | `[0x13]` | 查询 RF24 地址 (回 5B: `[rf24_addr 5B]`) |
 | 0x14 | `[0x14][host ip 4B][port 2B BE]` | 设置 nRF24 数据转发目标 host_ip:host_port (持久化; 回 6B 回显) |
 | 0x15 | `[0x15]` | 广播发现 (回 6B: `[ip 4B][config_port 2B]`，IP 取自 live interface; 用于上位机跨子网发现设备 IP + 配置端口) |
+| 0x16 | `[0x16]` | 恢复出厂设置 (擦除全部持久化配置 rf24/ip/port/dhcp/host; 回 `[0x16][1=成功/0=失败]`; 擦除成功后自动冷重启, 默认配置即时生效) |
 
 ## Shell 命令
 

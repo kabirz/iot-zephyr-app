@@ -32,6 +32,8 @@
 #include <zephyr/posix/unistd.h>
 #include <zephyr/posix/arpa/inet.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/reboot.h>
+#include <zephyr/storage/flash_map.h>
 #include <n2e_gw.h>
 #include <udp_fw_upgrade.h>
 
@@ -230,6 +232,32 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *cmd_data, size_t cmd_len
 		}
 		sys_put_be16(CONFIG_UDP_FW_CONFIG_PORT, buf + 4);
 		udp_fw_reply(cmd, buf, sizeof(buf));
+		return true;
+	}
+
+	case UDP_CMD_FACTORY_RESET: {
+		/* 恢复出厂设置: 擦除整个 settings 分区 (FCB 后端), 清除全部持久化配置
+		 * (rf24/ip/port/dhcp/host). 擦除成功后回复 [1] 并延时 100ms 冷重启,
+		 * 默认配置即时生效 (与库内 0x05 REBOOT 的延时+重启模式一致).
+		 * 擦除失败回 [0], 不重启. */
+		const struct flash_area *fa;
+		uint8_t ok = 0;
+		int rc = flash_area_open(PARTITION_ID(cfg_partition), &fa);
+
+		if (rc == 0) {
+			rc = flash_area_erase(fa, 0, fa->fa_size);
+			flash_area_close(fa);
+		}
+		if (rc == 0) {
+			LOG_INF("UDP factory reset: all settings cleared, rebooting");
+			ok = 1;
+			udp_fw_reply(cmd, &ok, sizeof(ok));
+			k_msleep(100);
+			sys_reboot(SYS_REBOOT_COLD);
+		} else {
+			LOG_WRN("UDP factory reset: erase failed (%d)", rc);
+			udp_fw_reply(cmd, &ok, sizeof(ok));
+		}
 		return true;
 	}
 

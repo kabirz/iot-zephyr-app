@@ -43,6 +43,7 @@ enum udp_cmd {
 	UDP_CMD_GET_RF24 = 0x13,   /* (空) → [addr 5B] = 5B */
 	UDP_CMD_SET_HOST = 0x14,   /* [host ip 4B][port 2B BE] = 6B → 回显同序 6B (持久化) */
 	UDP_CMD_DISCOVER = 0x15,  /* (空) → [ip 4B][config_port 2B] = 6B (广播发现) */
+	UDP_CMD_FACTORY_RESET = 0x16, /* (空) → [1B: 1=成功/0=失败] (擦除全部配置后自动重启, 恢复默认) */
 };
 
 /* ================================================================
