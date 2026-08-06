@@ -17,15 +17,10 @@ manifest:
       path: zephyr
       import:
         name-allowlist:
-          - cmsis
           - cmsis_6
           - hal_stm32
-          - zcbor
           - mbedtls
-          - fatfs
           - mcuboot
-          - canopennode
-          - segger
           - tf-psa-crypto
 
   self:
