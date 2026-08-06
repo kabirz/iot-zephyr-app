@@ -104,26 +104,34 @@ void adc_read_thread(void)
 				ret = adc_raw_to_millivolts_dt(&adc_channels[i], &val_mv);
 				if (ret < 0) {
 					LOG_ERR(" (value in mV not available)");
-				} else {
-					if (global_params.adc_debug) {
-						LOG_INF("%c: %d mv", i == 0 ? 'x' : 'y', val_mv);
-					}
 				}
-				/* 500~4500mV → -20~+20 (1° 单位) */
+				/* ADC 直读电压 (无分压网络) 300~2700mV → -200~+200 (0.1° 单位) */
 				if (i == 0) {
 					x_samples[xy_sample_idx] =
-						(CLAMP(val_mv * 10 / 6, 500, 4500) - 500) * 40 / 4000 - 20;
+						(CLAMP(val_mv, 300, 2700) - 300) * 400 / 2400 - 200;
+					if (global_params.adc_debug) {
+						LOG_INF("x: %d mv, degree: %d (0.1deg)", val_mv,
+							x_samples[xy_sample_idx]);
+					}
 				} else {
 					y_samples[xy_sample_idx] =
-						(CLAMP(val_mv * 10 / 6, 500, 4500) - 500) * 40 / 4000 - 20;
+						(CLAMP(val_mv, 300, 2700) - 300) * 400 / 2400 - 200;
+					if (global_params.adc_debug) {
+						LOG_INF("y: %d mv, degree: %d (0.1deg)", val_mv,
+							y_samples[xy_sample_idx]);
+					}
 				}
 			}
 			k_usleep(500);
 		}
 
-		/* 1° 精度平均值 */
-		int x_degree = trim_avg(x_samples, XY_SAMPLE_COUNT);
-		int y_degree = trim_avg(y_samples, XY_SAMPLE_COUNT);
+		/* 平均后转 1° 精度 (trim_avg 返回 0.1° 单位, /10 取整).
+		 * 死区: 平均值落在 (-1°, +1°) 即 (-10, +10) 的 0.1° 值统一归 0°,
+		 * 消除摇杆居中时的微小抖动. */
+		int x_avg = trim_avg(x_samples, XY_SAMPLE_COUNT);
+		int y_avg = trim_avg(y_samples, XY_SAMPLE_COUNT);
+		int x_degree = (x_avg > -10 && x_avg < 10) ? 0 : x_avg / 10;
+		int y_degree = (y_avg > -10 && y_avg < 10) ? 0 : y_avg / 10;
 
 		if (x_degree != global_params.x_degree ||
 		    y_degree != global_params.y_degree) {
