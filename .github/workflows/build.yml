@@ -1,0 +1,150 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - "v*-angle-handler"
+      - "v*-n2e-gw"
+    paths:
+      - applications/**
+      - boards/**
+      - libs/**
+      - drivers/**
+      - dts/**
+      - zephyr/**
+      - west.yml
+      - .github/workflows/build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    name: Build firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          path: workspace/apps
+
+      - name: Setup Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: 3.12
+
+      - name: Setup Zephyr
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          base-path: workspace
+          app-path: apps
+          toolchains: arm-zephyr-eabi
+          manifest-file-name: west.yml
+
+      - name: Determine which apps to build
+        id: apps
+        shell: bash
+        run: |
+          # tag 推送仅构建后缀匹配的 app; 分支推送/手动触发构建全部
+          REF="${GITHUB_REF}"
+          build_ah=true
+          build_gw=true
+          if [[ "$REF" == refs/tags/*-angle-handler ]]; then
+            build_gw=false
+          elif [[ "$REF" == refs/tags/*-n2e-gw ]]; then
+            build_ah=false
+          fi
+          echo "build_ah=$build_ah" >> "$GITHUB_OUTPUT"
+          echo "build_gw=$build_gw" >> "$GITHUB_OUTPUT"
+
+      # ── angle-handler ──
+
+      - name: Build angle-handler
+        if: steps.apps.outputs.build_ah == 'true'
+        working-directory: workspace
+        shell: bash
+        run: |
+          set -e
+          west build -b nrf24_f103rct6 apps/applications/angle-handler --sysbuild -d build/angle-handler
+          west archive --no-rebuild -o angle-handler -d build/angle-handler
+
+      - name: Upload angle-handler
+        if: steps.apps.outputs.build_ah == 'true'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: angle-handler
+          path: workspace/build/angle-handler/output
+
+      - name: Release angle-handler
+        if: steps.apps.outputs.build_ah == 'true' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3.0.0
+        id: release_ah
+        with:
+          name: angle-handler ${{ github.ref_name }}
+          files: workspace/build/angle-handler/angle-handler.zip
+
+      - name: Email angle-handler release
+        if: steps.apps.outputs.build_ah == 'true' && startsWith(github.ref, 'refs/tags/')
+        uses: dawidd6/action-send-mail@v17
+        with:
+          server_address: smtp.126.com
+          server_port: 465
+          username: ${{ vars.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: Github Release zephyr APP ${{ github.ref_name }}
+          body: |
+            zephyr app Release: ${{ steps.release_ah.outputs.url }}
+
+            - Repository: ${{ github.repository }}
+            - Workflow: ${{ github.workflow }}
+          to: ${{ vars.TOLISTS }}
+          from: ${{ vars.MAIL_USERNAME }}
+          attachments: workspace/build/angle-handler/angle-handler.zip
+
+      # ── n2e-gw ──
+
+      - name: Build n2e-gw
+        if: steps.apps.outputs.build_gw == 'true'
+        working-directory: workspace
+        shell: bash
+        run: |
+          set -e
+          west build -b nrf24_f103rct6 apps/applications/n2e-gw --sysbuild -d build/n2e-gw
+          west archive --no-rebuild -o n2e-gw -d build/n2e-gw
+
+      - name: Upload n2e-gw
+        if: steps.apps.outputs.build_gw == 'true'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: n2e-gw
+          path: workspace/build/n2e-gw/output
+
+      - name: Release n2e-gw
+        if: steps.apps.outputs.build_gw == 'true' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3.0.0
+        id: release_gw
+        with:
+          name: n2e-gw ${{ github.ref_name }}
+          files: workspace/build/n2e-gw/n2e-gw.zip
+
+      - name: Email n2e-gw release
+        if: steps.apps.outputs.build_gw == 'true' && startsWith(github.ref, 'refs/tags/')
+        uses: dawidd6/action-send-mail@v17
+        with:
+          server_address: smtp.126.com
+          server_port: 465
+          username: ${{ vars.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: Github Release zephyr APP ${{ github.ref_name }}
+          body: |
+            zephyr app Release: ${{ steps.release_gw.outputs.url }}
+
+            - Repository: ${{ github.repository }}
+            - Workflow: ${{ github.workflow }}
+          to: ${{ vars.TOLISTS }}
+          from: ${{ vars.MAIL_USERNAME }}
+          attachments: workspace/build/n2e-gw/n2e-gw.zip
