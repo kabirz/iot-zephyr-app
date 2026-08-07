@@ -9,10 +9,12 @@ target_include_directories(app PRIVATE include)
 target_sources(app PRIVATE
   src/main.c
   src/rf24.c
-  src/rf24_shell.c
-  src/net_shell.c
   src/config.c
   src/persist.c
   src/udp.c
   src/led.c
+)
+target_sources_ifdef(CONFIG_SHELL app PRIVATE
+  src/rf24_shell.c
+  src/net_shell.c
 )

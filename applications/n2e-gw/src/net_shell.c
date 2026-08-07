@@ -16,8 +16,6 @@
  *  UDP 数据端口只做 nRF24↔UDP 透传, 无回显机制)
  */
 
-#ifdef CONFIG_SHELL
-
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/net/net_ip.h>
@@ -436,5 +434,3 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(gw, &sub_gw_cmds, "gateway UDP network test commands", NULL);
-
-#endif /* CONFIG_SHELL */

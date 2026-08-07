@@ -15,7 +15,9 @@ target_sources(app PRIVATE
   src/font_5x8.c
   src/gpio.c
   src/rf24.c
-  src/rf24_shell.c
   src/main.c
   src/persist.c
+)
+target_sources_ifdef(CONFIG_SHELL app PRIVATE
+  src/rf24_shell.c
 )

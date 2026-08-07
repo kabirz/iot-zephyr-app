@@ -18,8 +18,6 @@
  *   0x03 DATA:  [seq][raw bytes...]
  */
 
-#ifdef CONFIG_SHELL
-
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/shell/shell.h>
@@ -335,5 +333,3 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(rf24, &sub_rf24_cmds, "RF24 (nRF24L01+) link test", NULL);
-
-#endif /* CONFIG_SHELL */
