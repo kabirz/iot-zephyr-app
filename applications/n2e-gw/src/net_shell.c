@@ -11,6 +11,7 @@
  *   gw port <port>       设置数据端口 (并持久化)
  *   gw bench tx [n] [sz] [ip] [port]   单向 TX 吞吐基准
  *   gw bench rx [port] [duration_ms]   单向 RX 吞吐基准
+ *   gw bench bidir [dur_ms] [sz] [rx_port]  双向同时收发基准
  *
  * (从 gateway_udp_test/src/shell.c 移植, 去掉数据端口 echo 回显 — n2e-gw 的
  *  UDP 数据端口只做 nRF24↔UDP 透传, 无回显机制)
@@ -220,12 +221,17 @@ static int cmd_gw_reset(const struct shell *ctx, size_t argc, char **argv)
  * ================================================================
  * 单向吞吐量基准, 用于验证 W5500 网络收发性能及配置通道抗饿死能力.
  *
- * bench tx [count=100] [size=64] [ip] [port]
+ * bench tx [count=100] [size=64] [ip] [port=19602]
  *   直接 socket sendto 发包 (绕过 gw_udp_send/msgq), 测量原始 TX 吞吐.
  *   包载荷: [seq 4B LE][0xAA 填充], 上位机可用任意 UDP 收包工具统计.
  *
- * bench rx [port=data_port+1] [duration_ms=5000]
+ * bench rx [port=19601] [duration_ms=5000]
  *   临时 socket 绑定 port 收包统计; 上位机用 UDP 发包工具连续发包.
+ *
+ * bench bidir [duration_ms=5000] [size=64] [rx_port=19601]
+ *   同一 socket 既发又收: TX→host_ip:19602 + RX on rx_port.
+ *   每包 TX 后排空 RX (限 32 包/周期), 测量双向吞吐.
+ *   测试端口使用五位数 (19601/19602), 避开业务端口 (9600/9602/8600).
  * ================================================================ */
 #define BENCH_TX_COUNT_DEF	100
 #define BENCH_TX_COUNT_MAX	1000
@@ -233,6 +239,8 @@ static int cmd_gw_reset(const struct shell *ctx, size_t argc, char **argv)
 #define BENCH_TX_SIZE_MAX	1024
 #define BENCH_RX_DUR_DEF	5000
 #define BENCH_RX_DUR_MAX	30000
+#define BENCH_PORT_TX_DEF	19602   /* bench TX 目标端口 (PC 收包), 避开业务端口 */
+#define BENCH_PORT_RX_DEF	19601   /* bench RX 监听端口 (PC 发包), 避开业务端口 */
 
 static uint8_t bench_buf[BENCH_TX_SIZE_MAX];
 
@@ -241,7 +249,7 @@ static int cmd_bench_tx(const struct shell *ctx, size_t argc, char **argv)
 	int count = BENCH_TX_COUNT_DEF;
 	int size = BENCH_TX_SIZE_DEF;
 	const char *ip = gw_params.host_ip;
-	int port = gw_params.host_port;
+	int port = BENCH_PORT_TX_DEF;
 
 	if (argc >= 2) {
 		count = (int)strtol(argv[1], NULL, 10);
@@ -333,7 +341,7 @@ static int cmd_bench_tx(const struct shell *ctx, size_t argc, char **argv)
 
 static int cmd_bench_rx(const struct shell *ctx, size_t argc, char **argv)
 {
-	int port = gw_params.data_port + 1;
+	int port = BENCH_PORT_RX_DEF;
 	int duration = BENCH_RX_DUR_DEF;
 
 	if (argc >= 2) {
@@ -410,14 +418,149 @@ static int cmd_bench_rx(const struct shell *ctx, size_t argc, char **argv)
 	return 0;
 }
 
+static int cmd_bench_bidir(const struct shell *ctx, size_t argc, char **argv)
+{
+	int duration = BENCH_RX_DUR_DEF;
+	int size = BENCH_TX_SIZE_DEF;
+	int rx_port = BENCH_PORT_RX_DEF;
+
+	if (argc >= 2) {
+		duration = (int)strtol(argv[1], NULL, 10);
+		if (duration < 100) {
+			duration = 100;
+		}
+		if (duration > BENCH_RX_DUR_MAX) {
+			duration = BENCH_RX_DUR_MAX;
+		}
+	}
+	if (argc >= 3) {
+		size = (int)strtol(argv[2], NULL, 10);
+		if (size < 1) {
+			size = 1;
+		}
+		if (size > BENCH_TX_SIZE_MAX) {
+			size = BENCH_TX_SIZE_MAX;
+		}
+	}
+	if (argc >= 4) {
+		rx_port = (int)strtol(argv[3], NULL, 10);
+		if (rx_port < 1 || rx_port > 65535) {
+			shell_error(ctx, "invalid port: %s", argv[3]);
+			return -EINVAL;
+		}
+	}
+
+	if (!gw_net_link_up) {
+		shell_error(ctx, "net link down");
+		return -EIO;
+	}
+
+	int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+	if (sock < 0) {
+		shell_error(ctx, "socket create failed: %d", errno);
+		return -EIO;
+	}
+
+	/* 绑定 RX 端口; 同一 socket 既收又发 (源端口 = rx_port) */
+	struct sockaddr_in local = {
+		.sin_family = AF_INET,
+		.sin_port = htons(rx_port),
+	};
+
+	if (bind(sock, (struct sockaddr *)&local, sizeof(local)) < 0) {
+		shell_error(ctx, "bind :%d failed: %d", rx_port, errno);
+		close(sock);
+		return -EIO;
+	}
+
+	/* TX 目标 = 上位机 host_ip:bench_port (避开业务端口 9602) */
+	struct sockaddr_in dst = {
+		.sin_family = AF_INET,
+		.sin_port = htons(BENCH_PORT_TX_DEF),
+	};
+
+	if (inet_pton(AF_INET, gw_params.host_ip, &dst.sin_addr) != 1) {
+		shell_error(ctx, "invalid host ip: %s", gw_params.host_ip);
+		close(sock);
+		return -EINVAL;
+	}
+
+	memset(bench_buf, 0xAA, sizeof(bench_buf));
+	shell_print(ctx, "BIDIR: TX->%s:%d  RX on :%d  %d ms  %d B/pkt",
+		    gw_params.host_ip, BENCH_PORT_TX_DEF, rx_port, duration, size);
+	shell_print(ctx, "(host: send to device_ip:%d, listen on :%d)",
+		    rx_port, BENCH_PORT_TX_DEF);
+
+	uint32_t t0 = k_uptime_get_32();
+	uint32_t deadline = t0 + (uint32_t)duration;
+	uint32_t last_print = t0;
+	uint32_t tx_sent = 0, tx_fail = 0;
+	uint32_t rx_pkts = 0, rx_bytes = 0;
+	uint32_t seq = 0;
+
+	while (k_uptime_get_32() < deadline) {
+		/* TX: 发一包 (sendto 经 w5500_tx 阻塞 ~10ms, 自然限速) */
+		sys_put_le32(seq++, bench_buf);
+		int ret = sendto(sock, bench_buf, size, 0,
+				 (struct sockaddr *)&dst, sizeof(dst));
+		if (ret < 0) {
+			tx_fail++;
+		} else {
+			tx_sent++;
+		}
+
+		/* RX: 排空已到达的包 (每 TX 周期限 32 包, 保证 TX 公平) */
+		for (int drain = 0; drain < 32 && k_uptime_get_32() < deadline; drain++) {
+			ssize_t n = recvfrom(sock, bench_buf, sizeof(bench_buf),
+					     MSG_DONTWAIT, NULL, NULL);
+
+			if (n <= 0) {
+				break;
+			}
+			rx_pkts++;
+			rx_bytes += (uint32_t)n;
+		}
+
+		uint32_t now = k_uptime_get_32();
+
+		if (now - last_print >= 1000) {
+			shell_print(ctx, "  ... TX %u, RX %u pkts", tx_sent, rx_pkts);
+			last_print = now;
+		}
+	}
+
+	uint32_t elapsed = k_uptime_get_32() - t0;
+
+	close(sock);
+
+	uint32_t tx_bytes = tx_sent * (uint32_t)size;
+
+	shell_print(ctx, "TX: %u sent, %u failed, %u B", tx_sent, tx_fail, tx_bytes);
+	shell_print(ctx, "RX: %u pkts, %u B", rx_pkts, rx_bytes);
+	shell_print(ctx, "time: %u ms", elapsed);
+	if (elapsed > 0) {
+		shell_print(ctx, "TX rate: %u pkt/s, %u B/s",
+			    tx_sent * 1000U / elapsed, tx_bytes * 1000U / elapsed);
+		if (rx_pkts > 0) {
+			shell_print(ctx, "RX rate: %u pkt/s, %u B/s",
+				    rx_pkts * 1000U / elapsed, rx_bytes * 1000U / elapsed);
+		}
+	}
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	sub_bench_cmds,
 	SHELL_CMD_ARG(tx, NULL,
-		      "TX benchmark [count=100] [size=64] [ip] [port]",
+		      "TX benchmark [count=100] [size=64] [ip] [port=19602]",
 		      cmd_bench_tx, 1, 4),
 	SHELL_CMD_ARG(rx, NULL,
-		      "RX benchmark [port=data_port+1] [duration_ms=5000]",
+		      "RX benchmark [port=19601] [duration_ms=5000]",
 		      cmd_bench_rx, 1, 2),
+	SHELL_CMD_ARG(bidir, NULL,
+		      "Bidirectional benchmark [duration_ms=5000] [size=64] [rx_port=19601]",
+		      cmd_bench_bidir, 1, 3),
 	SHELL_SUBCMD_SET_END);
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
