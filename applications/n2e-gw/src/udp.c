@@ -43,6 +43,30 @@ LOG_MODULE_REGISTER(gw_udp, LOG_LEVEL_INF);
 static int data_sock = -1;
 
 /* ================================================================
+ * nRF24→UDP 异步发送: TX msgq + 独立低优先级 TX 线程
+ * ================================================================
+ * 问题: gw_udp_send 原先在 rf24_rx_thread 中同步调 sendto → w5500_tx,
+ * w5500_tx 每包阻塞 ~10ms 等 SENDOK. nRF24 数据持续到达时 rf24_rx_thread
+ * 长期占用在 sendto 内, SPI 总线被 TX 数据写入占据, 且 TX 缓冲池与
+ * 配置回复/ICMP 共享易耗尽, 引发 RX 处理饿死 → w5500_thread 活锁.
+ *
+ * 方案: gw_udp_send 仅做 memcpy + k_msgq_put(K_NO_WAIT), 不阻塞
+ * rf24_rx_thread. 独立 udp_tx_thread (优先级 12, 低于配置端口 8 和
+ * RX TC 线程) 负责实际 sendto. 在 w5500 tx_sem 竞争时 (k_sem 按优先级
+ * 唤醒), 配置回复和 ICMP echo reply 优先获得 TX 带宽.
+ *
+ * 背压: msgq 满 (8 槽) 时 K_NO_WAIT 直接丢弃最新帧——实时遥测数据
+ * 丢帧优于阻塞整个网络栈. msgq 大小与 rf24_rx_msgq 对齐. */
+#define GW_TX_FRAME_MAX 32   /* nRF24 payload 上限 (含 2B CAN_ID 前缀) */
+
+struct gw_tx_entry {
+	uint8_t len;
+	uint8_t data[GW_TX_FRAME_MAX];
+};
+
+K_MSGQ_DEFINE(gw_tx_msgq, sizeof(struct gw_tx_entry), 8, 4);
+
+/* ================================================================
  * 本机 IP 查询 + 上位机目标序列化
  * ================================================================ */
 
@@ -85,13 +109,13 @@ static bool ip_is_valid(struct in_addr addr)
 	return true;
 }
 
-/* 数据端口发送: nRF24 数据 → 上位机. 固定单播到 host_ip:host_port (可配). */
-void gw_udp_send(const uint8_t *data, size_t len)
+/* 实际 UDP 发送 (由 udp_tx_thread 调用, 非 rf24_rx_thread 上下文).
+ * 固定单播到 host_ip:host_port (可配). */
+static void gw_udp_do_send(const uint8_t *data, size_t len)
 {
 	if (data_sock < 0 || len == 0) {
 		return;
 	}
-	/* 链路 down 时不转发 nRF24 数据到上位机 (网线断开/PHY 未就绪时避免无效 sendto) */
 	if (!gw_net_link_up) {
 		return;
 	}
@@ -107,6 +131,29 @@ void gw_udp_send(const uint8_t *data, size_t len)
 	}
 
 	sendto(data_sock, data, len, 0, (struct sockaddr *)&dst, sizeof(dst));
+}
+
+/* 数据端口发送入口: nRF24 数据 → 入队 (非阻塞).
+ * rf24_rx_thread / shell 调用此函数, 不阻塞. 实际 sendto 由 udp_tx_thread
+ * 异步完成. msgq 满时丢弃最新帧 (背压). */
+void gw_udp_send(const uint8_t *data, size_t len)
+{
+	if (len == 0 || len > GW_TX_FRAME_MAX) {
+		return;
+	}
+	if (!gw_net_link_up) {
+		return;
+	}
+
+	struct gw_tx_entry entry;
+
+	entry.len = (uint8_t)len;
+	memcpy(entry.data, data, len);
+
+	if (k_msgq_put(&gw_tx_msgq, &entry, K_NO_WAIT) != 0) {
+		/* msgq 满: 丢弃, 不阻塞调用者 (rf24_rx_thread 必须保持响应) */
+		LOG_DBG("tx msgq full, drop %zuB frame", len);
+	}
 }
 
 /* ================================================================
@@ -320,6 +367,25 @@ static void udp_data_rx_thread(void)
 
 K_THREAD_DEFINE(thread_udp_data_rx, CONFIG_N2E_GW_DATA_RX_STACK, udp_data_rx_thread, NULL, NULL,
 		NULL, CONFIG_N2E_GW_DATA_RX_PRIORITY, 0, 0);
+
+/* ================================================================
+ * UDP TX 线程 (低优先级): 从 gw_tx_msgq 取帧 → gw_udp_do_send
+ * ================================================================
+ * 独立于 rf24_rx_thread, 使 nRF24 接收不被 W5500 TX 阻塞 (~10ms/包).
+ * 优先级 12 低于配置端口 RX (8) 和 net TC RX 线程: 在 w5500 tx_sem 竞争时,
+ * Zephyr k_sem 按等待者优先级唤醒, 故配置回复/ICMP echo reply 优先获得 TX. */
+static void udp_tx_thread(void)
+{
+	struct gw_tx_entry entry;
+
+	while (1) {
+		k_msgq_get(&gw_tx_msgq, &entry, K_FOREVER);
+		gw_udp_do_send(entry.data, entry.len);
+	}
+}
+
+K_THREAD_DEFINE(thread_udp_tx, CONFIG_N2E_GW_UDP_TX_STACK, udp_tx_thread, NULL, NULL,
+		NULL, CONFIG_N2E_GW_UDP_TX_PRIORITY, 0, 0);
 
 /* ================================================================
  * 初始化: 注册配置命令回调 (固件升级库 SYS_INIT 自管配置端口 socket)

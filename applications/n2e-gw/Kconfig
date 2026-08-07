@@ -21,6 +21,18 @@ config N2E_GW_DATA_RX_PRIORITY
 	int "UDP data RX thread priority"
 	default 10
 
+config N2E_GW_UDP_TX_STACK
+	int "UDP TX thread stack size"
+	default 1024
+
+config N2E_GW_UDP_TX_PRIORITY
+	int "UDP TX thread priority"
+	default 12
+	help
+	  Must be lower priority (higher number) than config RX (8) and
+	  net TC RX thread, so data forwarding yields TX bandwidth to
+	  config replies and ICMP echo replies.
+
 config N2E_GW_UDP_INIT_PRIORITY
 	int "UDP app handler init priority (must run before udp_fw_upgrade lib)"
 	default 80
