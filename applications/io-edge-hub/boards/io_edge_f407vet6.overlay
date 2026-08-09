@@ -11,6 +11,7 @@
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/adc/adc.h>
 
 / {
 	chosen {
@@ -75,6 +76,12 @@
 			    <&gpioe 13 GPIO_ACTIVE_HIGH>,
 			    <&gpioe 14 GPIO_ACTIVE_HIGH>,
 			    <&gpioe 15 GPIO_ACTIVE_HIGH>;
+
+		/* 4 路 AI (ADC1 IN10-13, 对应 &adc1 下 channel@a-d 子节点);
+		 * ai-coeffs: 每路工程量转换系数 (放大 1e4 倍, 电流 7.414 / 电压 3.7037),
+		 * 与 io-channels 顺序一一对应 */
+		io-channels = <&adc1 10>, <&adc1 11>, <&adc1 12>, <&adc1 13>;
+		ai-coeffs = <7414>, <7414>, <3704>, <3704>;
 	};
 };
 
@@ -101,7 +108,8 @@
 
 /* ============================================================
  * ADC1: 4 通道模拟输入 (PC0-PC3 = IN10-13)
- * AI0/AI1 电流 4-20mA, AI2/AI3 电压 0-10V
+ * AI0/AI1 电流 4-20mA, AI2/AI3 电压 0-10V。各通道 st,coeff 系数
+ * 在 /zephyr,user 的 ai-coeffs 中定义 (与 io-channels 顺序对应)。
  * ============================================================ */
 &adc1 {
 	status = "okay";
@@ -110,6 +118,37 @@
 	pinctrl-names = "default";
 	st,adc-clock-source = "SYNC";
 	st,adc-prescaler = <2>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@a {
+		reg = <0xa>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+	channel@b {
+		reg = <0xb>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+	channel@c {
+		reg = <0xc>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+	channel@d {
+		reg = <0xd>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
 };
 
 

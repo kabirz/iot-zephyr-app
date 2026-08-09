@@ -16,10 +16,6 @@ config MODBUS_INPUT_REGISTER_NUMBERS
 	int "Number of Modbus input registers"
 	default 6
 
-config MODBUS_COLS_REGISTER_NUMBERS
-	int "Number of Modbus coil registers"
-	default 8
-
 # ==================== 线程栈 / 优先级 ====================
 config IO_DI_STACK_SIZE
 	int "DI sampling thread stack size"
@@ -27,10 +23,6 @@ config IO_DI_STACK_SIZE
 
 config IO_ADC_STACK_SIZE
 	int "AI sampling thread stack size"
-	default 512
-
-config IO_HEART_STACK_SIZE
-	int "Heartbeat watchdog thread stack size"
 	default 512
 
 config IO_MODBUS_TCP_STACK
@@ -48,10 +40,3 @@ config IO_FTP_STACK_SIZE
 config IO_FTP_PRIORITY
 	int "FTP server thread priority"
 	default 13
-
-config IO_NET_INIT_PRIORITY
-	int "Network init SYS_INIT priority (after settings load)"
-	default 14
-	help
-	  Must run after settings subsys init (priority 10) so holding_reg[]
-	  holds the persisted IP address before static IP is configured.

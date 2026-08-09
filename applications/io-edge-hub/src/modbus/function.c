@@ -37,7 +37,6 @@ static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS] = {
 	[HOLDING_IP_ADDR_2_IDX]	= 168,
 	[HOLDING_IP_ADDR_3_IDX]	= 12,
 	[HOLDING_IP_ADDR_4_IDX]	= 101,
-	[HOLDING_HEART_TIMEOUT_IDX] = 2000,	/* 心跳超时 ms */
 };
 
 static uint16_t input_reg[CONFIG_MODBUS_INPUT_REGISTER_NUMBERS] = {
@@ -189,6 +188,9 @@ const struct modbus_user_callbacks io_modbus_cbs = {
 
 /* ==================== Settings 持久化 (FCB, modbus/ 命名空间) ==================== */
 
+/* Settings 键名精确匹配: 防止 "di_enx" 之类更长的段名误匹配 */
+#define NAME_IS(n, l, s)	((l) == (sizeof(s) - 1) && !strncmp((n), (s), (l)))
+
 static int mb_set_one(const char *name, size_t len, settings_read_cb read_cb,
 		      void *cb_arg, uint16_t addr)
 {
@@ -209,7 +211,7 @@ static int mb_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 	size_t name_len = settings_name_next(name, &next);
 
 	/* IP 地址为 8B (4x uint16_t) */
-	if (!next && !strncmp(name, "ip", name_len)) {
+	if (!next && NAME_IS(name, name_len, "ip")) {
 		if (len == sizeof(uint16_t) * 4) {
 			uint16_t ip[4];
 
@@ -226,38 +228,32 @@ static int mb_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 		return -ENOENT;
 	}
 
-	if (!strncmp(name, "di_en", name_len)) {
+	if (NAME_IS(name, name_len, "di_en")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_DI_EN_IDX);
 	}
-	if (!strncmp(name, "ai_en", name_len)) {
+	if (NAME_IS(name, name_len, "ai_en")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_AI_EN_IDX);
 	}
-	if (!strncmp(name, "di_si", name_len)) {
+	if (NAME_IS(name, name_len, "di_si")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_DI_SI_IDX);
 	}
-	if (!strncmp(name, "ai_si", name_len)) {
+	if (NAME_IS(name, name_len, "ai_si")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_AI_SI_IDX);
 	}
-	if (!strncmp(name, "his", name_len)) {
+	if (NAME_IS(name, name_len, "his")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_HIS_SAVE_IDX);
 	}
-	if (!strncmp(name, "can_id", name_len)) {
+	if (NAME_IS(name, name_len, "can_id")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_CAN_ID_IDX);
 	}
-	if (!strncmp(name, "can_bps", name_len)) {
+	if (NAME_IS(name, name_len, "can_bps")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_CAN_BPS_IDX);
 	}
-	if (!strncmp(name, "rs485_bps", name_len)) {
+	if (NAME_IS(name, name_len, "rs485_bps")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_RS485_BPS_IDX);
 	}
-	if (!strncmp(name, "slave_id", name_len)) {
+	if (NAME_IS(name, name_len, "slave_id")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_SLAVE_ID_IDX);
-	}
-	if (!strncmp(name, "heart_en", name_len)) {
-		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_HEART_EN_IDX);
-	}
-	if (!strncmp(name, "heart_to", name_len)) {
-		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_HEART_TIMEOUT_IDX);
 	}
 
 	return -ENOENT;
@@ -294,8 +290,6 @@ static int mb_handle_export(int (*cb)(const char *name, const void *value,
 		(void)cb("modbus/ip", &holding_reg[HOLDING_IP_ADDR_1_IDX],
 			 sizeof(uint16_t) * 4);
 	}
-	(void)cb("modbus/heart_en", &holding_reg[HOLDING_HEART_EN_IDX], sizeof(uint16_t));
-	(void)cb("modbus/heart_to", &holding_reg[HOLDING_HEART_TIMEOUT_IDX], sizeof(uint16_t));
 	return 0;
 }
 

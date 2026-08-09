@@ -25,6 +25,9 @@
 
 LOG_MODULE_REGISTER(io_dio, LOG_LEVEL_INF);
 
+/* 采样间隔上限: 必须小于 IWDG 10s, 防止远程调大间隔导致喂狗超时复位 */
+#define SAMPLE_INTERVAL_MAX	5000U
+
 #define ZU_NODE DT_PATH(zephyr_user)
 
 /* 从 /zephyr,user 的 gpio 列表生成引脚描述数组 */
@@ -74,6 +77,8 @@ static void di_thread(void *p1, void *p2, void *p3)
 
 		if (si < 10) {
 			si = 10;
+		} else if (si > SAMPLE_INTERVAL_MAX) {
+			si = SAMPLE_INTERVAL_MAX;
 		}
 
 		for (int i = 0; i < DI_NUM && i < ARRAY_SIZE(di_gpios); i++) {

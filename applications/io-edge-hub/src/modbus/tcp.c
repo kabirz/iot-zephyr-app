@@ -8,7 +8,7 @@
  *     (function.c 定义的 holding/input/coil 回调)
  *   - TCP socket 端口 502, select() 多路复用, 最多 3 客户端, 30s 会话超时
  *   - 网络链路断开 (net_link_is_up=false) 时拒绝新连接
- *   - 每收到请求调 heart_event_send() 重置心跳看门狗
+ *   - TCP Keepalive (SO_KEEPALIVE) 检测主站连接存活
  *
  * 流程 (参考 samples/subsys/modbus/tcp_server):
  *   recv 8B (MBAP+FC) → modbus_raw_get_header → recv data →
@@ -32,22 +32,31 @@ LOG_MODULE_REGISTER(io_tcp, LOG_LEVEL_INF);
 #define MODBUS_TCP_PORT		502
 #define MB_TCP_MAX_CLIENTS	3
 #define MB_TCP_SESSION_TIMEOUT	30000	/* ms */
+#define MB_TCP_IO_TIMEOUT	5000	/* ms: 客户端 recv/send 超时 */
+#define MB_TCP_RESP_TIMEOUT	2000	/* ms: 等待 modbus server 处理超时 */
 
 extern const struct modbus_user_callbacks io_modbus_cbs;
 
-static struct modbus_adu tmp_adu;
-static K_SEM_DEFINE(received, 0, 1);
 static int server_iface = -1;
 
-/* raw_tx_cb: server 处理完 ADU 后回填响应, 唤醒主处理流程 */
+/*
+ * modbus server 处理在系统工作队列线程(异步, modbus_raw_submit_rx 内部
+ * k_work_submit, 库仅保留一份 rx/tx ADU), 应用必须严格串行处理请求。
+ * 响应经 raw_tx_cb 回填到 g_resp, mb_tcp 线程用 trans_id 匹配消费,
+ * 避免多客户端请求的响应交叉污染。
+ */
+static struct modbus_adu g_resp;
+static K_SEM_DEFINE(g_resp_sem, 0, 1);
+
+/* raw_tx_cb: server(系统工作队列线程)处理完 ADU 后回填响应 */
 static int server_raw_cb(const int iface, const struct modbus_adu *adu,
 			 void *user_data)
 {
 	ARG_UNUSED(iface);
 	ARG_UNUSED(user_data);
 
-	tmp_adu = *adu;
-	k_sem_give(&received);
+	g_resp = *adu;
+	k_sem_give(&g_resp_sem);
 	return 0;
 }
 
@@ -94,33 +103,63 @@ static int reply_adu(int client, const struct modbus_adu *adu)
 static int handle_client(int client)
 {
 	uint8_t header[MODBUS_MBAP_AND_FC_LENGTH];
+	struct modbus_adu req;
+	struct modbus_adu resp;
 	int rc = recv(client, header, sizeof(header), MSG_WAITALL);
 
 	if (rc <= 0) {
 		return rc == 0 ? -ENOTCONN : -EIO;
 	}
 
-	modbus_raw_get_header(&tmp_adu, header);
+	modbus_raw_get_header(&req, header);
 
-	if (tmp_adu.length > 0) {
-		rc = recv(client, tmp_adu.data, tmp_adu.length, MSG_WAITALL);
+	/* 帧校验: 协议 ID 必须为 0, length 不得超过缓冲区 (防越界写) */
+	if (req.proto_id != 0 || req.length > sizeof(req.data)) {
+		LOG_WRN("bad MBAP frame (proto=%u len=%u)", req.proto_id, req.length);
+		resp = req;
+		modbus_raw_set_server_failure(&resp);
+		return reply_adu(client, &resp);
+	}
+
+	if (req.length > 0) {
+		rc = recv(client, req.data, req.length, MSG_WAITALL);
 		if (rc <= 0) {
 			return rc == 0 ? -ENOTCONN : -EIO;
 		}
 	}
 
-	k_sem_reset(&received);
-	if (modbus_raw_submit_rx(server_iface, &tmp_adu)) {
+	/* unit_id 不匹配时 server 会丢帧不回复, 提前回异常避免等超时 */
+	if (req.unit_id != 0 &&
+	    req.unit_id != (uint8_t)get_holding_reg(HOLDING_SLAVE_ID_IDX)) {
+		LOG_WRN("unit id mismatch: %u", req.unit_id);
+		resp = req;
+		modbus_raw_set_server_failure(&resp);
+		return reply_adu(client, &resp);
+	}
+
+	k_sem_reset(&g_resp_sem);
+	if (modbus_raw_submit_rx(server_iface, &req)) {
 		LOG_ERR("submit raw ADU failed");
 		return -EIO;
 	}
 
-	if (k_sem_take(&received, K_MSEC(1000)) != 0) {
-		LOG_ERR("MODBUS RAW wait timeout");
-		modbus_raw_set_server_failure(&tmp_adu);
+	/*
+	 * 等待 server 异步处理完成。库回显请求 trans_id, 借此丢弃可能
+	 * 残留的上一个请求响应, 保证回给客户端的一定是本次请求的响应。
+	 */
+	while (k_sem_take(&g_resp_sem, K_MSEC(MB_TCP_RESP_TIMEOUT)) == 0 &&
+	       g_resp.trans_id != req.trans_id) {
+		/* 残留的旧响应, 继续等待本次响应 */
 	}
 
-	return reply_adu(client, &tmp_adu);
+	if (g_resp.trans_id != req.trans_id) {
+		LOG_ERR("MODBUS RAW wait timeout");
+		resp = req;
+		modbus_raw_set_server_failure(&resp);
+		return reply_adu(client, &resp);
+	}
+
+	return reply_adu(client, &g_resp);
 }
 
 static void mb_tcp_thread(void *p1, void *p2, void *p3)
@@ -194,6 +233,24 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 				int c = accept(serv, NULL, NULL);
 
 				if (c >= 0) {
+					/* recv/send 超时兜底: 防止恶意/慢客户端
+					 * 声明大长度却不发数据而挂死服务线程 */
+					struct timeval tv = {
+						.tv_sec = MB_TCP_IO_TIMEOUT / 1000,
+						.tv_usec = (MB_TCP_IO_TIMEOUT % 1000) * 1000,
+					};
+
+					(void)setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
+							 &tv, sizeof(tv));
+					(void)setsockopt(c, SOL_SOCKET, SO_SNDTIMEO,
+							 &tv, sizeof(tv));
+					/* TCP Keepalive: 主站异常掉线时协议栈自动断开连接
+					 * (探测参数由 CONFIG_NET_TCP_KEEPIDLE/INTVL/CNT 决定) */
+					int ka = 1;
+
+					(void)setsockopt(c, SOL_SOCKET, SO_KEEPALIVE,
+							 &ka, sizeof(ka));
+
 					for (int i = 0; i < MB_TCP_MAX_CLIENTS; i++) {
 						if (clients[i] < 0) {
 							clients[i] = c;
@@ -224,7 +281,6 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 
 					if (rc == 0) {
 						last_act[i] = k_uptime_get();
-						heart_event_send();
 					} else {
 						LOG_INF("client %d closed", i);
 						close(clients[i]);

@@ -3,8 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 模拟输入: 4 路 ADC (ADC1 IN10-IN13, PC0-PC3)
- *   AI0/AI1 (IN10/11): 电流 4-20mA, value = 7.414 * voltage / 10  (单位 0.01mA)
- *   AI2/AI3 (IN12/13): 电压 0-10V,  value = 3.7037 * voltage / 10 (单位 0.01V)
+ *   - 通道号与工程量转换系数 st,coeff 均来自设备树:
+ *     /zephyr,user 的 io-channels 引用 &adc1 下 channel@a-d 子节点
+ *   - AI0/AI1 (IN10/11): 电流 4-20mA, value = 7.414 * voltage / 10  (单位 0.01mA)
+ *   - AI2/AI3 (IN12/13): 电压 0-10V,  value = 3.7037 * voltage / 10 (单位 0.01V)
  *
  * 仅使能通道 (holding_reg[AI_EN] 低 4 位) 参与采样, 结果写 input_reg[AI0..3]。
  * 使能且历史开启时, 采样数据异步送历史记录。采样线程周期喂看门狗。
@@ -21,12 +23,23 @@
 
 LOG_MODULE_REGISTER(io_adc, LOG_LEVEL_INF);
 
-/* ADC1 通道: IN10, IN11, IN12, IN13 */
-static const uint8_t ai_channel_id[AI_NUM] = { 10, 11, 12, 13 };
-/* 工程量转换系数 (放大 1e4 倍做整数运算): 电流 7.414, 电压 3.7037 */
-static const uint32_t ai_coeff[AI_NUM] = { 7414, 7414, 3704, 3704 };
+/* 采样间隔上限: 必须小于 IWDG 10s, 防止远程调大间隔导致喂狗超时复位 */
+#define SAMPLE_INTERVAL_MAX	5000U
 
-static const struct device *const adc_dev = DEVICE_DT_GET(DT_NODELABEL(adc1));
+#define ADC_NODE DT_PATH(zephyr_user)
+
+/* 通道配置 (device + channel_id + channel_cfg) 取自 /zephyr,user 的 io-channels */
+#define ADC_SPEC_FN(node_id, prop, idx) ADC_DT_SPEC_GET_BY_IDX(node_id, idx),
+static const struct adc_dt_spec adc_specs[] = {
+	DT_FOREACH_PROP_ELEM(ADC_NODE, io_channels, ADC_SPEC_FN)
+};
+
+/* 工程量转换系数 (放大 1e4 倍做整数运算): 从 /zephyr,user 的 ai-coeffs 读取,
+ * 与 io-channels 顺序一一对应 */
+#define AI_COEFF_FN(node_id, prop, idx) DT_PROP_BY_IDX(node_id, prop, idx),
+static const uint32_t ai_coeff[AI_NUM] = {
+	DT_FOREACH_PROP_ELEM(ADC_NODE, ai_coeffs, AI_COEFF_FN)
+};
 
 static int16_t ai_buffer[AI_NUM];
 
@@ -51,19 +64,24 @@ static void adc_thread(void *p1, void *p2, void *p3)
 
 		if (si < 10) {
 			si = 10;
+		} else if (si > SAMPLE_INTERVAL_MAX) {
+			si = SAMPLE_INTERVAL_MAX;
 		}
 
-		for (int i = 0; i < AI_NUM; i++) {
+		for (int i = 0; i < (int)ARRAY_SIZE(adc_specs); i++) {
+			if (!(en & BIT(i))) {
+				continue;
+			}
 			struct adc_sequence seq = {
-				.channels = BIT(ai_channel_id[i]),
+				.channels = BIT(adc_specs[i].channel_id),
 				.buffer = &ai_buffer[i],
 				.buffer_size = sizeof(ai_buffer[i]),
-				.resolution = 12,
-				.oversampling = 0,
+				.resolution = adc_specs[i].resolution,
+				.oversampling = adc_specs[i].oversampling,
 				.calibrate = 0,
 			};
 
-			if (adc_read(adc_dev, &seq) == 0) {
+			if (adc_read_dt(&adc_specs[i], &seq) == 0) {
 				update_input_reg(INPUT_AI0_IDX + i, ai_convert(i, ai_buffer[i]));
 			}
 		}
@@ -90,27 +108,24 @@ K_THREAD_DEFINE(adc_io, CONFIG_IO_ADC_STACK_SIZE, adc_thread, NULL, NULL, NULL, 
 
 static int adc_init(void)
 {
-	if (!device_is_ready(adc_dev)) {
-		LOG_ERR("ADC1 device not ready");
-		return -ENODEV;
+	if (ARRAY_SIZE(adc_specs) != AI_NUM) {
+		LOG_ERR("io-channels count mismatch (expect %d, got %d)",
+			AI_NUM, (int)ARRAY_SIZE(adc_specs));
+		return -EINVAL;
 	}
 
-	for (int i = 0; i < AI_NUM; i++) {
-		struct adc_channel_cfg ch_cfg = {
-			.gain = ADC_GAIN_1,
-			.reference = ADC_REF_INTERNAL,
-			.acquisition_time = ADC_ACQ_TIME_DEFAULT,
-			.channel_id = ai_channel_id[i],
-			.differential = 0,
-		};
-
-		if (adc_channel_setup(adc_dev, &ch_cfg)) {
-			LOG_ERR("ADC channel %u setup failed", ai_channel_id[i]);
+	for (int i = 0; i < ARRAY_SIZE(adc_specs); i++) {
+		if (!device_is_ready(adc_specs[i].dev)) {
+			LOG_ERR("ADC device not ready");
+			return -ENODEV;
+		}
+		if (adc_channel_setup_dt(&adc_specs[i])) {
+			LOG_ERR("ADC channel %u setup failed", adc_specs[i].channel_id);
 			return -EIO;
 		}
 	}
 
-	LOG_INF("ADC ready: 4 channels (IN10-IN13)");
+	LOG_INF("ADC ready: %d channels", (int)ARRAY_SIZE(adc_specs));
 	return 0;
 }
 

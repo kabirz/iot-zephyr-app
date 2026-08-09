@@ -9,7 +9,7 @@
  *   - 状态 LED 心跳 + 延迟重启
  *   - 栈溢出保护 (k_sys_fatal_error_handler -> warm reboot)
  *
- * 应用层各模块 (Modbus/FTP/UDP/CAN/DI/AI/历史/心跳) 通过 SYS_INIT 或
+ * 应用层各模块 (Modbus/FTP/UDP/CAN/DI/AI/历史) 通过 SYS_INIT 或
  * K_THREAD_DEFINE 自启动, main 仅负责网络与状态指示。
  */
 

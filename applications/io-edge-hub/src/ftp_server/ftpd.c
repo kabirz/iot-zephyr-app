@@ -533,13 +533,16 @@ static void cmd_stor(struct ftp_session *s, const char *path)
 	}
 
 	char fspath[FTP_BUF_SIZE];
+	uint32_t rest = s->rest;
 
 	fs_path(fspath, sizeof(fspath), s->cwd, path);
 
 	struct fs_file_t fp;
 
 	fs_file_t_init(&fp);
-	if (fs_open(&fp, fspath, FS_O_CREATE | FS_O_WRITE) != 0) {
+	/* 全新上传 (无 REST) 截断旧文件, 避免残留尾部数据; REST 续传不截断 */
+	if (fs_open(&fp, fspath, FS_O_CREATE | FS_O_WRITE |
+		    ((rest == 0) ? FS_O_TRUNC : 0)) != 0) {
 		ftp_send(s->ctrl, "550 Failed to open file");
 		if (s->data_listen >= 0) {
 			close(s->data_listen);
@@ -549,8 +552,8 @@ static void cmd_stor(struct ftp_session *s, const char *path)
 		return;
 	}
 
-	if (s->rest > 0) {
-		fs_seek(&fp, s->rest, FS_SEEK_SET);
+	if (rest > 0) {
+		fs_seek(&fp, rest, FS_SEEK_SET);
 	}
 
 	ftp_send(s->ctrl, "150 Ok to send data");

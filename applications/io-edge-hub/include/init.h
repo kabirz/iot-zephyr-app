@@ -38,7 +38,7 @@ enum input_reg_idx {
 	INPUT_DI_IDX,		/* DI1-16 状态 bitmap */
 };
 
-/* ==================== Holding Registers (读写, 21 个) ==================== */
+/* ==================== Holding Registers (读写, 18 个) ==================== */
 enum holding_reg_idx {
 	HOLDING_DO_IDX = 0x00,		/* DO1-8 输出控制 */
 	HOLDING_DI_EN_IDX,		/* 0x01 DI1-16 使能 */
@@ -58,9 +58,6 @@ enum holding_reg_idx {
 	HOLDING_TIMESTAMPL_IDX,		/* 0x0F 时间戳低16位 */
 	HOLDING_CFG_SAVE_IDX,		/* 0x10 参数保存触发 */
 	HOLDING_REBOOT_IDX,		/* 0x11 写1触发重启 */
-	HOLDING_HEART_EN_IDX,		/* 0x12 心跳使能 */
-	HOLDING_HEART_TIMEOUT_IDX,	/* 0x13 心跳超时 (ms) */
-	HOLDING_HEART_IDX,		/* 0x14 心跳值 (写1喂狗) */
 };
 
 /* ==================== 历史数据结构 (与 RT-Thread / PC 解析工具兼容) ==================== */
@@ -97,10 +94,6 @@ int settings_factory_reset(void);
 /* ==================== DO 控制 (dio.c) ==================== */
 /* 设置 DO 输出 + LED 联动, val bit0-7 对应 DO1-DO8 */
 int mb_set_do(uint16_t val);
-
-/* ==================== 心跳看门狗 (init.c) ==================== */
-/* Modbus TCP 收到请求时调用, 重置心跳定时器 */
-void heart_event_send(void);
 
 /* ==================== 时间管理 (time.c) ==================== */
 /* 设置 RTC + 系统时钟 (Modbus 0x0E/0x0F 或 UDP 命令调用) */

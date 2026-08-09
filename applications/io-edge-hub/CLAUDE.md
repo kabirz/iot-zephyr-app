@@ -35,12 +35,13 @@ main() 线程:
   → 状态 LED 心跳 (300ms/2700ms) + 延迟重启
 ```
 
-线程:`di`(DI 采样,512/1)、`adc_io`(AI 采样,512/1)、`heart`(心跳看门狗,512/12)、`mb_tcp`(Modbus TCP,2048/13)、`ftp`(FTP,4096/13)。**历史记录无独立线程**,复用系统工作队列(`k_work_delayable`,1s 批量 flush)。共享库线程:`udp_fw_rx`/`can_fw_rx`(1024/8)。
+线程:`di`(DI 采样,512/1)、`adc_io`(AI 采样,512/1)、`mb_tcp`(Modbus TCP,2048/13)、`ftp`(FTP,4096/13)。**历史记录无独立线程**,复用系统工作队列(`k_work_delayable`,1s 批量 flush)。共享库线程:`udp_fw_rx`/`can_fw_rx`(1024/8)。**无应用层心跳**:主站连接存活由 Modbus TCP socket 的 `SO_KEEPALIVE`(TCP Keepalive)检测,探测参数见 `prj.conf` 的 `NET_TCP_KEEPIDLE/INTVL/CNT`。
 
 ### 关键设计决策
 
 - **settings 直接映射 holding_reg**:`modbus/` 命名空间,settings handler(`function.c`)直接读写 `holding_reg[]` 元素,**无独立参数结构体**,避免双份数据同步。写 holding 0x10 触发全量 `settings_save()`。
 - **Modbus RAW ADU**(非 Zephyr 内置 TCP Server):`MODBUS_MODE_RAW` + 自定义 TCP socket(`tcp.c`,select() 多路复用,3 客户端,30s 超时,链路断连拒绝新连接 + 清零 DO)。比内置 Server 更灵活可控。
+- **主站连接存活用 TCP Keepalive**(非应用层心跳):Modbus TCP 客户端 socket 启用 `SO_KEEPALIVE`(参数 `NET_TCP_KEEPIDLE/INTVL/CNT`,见 prj.conf),主站异常掉线时协议栈自动断开连接;`heart` 线程与 HEART 寄存器(0x12-0x14)已移除,不占 Modbus 寄存器。
 - **双通道固件升级**:`udp_fw_upgrade`(端口 8600)+ `can_fw_upgrade`(帧 0x101-0x105)共享库,SYS_INIT 自管 RX 线程,应用仅 `udp_fw_set_app_handler` / `can_fw_set_app_handler` 注册业务回调。仓库首个双通道应用。
 - **CAN1 在板 DTS**(非应用 overlay):`boards/io_edge_f407vet6/io_edge_f407vet6.dts` 含 `&can1` + `zephyr,canbus` chosen,供 MCUboot 与应用共享(未来 MCUboot 可能用 CAN)。
 - **MCUboot 跨 flash**:Primary Slot 内部 Flash(448KB),Secondary Slot + Scratch 外部 W25Q128(SWAP_SCRATCH)。slot1/scratch 必须在板 DTS(bootloader 独立编译,不含应用 overlay)。
@@ -68,7 +69,7 @@ west flash
 
 ## 寄存器与协议
 
-- **寄存器枚举**:`include/init.h`(`enum holding_reg_idx` / `enum input_reg_idx`),21 个 holding + 6 个 input。改寄存器布局同步改此处 + settings handler(`function.c` 的 `mb_handle_set`/`mb_handle_export`)。
+- **寄存器枚举**:`include/init.h`(`enum holding_reg_idx` / `enum input_reg_idx`),18 个 holding + 6 个 input。改寄存器布局同步改此处 + settings handler(`function.c` 的 `mb_handle_set`/`mb_handle_export`)。
 - **Modbus 寄存器映射、UDP 命令、CAN 帧、默认参数**:详见 `USER_GUIDE.md`。
 - **UDP 命令码**:`src/udp.h`(`enum udp_app_cmd`,0x10+)。CAN 业务帧 ID = `holding_reg[CAN_ID]`(默认 0x0111)。
 
@@ -85,7 +86,7 @@ src/
   modbus/
     function.c             -- holding_reg/input_reg 数组 + get/update + Modbus user callbacks
                               (io_modbus_cbs) + settings handler (modbus/ 命名空间) + factory reset
-    init.c                 -- settings_subsys_init + load (SYS_INIT 11) + heart_poll 心跳线程
+    init.c                 -- settings_subsys_init + load (SYS_INIT 11)
     tcp.c                  -- Modbus TCP RAW ADU Server (select 多路复用, RAW_0 iface)
     rtu.c                  -- Modbus RTU Slave (modbus0 节点, baud/slave_id 从 holding_reg)
     adc.c                  -- 4 路 AI (adc_channel_setup + 工程量转换 7.414x/3.7037x)

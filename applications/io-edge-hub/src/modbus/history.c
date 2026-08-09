@@ -18,6 +18,7 @@
 #include <string.h>
 #include <time.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/logging/log.h>
 #include <init.h>
@@ -110,7 +111,15 @@ static int ensure_file(void)
 	}
 
 	fs_seek(&his_fp, 0, FS_SEEK_END);
-	his_cur_size = (uint32_t)fs_tell(&his_fp);
+	off_t tell = fs_tell(&his_fp);
+
+	if (tell < 0) {
+		LOG_ERR("history file tell failed: %lld", (long long)tell);
+		fs_close(&his_fp);
+		his_fp_open = false;
+		return -EIO;
+	}
+	his_cur_size = (uint32_t)tell;
 	if (his_cur_size == 0) {
 		cleanup_old_files();
 	}
@@ -169,6 +178,8 @@ void history_enable_write(bool en)
 
 void send_history_data(const struct his_data *data)
 {
+	static atomic_t drop_cnt;
+
 	if (!history_enabled || !io_lfs_is_ready()) {
 		return;
 	}
@@ -176,5 +187,8 @@ void send_history_data(const struct his_data *data)
 		/* 立即提交系统工作队列 (k_work 合并: 执行前重复提交只跑一次)。
 		 * handler 批量取 msgq + 保持文件打开 + fs_sync, 减少 Flash 写 */
 		k_work_submit(&his_work);
+	} else if ((atomic_inc(&drop_cnt) % 100) == 0) {
+		/* 后台落盘慢时 msgq 会满, 节流告警 (已丢弃 %u 条) */
+		LOG_WRN("history msgq full, %u samples dropped", (uint32_t)drop_cnt);
 	}
 }

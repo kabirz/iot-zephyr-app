@@ -22,14 +22,14 @@ io-edge-hub 提供 **16 路数字输入**、**8 路数字输出**、**4 路模�
 ## 功能
 
 - **IO 采集**:16 路 DI(光耦隔离)+ 8 路 DO(驱动 + LED 联动)+ 4 路 AI(电流 4-20mA / 电压 0-10V,12-bit)
-- **Modbus TCP Server**:端口 502,RAW ADU + select() 多路复用,最多 3 客户端,30s 会话超时,链路断连安全清零 DO
+- **Modbus TCP Server**:端口 502,RAW ADU + select() 多路复用,最多 3 客户端,30s 会话超时,链路断连安全清零 DO,TCP Keepalive 检测主站掉线
 - **Modbus RTU Slave**:RS485,波特率/Slave ID 可配(默认 9600/1)
 - **FTP Server**:端口 21,LittleFS 历史文件管理(admin/admin + anonymous 只读,PASV 模式)
 - **双通道固件升级**:UDP(端口 8600)+ CAN(帧 0x101-0x105),共享库自管,应用仅注册业务回调
 - **历史记录**:LittleFS,`data_MMDD_HHMMSS.raw`,单文件 1MB 轮转(保留 10 个),系统工作队列批量写
 - **参数持久化**:Zephyr settings + FCB,直接映射 Modbus holding 寄存器(`modbus/` 命名空间)
 - **时间管理**:STM32 内部 RTC(LSI),日志使用 RTC 时间戳,Modbus/UDP 可设时间
-- **安全机制**:心跳看门狗(Modbus 通信超时清零 DO)、网络断连 DO 安全、栈溢出保护(自动重启)、IWDG
+- **安全机制**:网络断连 DO 安全、栈溢出保护(自动重启)、IWDG(采样线程喂狗);TCP Keepalive 检测主站连接存活
 
 ## 编译
 
@@ -68,8 +68,8 @@ io-edge-hub/
     main.c                  -- 网络(MAC/IP/事件) + 状态LED + 栈溢出保护
     udp.c / udp.h           -- UDP app handler (0x10+ 业务命令)
     can.c / can.h           -- CAN app handler (业务帧)
-    modbus/                 -- function.c(寄存器+settings)/ init.c(心跳)/
-                              tcp.c(RAW ADU TCP)/ rtu.c / adc.c / dio.c / history.c
+    modbus/                 -- function.c(寄存器+settings)/ init.c(settings 加载)/
+                              tcp.c(RAW ADU TCP + Keepalive)/ rtu.c / adc.c / dio.c / history.c
     storage/fs_littlefs.c   -- LittleFS 挂载
     sys/                    -- time.c(RTC) / watchdog.c(IWDG)
     ftp_server/ftpd.c       -- FTP server (PASV)
