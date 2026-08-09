@@ -174,7 +174,7 @@ FTP Server 端口 21,根目录为 LittleFS(`/lfs1`),存放历史记录文件。
 - 命令:USER PASS SYST FEAT TYPE PWD CWD CDUP PASV LIST NLST RETR STOR APPE DELE MKD RMD RNFR RNTO SIZE REST NOOP QUIT
   - LIST 返回标准 Unix `ls -l` 格式(GUI 客户端兼容)
   - REST 支持 RETR/STOR 断点续传
-- 用途:下载历史文件(`data_MMDD_HHMM.raw`)、上传/删除/重命名文件、目录管理
+- 用途:下载历史文件(`data_MMDD_HHMMSS.raw`)、上传/删除/重命名文件、目录管理
 
 示例:`ftp 192.168.12.101`,登录后 `ls` / `get data_0809_1200.raw`。
 
@@ -212,7 +212,7 @@ FTP Server 端口 21,根目录为 LittleFS(`/lfs1`),存放历史记录文件。
 
 ## 9. 历史数据文件
 
-历史使能(holding 0x05 或 UDP 0x1A)后,DI/AI 采样数据写入 LittleFS。文件名 `data_MMDD_HHMM.raw`,最多 10 个,单文件软上限 1MB。
+历史使能(holding 0x05 或 UDP 0x1A)后,DI/AI 采样数据写入 LittleFS。**单文件最大 1MB**(超过则新建 `data_MMDD_HHMMSS.raw`),保留至多 10 个;采样数据经 msgq 累积,系统工作队列批量写(减少 Flash 写次数)。
 
 文件为连续记录流(小端):
 

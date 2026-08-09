@@ -2534,7 +2534,7 @@ cd tools && cmake . && make
 ### G.6 模块实现差异 (§5)
 
 - **FTP** (§5.3): 单文件 `ftpd.c` 实现 (非 ftpd.c / ftp_cmds.c / ftp_handler.c 三文件); **单线程 select 多路复用** (最多 3 个客户端命令交错, 数据传输时该会话独占, 第 4 个返回 421, per-session buffer); **PASV/EPSV + PORT/EPRT** 数据连接 (RFC 959 + 2428); **TYPE A (CR/LF 转换) + TYPE I**; LIST 标准 ls -l (历史文件名解析真实创建时间, Zephyr fs_dirent 不暴露 mtime)。
-- **历史记录** (§5.6): 缓冲用 **k_msgq** (`K_MSGQ_DEFINE`, 16 槽 `struct his_data`), 替代 k_fifo + k_malloc (定长池, 无堆碎片, 满则丢最新记录)。
+- **历史记录** (§5.6): **msgq + 系统工作队列** (`K_MSGQ_DEFINE` 16 槽累积 + `k_work_submit` 立即提交 (k_work 合并去重) + `fs_sync` 批量写, 减少 Flash 写次数), 替代 k_fifo + 独立 writer 线程; **单文件 1MB 大小轮转** (非按分钟切换, `data_MMDD_HHMMSS.raw`, 保留 10 个); 无独立线程。
 - **DI / DO / LED** (§5.1): GPIO 通过 `/zephyr,user` 节点 `di-gpios` / `do-gpios` / `led-gpios` 列表定义, 代码 `DT_FOREACH_PROP_ELEM` 生成数组 (非独立 gpio-leds label 节点)。
 - **Modbus TCP** (§5.2.1): RAW ADU iface 名 `RAW_0`; `tmp_adu` 复用 (请求 → raw_tx_cb 回填响应); 多客户端用 select() 逐个串行处理 (submit + sem_take + reply)。
 - **MCUboot** (§3.3): `sysbuild/mcuboot.conf` 加 `CONFIG_BOOT_MAX_IMG_SECTORS=256` (外部 Flash slot1/scratch 扇区数大) + `CONFIG_ENTROPY_GENERATOR` (硬件 RNG)。

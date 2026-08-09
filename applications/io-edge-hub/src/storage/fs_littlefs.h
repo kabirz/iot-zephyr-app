@@ -11,7 +11,10 @@
 
 struct fs_mount_t *io_lfs_mount(void);
 
-/* 阻塞等待 LittleFS 挂载完成 (history 线程启动时调用) */
+/* 非阻塞查询 LittleFS 是否已挂载 (采样线程调用, 不阻塞) */
+bool io_lfs_is_ready(void);
+
+/* 阻塞等待 LittleFS 挂载完成 */
 bool io_lfs_wait_ready(k_timeout_t timeout);
 
 #endif /* __FS_LITTLEFS_H__ */

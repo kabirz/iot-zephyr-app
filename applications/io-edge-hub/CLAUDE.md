@@ -35,7 +35,7 @@ main() 线程:
   → 状态 LED 心跳 (300ms/2700ms) + 延迟重启
 ```
 
-线程:`di`(DI 采样,512/1)、`adc_io`(AI 采样,512/1)、`heart`(心跳看门狗,512/12)、`mb_tcp`(Modbus TCP,2048/13)、`ftp`(FTP,2048/13)、`history_writer`(历史写,2048/6)。共享库线程:`udp_fw_rx`/`can_fw_rx`(1024/8)。
+线程:`di`(DI 采样,512/1)、`adc_io`(AI 采样,512/1)、`heart`(心跳看门狗,512/12)、`mb_tcp`(Modbus TCP,2048/13)、`ftp`(FTP,4096/13)。**历史记录无独立线程**,复用系统工作队列(`k_work_delayable`,1s 批量 flush)。共享库线程:`udp_fw_rx`/`can_fw_rx`(1024/8)。
 
 ### 关键设计决策
 
@@ -45,8 +45,8 @@ main() 线程:
 - **CAN1 在板 DTS**(非应用 overlay):`boards/io_edge_f407vet6/io_edge_f407vet6.dts` 含 `&can1` + `zephyr,canbus` chosen,供 MCUboot 与应用共享(未来 MCUboot 可能用 CAN)。
 - **MCUboot 跨 flash**:Primary Slot 内部 Flash(448KB),Secondary Slot + Scratch 外部 W25Q128(SWAP_SCRATCH)。slot1/scratch 必须在板 DTS(bootloader 独立编译,不含应用 overlay)。
 - **硬件 RNG**:`ENTROPY_STM32_RNG` + 板 DTS `&rng` status okay(MCUboot 与 app 共享),替代 `TEST_RANDOM_GENERATOR`。
-- **历史记录用 k_msgq**(非 k_fifo+k_malloc):`K_MSGQ_DEFINE`(16 槽,struct his_data),定长池无堆碎片,满则丢最新记录不阻塞采样线程。
-- **FTP 单线程多客户端**:`ftpd.c` 单线程 select 多路复用(最多 3 个客户端命令交错,RETR/STOR/LIST 传输时该会话独占),per-session buffer;**PASV/EPSV + PORT/EPRT** 数据连接(RFC 959 + 2428);TYPE A(ASCII CR/LF 转换)与 TYPE I;LIST 标准 `ls -l`(历史文件 `data_MMDD_HHMM.raw` 从文件名解析真实创建时间,其他文件用当前 RTC——Zephyr `fs_dirent` 不暴露 mtime)。
+- **历史记录(msgq + 系统工作队列)**:`K_MSGQ_DEFINE`(16 槽)累积采样数据,采样线程 `send_history_data` 入队 + `k_work_submit`(立即提交,k_work 合并去重 → 机会性批量);系统工作队列 handler 批量取 msgq + 写当前文件(保持打开 + `fs_sync`),**减少 Flash 写次数**;单文件 1MB 轮转(`data_MMDD_HHMMSS.raw`,保留 10 个);无独立线程。
+- **FTP 单线程多客户端**:`ftpd.c` 单线程 select 多路复用(最多 3 个客户端命令交错,RETR/STOR/LIST 传输时该会话独占),per-session buffer;**PASV/EPSV + PORT/EPRT** 数据连接(RFC 959 + 2428);TYPE A(ASCII CR/LF 转换)与 TYPE I;LIST 标准 `ls -l`(历史文件 `data_MMDD_HHMMSS.raw` 从文件名解析真实创建时间,其他文件用当前 RTC——Zephyr `fs_dirent` 不暴露 mtime)。
 - **栈溢出保护**:`k_sys_fatal_error_handler` 捕获 `K_ERR_STACK_CHK_FAIL` → warm reboot。F4 有 MPU,板 defconfig 用 `HW_STACK_PROTECTION`(非 F1 的 `STACK_SENTINEL`)。
 - **网络断连 DO 安全**:`NET_EVENT_IF_DOWN` 回调立即清零所有 DO 输出(工业安全)+ 设 `link_down` 拒绝新 Modbus TCP 连接。
 - **MAC 从 UID 派生**:hwinfo 读 STM32 96-bit UID,前 3B = Wiznet OUI `00:08:DC`,后 3B 折叠,`net_if_up` 前 `SET_MAC_ADDRESS`。需 `CONFIG_ETH_NET_IF_NO_AUTO_START=y`。
@@ -90,7 +90,7 @@ src/
     rtu.c                  -- Modbus RTU Slave (modbus0 节点, baud/slave_id 从 holding_reg)
     adc.c                  -- 4 路 AI (adc_channel_setup + 工程量转换 7.414x/3.7037x)
     dio.c                  -- 16 DI + 8 DO + 8 LED (zephyr,user gpio 列表, DT_FOREACH_PROP_ELEM)
-    history.c              -- k_msgq 缓冲 + writer 线程 + 文件轮转 (LittleFS /lfs1)
+    history.c              -- msgq + 系统工作队列批量写 + 1MB 轮转 (LittleFS /lfs1)
   storage/
     fs_littlefs.c/.h       -- LittleFS 挂载 (flash-area 模式, /lfs1) + 就绪信号量
   sys/

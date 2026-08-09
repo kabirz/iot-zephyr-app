@@ -25,6 +25,7 @@ static struct fs_mount_t lfs_mnt = {
 };
 
 static K_SEM_DEFINE(lfs_ready, 0, 1);
+static volatile bool lfs_mounted;
 
 struct fs_mount_t *io_lfs_mount(void)
 {
@@ -34,6 +35,11 @@ struct fs_mount_t *io_lfs_mount(void)
 bool io_lfs_wait_ready(k_timeout_t timeout)
 {
 	return k_sem_take(&lfs_ready, timeout) == 0;
+}
+
+bool io_lfs_is_ready(void)
+{
+	return lfs_mounted;
 }
 
 static int littlefs_init(void)
@@ -54,6 +60,7 @@ static int littlefs_init(void)
 		return rc;
 	}
 
+	lfs_mounted = true;
 	k_sem_give(&lfs_ready);
 
 	struct fs_statvfs stat;

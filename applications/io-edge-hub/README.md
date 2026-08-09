@@ -26,7 +26,7 @@ io-edge-hub 提供 **16 路数字输入**、**8 路数字输出**、**4 路模�
 - **Modbus RTU Slave**:RS485,波特率/Slave ID 可配(默认 9600/1)
 - **FTP Server**:端口 21,LittleFS 历史文件管理(admin/admin + anonymous 只读,PASV 模式)
 - **双通道固件升级**:UDP(端口 8600)+ CAN(帧 0x101-0x105),共享库自管,应用仅注册业务回调
-- **历史记录**:LittleFS,按 `data_MMDD_HHMM.raw` 命名,10 文件轮转,与 RT-Thread PC 解析工具兼容
+- **历史记录**:LittleFS,`data_MMDD_HHMMSS.raw`,单文件 1MB 轮转(保留 10 个),系统工作队列批量写
 - **参数持久化**:Zephyr settings + FCB,直接映射 Modbus holding 寄存器(`modbus/` 命名空间)
 - **时间管理**:STM32 内部 RTC(LSI),日志使用 RTC 时间戳,Modbus/UDP 可设时间
 - **安全机制**:心跳看门狗(Modbus 通信超时清零 DO)、网络断连 DO 安全、栈溢出保护(自动重启)、IWDG

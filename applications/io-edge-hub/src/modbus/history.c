@@ -2,13 +2,16 @@
  * Copyright (c) 2026 Kabirz.
  * SPDX-License-Identifier: Apache-2.0
  *
- * IO 历史记录: k_fifo 异步缓冲 + 独立 writer 线程写 LittleFS
+ * IO 历史记录: msgq 累积 + 系统工作队列 (k_work) 批量写
  *
- *   - DI/AI 采样线程调 send_history_data() 入队 (非阻塞, 满则丢弃)
- *   - writer 线程从 fifo 取记录, 按 type 追加写当前文件
- *   - 文件按 data_MMDD_HHMM.raw 命名 (同分钟聚合), 维持至多 10 个, 超限删最旧
- *   - 单文件软上限 1MB (超过则切换到下一分钟文件)
- *   - 数据格式与 RT-Thread / PC 解析工具兼容 (DI 10B, AI 16B)
+ *   - DI/AI 采样线程 send_history_data() 入 msgq + 触发延迟 work (1s)
+ *   - work handler 批量取 msgq, 写当前文件 (保持打开, fs_sync 批量 flush),
+ *     多条记录一次同步, 大幅减少 Flash 写次数
+ *   - 单文件 1MB 上限: 超过则关闭 + 新建 data_MMDD_HHMMSS.raw
+ *   - 保留至多 10 个文件, 超限删最旧 (按名序 = 时间序)
+ *   - DI 10B / AI 16B, 与 RT-Thread / PC 解析工具兼容
+ *
+ * 无独立线程: 复用系统工作队列 (CONFIG_SYSTEM_WORKQUEUE)。
  */
 
 #include <stdio.h>
@@ -22,49 +25,32 @@
 
 LOG_MODULE_REGISTER(io_history, LOG_LEVEL_INF);
 
-#define HIST_DIR	"/lfs1"
-#define HIST_MAX_FILES	10
-#define HIST_FILE_MAX	(1024 * 1024)
+#define HIST_DIR		"/lfs1"
+#define HIST_MAX_FILES		10
+#define HIST_FILE_MAX		(1024 * 1024)
 
-/* 历史记录消息队列 (替代 k_fifo + k_malloc: 定长池, 无堆碎片) */
 K_MSGQ_DEFINE(his_msgq, sizeof(struct his_data), 16, 4);
+
 static volatile bool history_enabled;
-static char cur_name[64];	/* 当前文件名 data_MMDD_HHMM.raw */
-
-void history_enable_write(bool en)
-{
-	history_enabled = en;
-	LOG_INF("history %s", en ? "enabled" : "disabled");
-}
-
-void send_history_data(const struct his_data *data)
-{
-	if (!history_enabled) {
-		return;
-	}
-
-	/* 非阻塞入队: msgq 满则丢弃最新记录, 不阻塞采样线程 */
-	(void)k_msgq_put(&his_msgq, data, K_NO_WAIT);
-}
+static struct fs_file_t his_fp;
+static bool his_fp_open;
+static uint32_t his_cur_size;
 
 /* 删除最旧历史文件, 维持 <= HIST_MAX_FILES 个 */
 static void cleanup_old_files(void)
 {
 	struct fs_dir_t dir;
 	struct fs_dirent ent;
-	char names[HIST_MAX_FILES + 2][sizeof(cur_name)];
+	char names[HIST_MAX_FILES + 2][24];
 	int n = 0;
 
 	fs_dir_t_init(&dir);
 	if (fs_opendir(&dir, HIST_DIR) != 0) {
 		return;
 	}
-
 	while (fs_readdir(&dir, &ent) == 0 && ent.name[0] != '\0') {
-		if (ent.type != FS_DIR_ENTRY_FILE) {
-			continue;
-		}
-		if (strncmp(ent.name, "data_", 5) != 0) {
+		if (ent.type != FS_DIR_ENTRY_FILE ||
+		    strncmp(ent.name, "data_", 5) != 0) {
 			continue;
 		}
 		if (n < HIST_MAX_FILES + 2) {
@@ -75,7 +61,6 @@ static void cleanup_old_files(void)
 	}
 	fs_closedir(&dir);
 
-	/* 文件名形如 data_MMDD_HHMM.raw, 字典序 = 时间序 */
 	while (n > HIST_MAX_FILES) {
 		int min_i = 0;
 
@@ -84,13 +69,11 @@ static void cleanup_old_files(void)
 				min_i = i;
 			}
 		}
-		char path[40];
+		char path[48];
 
 		snprintf(path, sizeof(path), "%s/%s", HIST_DIR, names[min_i]);
 		fs_unlink(path);
 		LOG_INF("rotated out %s", names[min_i]);
-		/* 用最后一个覆盖被删项, 缩减计数 */
-		names[min_i][0] = '\0';
 		if (min_i != n - 1) {
 			strcpy(names[min_i], names[n - 1]);
 		}
@@ -98,64 +81,100 @@ static void cleanup_old_files(void)
 	}
 }
 
-static void write_record(const struct his_data *d)
+static void make_hist_name(char *buf, size_t len)
 {
 	time_t t = time(NULL);
 	struct tm *lt = gmtime(&t);
-	char name[sizeof(cur_name)];
 
-	snprintf(name, sizeof(name), "data_%02d%02d_%02d%02d.raw",
-		 lt->tm_mon + 1, lt->tm_mday, lt->tm_hour, lt->tm_min);
-	if (strcmp(name, cur_name) != 0) {
-		/* 新文件: 触发轮转清理 */
-		strcpy(cur_name, name);
+	snprintf(buf, len, "data_%02d%02d_%02d%02d%02d.raw",
+		 lt->tm_mon + 1, lt->tm_mday, lt->tm_hour, lt->tm_min, lt->tm_sec);
+}
+
+/* 确保当前文件可写: 未打开或超 1MB 时新建 (data_MMDD_HHMMSS.raw) */
+static int ensure_file(void)
+{
+	if (his_fp_open && his_cur_size < HIST_FILE_MAX) {
+		return 0;
+	}
+	if (his_fp_open) {
+		fs_close(&his_fp);
+		his_fp_open = false;
+	}
+
+	char path[48];
+
+	make_hist_name(path, sizeof(path));
+	fs_file_t_init(&his_fp);
+	if (fs_open(&his_fp, path, FS_O_CREATE | FS_O_WRITE | FS_O_APPEND) != 0) {
+		return -EIO;
+	}
+
+	fs_seek(&his_fp, 0, FS_SEEK_END);
+	his_cur_size = (uint32_t)fs_tell(&his_fp);
+	if (his_cur_size == 0) {
 		cleanup_old_files();
 	}
-
-	char path[80];
-	struct fs_dirent ent;
-
-	snprintf(path, sizeof(path), "%s/%s", HIST_DIR, cur_name);
-
-	/* 单文件超 1MB: 强制切到下一文件名 (用序号后缀避免覆盖当前分钟) */
-	if (fs_stat(path, &ent) == 0 && ent.type == FS_DIR_ENTRY_FILE &&
-	    ent.size >= HIST_FILE_MAX) {
-		snprintf(path, sizeof(path), "%s/%s.full", HIST_DIR, cur_name);
-	}
-
-	struct fs_file_t fp;
-
-	fs_file_t_init(&fp);
-	if (fs_open(&fp, path, FS_O_CREATE | FS_O_WRITE | FS_O_APPEND) != 0) {
-		return;
-	}
-
-	size_t rec_len = (d->type == DI_TYPE) ? 10U : 16U;
-
-	fs_write(&fp, d, rec_len);
-	fs_close(&fp);
+	his_fp_open = true;
+	LOG_INF("history file: %s", path);
+	return 0;
 }
 
-static void his_writer_loop(void *p1, void *p2, void *p3)
+/* 批量取 msgq 写当前文件; close_after=true 时写完关闭 */
+static void his_flush(bool close_after)
 {
-	ARG_UNUSED(p1);
-	ARG_UNUSED(p2);
-	ARG_UNUSED(p3);
-
-	if (!io_lfs_wait_ready(K_SECONDS(5))) {
-		LOG_ERR("LittleFS not ready, history disabled");
+	if (!io_lfs_is_ready()) {
 		return;
 	}
 
-	LOG_INF("history writer ready");
+	struct his_data d;
+	bool wrote = false;
 
-	while (1) {
-		struct his_data d;
+	while (k_msgq_get(&his_msgq, &d, K_NO_WAIT) == 0) {
+		if (ensure_file() != 0) {
+			break;
+		}
+		size_t len = (d.type == DI_TYPE) ? 10U : 16U;
 
-		k_msgq_get(&his_msgq, &d, K_FOREVER);
-		write_record(&d);
+		if (fs_write(&his_fp, &d, len) == (ssize_t)len) {
+			his_cur_size += len;
+			wrote = true;
+		}
+	}
+
+	if (wrote && his_fp_open) {
+		fs_sync(&his_fp);
+	}
+	if (close_after && his_fp_open) {
+		fs_close(&his_fp);
+		his_fp_open = false;
 	}
 }
 
-K_THREAD_DEFINE(history_writer, CONFIG_IO_HISTORY_WRITER_STACK_SIZE,
-		his_writer_loop, NULL, NULL, NULL, 6, 0, 0);
+static void his_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	his_flush(!history_enabled);
+}
+
+K_WORK_DEFINE(his_work, his_work_handler);
+
+void history_enable_write(bool en)
+{
+	history_enabled = en;
+	LOG_INF("history %s", en ? "enabled" : "disabled");
+	if (!en) {
+		his_flush(true);
+	}
+}
+
+void send_history_data(const struct his_data *data)
+{
+	if (!history_enabled || !io_lfs_is_ready()) {
+		return;
+	}
+	if (k_msgq_put(&his_msgq, data, K_NO_WAIT) == 0) {
+		/* 立即提交系统工作队列 (k_work 合并: 执行前重复提交只跑一次)。
+		 * handler 批量取 msgq + 保持文件打开 + fs_sync, 减少 Flash 写 */
+		k_work_submit(&his_work);
+	}
+}
