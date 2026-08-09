@@ -1,0 +1,322 @@
+/*
+ * Copyright (c) 2026 Kabirz.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Modbus 寄存器管理 + Settings 持久化 (直接映射 holding_reg[])
+ *
+ * holding_reg[] / input_reg[] 是唯一的参数与采样数据源:
+ *   - settings (FCB, modbus/ 命名空间) 直接映射 holding_reg[] 元素
+ *   - DI/AI 采样线程写入 input_reg[]
+ *   - Modbus holding 写 (FC06/FC16) 经 holding_reg_wr 回调产生副作用
+ *     (DO 输出 / 历史开关 / 设置时间 / 参数保存 / 重启)
+ */
+
+#include <string.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/reboot.h>
+#include <zephyr/settings/settings.h>
+#include <zephyr/storage/flash_map.h>
+#include <zephyr/app_version.h>
+#include <zephyr/modbus/modbus.h>
+#include <zephyr/logging/log.h>
+#include <init.h>
+
+LOG_MODULE_REGISTER(io_function, LOG_LEVEL_INF);
+
+/* ==================== 寄存器数组 (唯一数据源) ==================== */
+static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS] = {
+	[HOLDING_DI_EN_IDX]	= 0xFFFF,	/* DI 全使能 */
+	[HOLDING_AI_EN_IDX]	= 0x000F,	/* AI 全使能 */
+	[HOLDING_DI_SI_IDX]	= 200,		/* DI 采样间隔 ms */
+	[HOLDING_AI_SI_IDX]	= 200,		/* AI 采样间隔 ms */
+	[HOLDING_CAN_ID_IDX]	= 0x0111,	/* CAN ID */
+	[HOLDING_CAN_BPS_IDX]	= 10,		/* CAN 波特率 x1000 */
+	[HOLDING_RS485_BPS_IDX]	= 9600,		/* RS485 波特率 */
+	[HOLDING_SLAVE_ID_IDX]	= 1,		/* Modbus Slave ID */
+	[HOLDING_IP_ADDR_1_IDX]	= 192,		/* 默认 IP 192.168.12.101 */
+	[HOLDING_IP_ADDR_2_IDX]	= 168,
+	[HOLDING_IP_ADDR_3_IDX]	= 12,
+	[HOLDING_IP_ADDR_4_IDX]	= 101,
+	[HOLDING_HEART_TIMEOUT_IDX] = 2000,	/* 心跳超时 ms */
+};
+
+static uint16_t input_reg[CONFIG_MODBUS_INPUT_REGISTER_NUMBERS] = {
+	[INPUT_VER_IDX] = ((APP_VERSION_MAJOR << 8) | APP_VERSION_MINOR),
+};
+
+/* ==================== 寄存器访问接口 ==================== */
+uint16_t get_holding_reg(uint16_t addr)
+{
+	if (addr >= ARRAY_SIZE(holding_reg)) {
+		return 0;
+	}
+	return holding_reg[addr];
+}
+
+/* 内部设值 (无副作用), 供采样/UDP handler 使用 */
+int update_holding_reg(uint16_t addr, uint16_t reg)
+{
+	if (addr >= ARRAY_SIZE(holding_reg)) {
+		return -ENOTSUP;
+	}
+	holding_reg[addr] = reg;
+	return 0;
+}
+
+uint16_t get_input_reg(uint16_t addr)
+{
+	if (addr >= ARRAY_SIZE(input_reg)) {
+		return 0;
+	}
+	return input_reg[addr];
+}
+
+int update_input_reg(uint16_t addr, uint16_t reg)
+{
+	if (addr >= ARRAY_SIZE(input_reg)) {
+		return -ENOTSUP;
+	}
+	input_reg[addr] = reg;
+	return 0;
+}
+
+/* 触发全量保存 (供 UDP handler 改参数后持久化) */
+void holding_reg_save(void)
+{
+	settings_save();
+}
+
+/* ==================== Modbus 用户回调 (FC01/02/03/04/05/06/15/16) ==================== */
+
+static int holding_reg_rd_cb(uint16_t addr, uint16_t *reg)
+{
+	if (addr >= ARRAY_SIZE(holding_reg)) {
+		return -ENOTSUP;
+	}
+	*reg = holding_reg[addr];
+	return 0;
+}
+
+static int holding_reg_wr_cb(uint16_t addr, uint16_t reg)
+{
+	if (addr >= ARRAY_SIZE(holding_reg)) {
+		return -ENOTSUP;
+	}
+
+	holding_reg[addr] = reg;
+
+	switch (addr) {
+	case HOLDING_DO_IDX:
+		/* DO 输出 + LED 联动 */
+		mb_set_do(reg & 0xFF);
+		break;
+	case HOLDING_HIS_SAVE_IDX:
+		history_enable_write(reg != 0);
+		break;
+	case HOLDING_TIMESTAMPL_IDX:
+		/* 写低16位时, 组合高低位设置 RTC 时间 */
+		set_timestamp((time_t)(((uint32_t)holding_reg[HOLDING_TIMESTAMPH_IDX] << 16) |
+				       reg));
+		break;
+	case HOLDING_CFG_SAVE_IDX:
+		/* 写非0 → 全量保存参数到 FCB, 然后恢复为 0 */
+		holding_reg[addr] = 0;
+		settings_save();
+		break;
+	case HOLDING_REBOOT_IDX:
+		if (reg) {
+			sys_reboot(SYS_REBOOT_COLD);
+		}
+		break;
+	default:
+		break;
+	}
+	return 0;
+}
+
+static int input_reg_rd_cb(uint16_t addr, uint16_t *reg)
+{
+	if (addr >= ARRAY_SIZE(input_reg)) {
+		return -ENOTSUP;
+	}
+	*reg = input_reg[addr];
+	return 0;
+}
+
+/* Coil (FC01/05) 映射到 holding_reg[DO_IDX] 的位 */
+static int coil_rd_cb(uint16_t addr, bool *state)
+{
+	if (addr >= DO_NUM) {
+		return -ENOTSUP;
+	}
+	*state = (holding_reg[HOLDING_DO_IDX] & BIT(addr)) != 0;
+	return 0;
+}
+
+static int coil_wr_cb(uint16_t addr, bool state)
+{
+	uint16_t val;
+
+	if (addr >= DO_NUM) {
+		return -ENOTSUP;
+	}
+	val = holding_reg[HOLDING_DO_IDX];
+	WRITE_BIT(val, addr, state);
+	mb_set_do(val & 0xFF);
+	holding_reg[HOLDING_DO_IDX] = val & 0xFF;
+	return 0;
+}
+
+/* Discrete Input (FC02) 映射到 input_reg[DI_IDX] 的位 */
+static int discrete_input_rd_cb(uint16_t addr, bool *state)
+{
+	if (addr >= DI_NUM) {
+		return -ENOTSUP;
+	}
+	*state = (input_reg[INPUT_DI_IDX] & BIT(addr)) != 0;
+	return 0;
+}
+
+/* Modbus 用户回调表 (init.c 注册给 modbus_init_server) */
+const struct modbus_user_callbacks io_modbus_cbs = {
+	.holding_reg_rd = holding_reg_rd_cb,
+	.holding_reg_wr = holding_reg_wr_cb,
+	.input_reg_rd = input_reg_rd_cb,
+	.coil_rd = coil_rd_cb,
+	.coil_wr = coil_wr_cb,
+	.discrete_input_rd = discrete_input_rd_cb,
+};
+
+/* ==================== Settings 持久化 (FCB, modbus/ 命名空间) ==================== */
+
+static int mb_set_one(const char *name, size_t len, settings_read_cb read_cb,
+		      void *cb_arg, uint16_t addr)
+{
+	if (len == sizeof(uint16_t)) {
+		uint16_t val;
+
+		if (read_cb(cb_arg, &val, sizeof(val)) == sizeof(val)) {
+			holding_reg[addr] = val;
+		}
+	}
+	return 0;
+}
+
+static int mb_handle_set(const char *name, size_t len, settings_read_cb read_cb,
+			 void *cb_arg)
+{
+	const char *next;
+	size_t name_len = settings_name_next(name, &next);
+
+	/* IP 地址为 8B (4x uint16_t) */
+	if (!next && !strncmp(name, "ip", name_len)) {
+		if (len == sizeof(uint16_t) * 4) {
+			uint16_t ip[4];
+
+			if (read_cb(cb_arg, ip, sizeof(ip)) == sizeof(ip)) {
+				for (int i = 0; i < 4; i++) {
+					holding_reg[HOLDING_IP_ADDR_1_IDX + i] = ip[i];
+				}
+			}
+		}
+		return 0;
+	}
+
+	if (next) {
+		return -ENOENT;
+	}
+
+	if (!strncmp(name, "di_en", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_DI_EN_IDX);
+	}
+	if (!strncmp(name, "ai_en", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_AI_EN_IDX);
+	}
+	if (!strncmp(name, "di_si", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_DI_SI_IDX);
+	}
+	if (!strncmp(name, "ai_si", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_AI_SI_IDX);
+	}
+	if (!strncmp(name, "his", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_HIS_SAVE_IDX);
+	}
+	if (!strncmp(name, "can_id", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_CAN_ID_IDX);
+	}
+	if (!strncmp(name, "can_bps", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_CAN_BPS_IDX);
+	}
+	if (!strncmp(name, "rs485_bps", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_RS485_BPS_IDX);
+	}
+	if (!strncmp(name, "slave_id", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_SLAVE_ID_IDX);
+	}
+	if (!strncmp(name, "heart_en", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_HEART_EN_IDX);
+	}
+	if (!strncmp(name, "heart_to", name_len)) {
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_HEART_TIMEOUT_IDX);
+	}
+
+	return -ENOENT;
+}
+
+/* IP 合法性: 末字节非 0/0xff, 首字节非组播 224-239 */
+static bool ip_is_valid_for_export(void)
+{
+	uint16_t a = holding_reg[HOLDING_IP_ADDR_1_IDX];
+	uint16_t d = holding_reg[HOLDING_IP_ADDR_4_IDX];
+
+	if (d == 0 || d == 0xFF) {
+		return false;
+	}
+	if (a >= 224 && a <= 239) {
+		return false;
+	}
+	return true;
+}
+
+static int mb_handle_export(int (*cb)(const char *name, const void *value,
+				      size_t val_len))
+{
+	(void)cb("modbus/di_en", &holding_reg[HOLDING_DI_EN_IDX], sizeof(uint16_t));
+	(void)cb("modbus/ai_en", &holding_reg[HOLDING_AI_EN_IDX], sizeof(uint16_t));
+	(void)cb("modbus/di_si", &holding_reg[HOLDING_DI_SI_IDX], sizeof(uint16_t));
+	(void)cb("modbus/ai_si", &holding_reg[HOLDING_AI_SI_IDX], sizeof(uint16_t));
+	(void)cb("modbus/his", &holding_reg[HOLDING_HIS_SAVE_IDX], sizeof(uint16_t));
+	(void)cb("modbus/can_id", &holding_reg[HOLDING_CAN_ID_IDX], sizeof(uint16_t));
+	(void)cb("modbus/can_bps", &holding_reg[HOLDING_CAN_BPS_IDX], sizeof(uint16_t));
+	(void)cb("modbus/rs485_bps", &holding_reg[HOLDING_RS485_BPS_IDX], sizeof(uint16_t));
+	(void)cb("modbus/slave_id", &holding_reg[HOLDING_SLAVE_ID_IDX], sizeof(uint16_t));
+	if (ip_is_valid_for_export()) {
+		(void)cb("modbus/ip", &holding_reg[HOLDING_IP_ADDR_1_IDX],
+			 sizeof(uint16_t) * 4);
+	}
+	(void)cb("modbus/heart_en", &holding_reg[HOLDING_HEART_EN_IDX], sizeof(uint16_t));
+	(void)cb("modbus/heart_to", &holding_reg[HOLDING_HEART_TIMEOUT_IDX], sizeof(uint16_t));
+	return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(modbus, "modbus", NULL, mb_handle_set, NULL,
+			       mb_handle_export);
+
+/* ==================== 出厂恢复 ==================== */
+int settings_factory_reset(void)
+{
+	const struct flash_area *fa;
+	int rc = flash_area_open(PARTITION_ID(storage_partition), &fa);
+
+	if (rc == 0) {
+		rc = flash_area_erase(fa, 0, fa->fa_size);
+		flash_area_close(fa);
+	}
+	if (rc != 0) {
+		LOG_ERR("factory reset erase failed: %d", rc);
+		return rc;
+	}
+
+	LOG_INF("factory reset done, rebooting");
+	return 0;
+}

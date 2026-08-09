@@ -1,0 +1,6 @@
+board:
+  name: io_edge_f407vet6
+  full_name: LCKFB STM32F407VET6 IO Edge Board
+  vendor: st
+  socs:
+    - name: stm32f407xx

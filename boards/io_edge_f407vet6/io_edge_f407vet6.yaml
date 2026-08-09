@@ -1,0 +1,16 @@
+identifier: io_edge_f407vet6
+name: IO Edge F407VET6 Board
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+ram: 192
+flash: 512
+supported:
+  - gpio
+  - spi
+  - can
+  - adc
+  - watchdog
+  - counter
+vendor: st

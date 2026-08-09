@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_IO_EDGE_F407VET6
+	bool "IO Edge F407VET6 Board"
+	select SOC_STM32F407XE

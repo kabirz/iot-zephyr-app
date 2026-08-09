@@ -1,0 +1,160 @@
+/*
+ * Copyright (c) 2026 Kabirz.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * io_edge_f407vet6 board - LCKFB STM32F407VET6
+ *   Cortex-M4 @ 168MHz, 512KB Flash, 192KB RAM (128KB SRAM + 64KB CCM)
+ *
+ * 板 DTS 仅包含 MCUboot bootloader 与应用共需的硬件:
+ *   - HSE 13MHz 外部晶振 -> PLL 168MHz
+ *   - USART1 控制台 (PA9/PA10)
+ *   - 内部 Flash 分区 (mcuboot 64KB + slot0 448KB)
+ *   - SPI1 + W25Q128 外部 Flash 分区 (slot1/scratch/storage/littlefs)
+ *     ※ slot1/scratch 必须在板 DTS: bootloader 独立编译, 不含应用 overlay,
+ *       分区放此才能被 MCUboot 找到 (参考 n2e-gw/nrf24_f103rct6 实践)。
+ * 应用专属外设 (W5500/ADC/CAN/DI/DO/LED/RS485/RTC/IWDG) 见应用 overlay。
+ */
+
+/dts-v1/;
+#include <st/f4/stm32f407Xe.dtsi>
+#include <st/f4/stm32f407v(e-g)tx-pinctrl.dtsi>
+
+/ {
+	model = "io_edge_f407vet6 board";
+	compatible = "st,stm32f407";
+
+	chosen {
+		zephyr,console = &usart1;
+		zephyr,shell-uart = &usart1;
+		zephyr,sram = &sram0;
+		zephyr,dtcm = &ccm0;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &slot0_partition;
+		zephyr,canbus = &can1;
+	};
+};
+
+&clk_lsi {
+	status = "okay";
+};
+
+/* HSE 外部 13MHz 晶振 (PH0/PH1) */
+&clk_hse {
+	clock-frequency = <DT_FREQ_M(13)>;
+	status = "okay";
+};
+
+/* PLL: 13MHz / 13(M) = 1MHz * 336(N) = 336MHz / 2(P) = 168MHz SYSCLK */
+&pll {
+	div-m = <13>;
+	mul-n = <336>;
+	div-p = <2>;
+	div-q = <7>;	/* USB OTG = 48MHz */
+	clocks = <&clk_hse>;
+	status = "okay";
+};
+
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(168)>;	/* HCLK = 168MHz */
+	ahb-prescaler = <1>;
+	apb1-prescaler = <4>;		/* PCLK1 = 42MHz */
+	apb2-prescaler = <2>;		/* PCLK2 = 84MHz */
+};
+
+&usart1 {
+	pinctrl-0 = <&usart1_tx_pa9 &usart1_rx_pa10>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
+	status = "okay";
+};
+
+/* 内部 Flash: MCUboot (64KB) + Primary Slot (448KB) */
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 0x00010000>;	/* 64KB */
+			read-only;
+		};
+
+		slot0_partition: partition@10000 {
+			label = "slot0";
+			reg = <0x00010000 0x00070000>;	/* 448KB */
+		};
+	};
+};
+
+/* SPI1: W25Q128 外部 Flash (16MB)
+ *   Secondary Slot (448KB) + Scratch (448KB, SWAP_SCRATCH) + Settings (64KB, FCB)
+ *   + LittleFS (~15MB, 历史记录)
+ * PA4=CS, PA5=SCK, PA6=MISO, PA7=MOSI
+ */
+&spi1 {
+	pinctrl-0 = <&spi1_sck_pa5 &spi1_miso_pa6 &spi1_mosi_pa7>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpioa 4 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+	status = "okay";
+
+	w25q128: w25q128@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <42000000>;
+		jedec-id = [ef 40 18];	/* Winbond W25Q128 */
+		size = <0x8000000>;	/* 128 Mbit = 16MB */
+		status = "okay";
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/* MCUboot Secondary Slot (升级镜像暂存) */
+			slot1_partition: partition@0 {
+				label = "slot1";
+				reg = <0x000000 0x070000>;	/* 448KB */
+			};
+
+			/* MCUboot Scratch (SWAP_SCRATCH 交换暂存) */
+			scratch_partition: partition@70000 {
+				label = "scratch";
+				reg = <0x070000 0x070000>;	/* 448KB */
+			};
+
+			/* Settings Storage (FCB, 设备参数持久化) */
+			storage_partition: partition@e0000 {
+				label = "storage";
+				reg = <0x0e0000 0x010000>;	/* 64KB */
+			};
+
+			/* LittleFS (IO 历史记录文件) */
+			littlefs_partition: partition@f0000 {
+				label = "littlefs";
+				reg = <0x0f0000 0xf10000>;	/* ~15MB */
+			};
+		};
+	};
+};
+
+/* ============================================================
+ * RNG: STM32 硬件随机数发生器 (网络栈 CSPRNG 熵源)
+ * ============================================================ */
+&rng {
+	status = "okay";
+};
+
+/* ============================================================
+ * CAN1: CAN 总线 + CAN 固件升级 (RX=PA11, TX=PA12)
+ * 放板 DTS 供 MCUboot 与应用共享 (未来 MCUboot 可能用 CAN)
+ * ============================================================ */
+&can1 {
+	pinctrl-0 = <&can1_rx_pa11 &can1_tx_pa12>;
+	pinctrl-names = "default";
+	bitrate = <250000>;
+	sample-point = <875>;
+	status = "okay";
+};

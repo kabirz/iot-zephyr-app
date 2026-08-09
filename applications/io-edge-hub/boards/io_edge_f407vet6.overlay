@@ -1,0 +1,146 @@
+/*
+ * io_edge_hub application overlay
+ *
+ * 应用专属外设 (板 DTS 仅含 MCUboot 共需的 clock/console/flash 分区):
+ *   - SPI2 + W5500 以太网 (PB13/14/15, CS=PB12, RST=PD0, INT=PD1)
+ *   - ADC1 四通道 (PC0-PC3, IN10-13): AI1/AI2 电流, AI3/AI4 电压
+ *   - USART2 + RS485 Modbus RTU (PA2/PA3, DE=PA1)
+ *   - CAN1 (PA11/PA12)
+ *   - 16 路 DI / 8 路 DO / 8 路 LED (zephyr,user 节点)
+ *   - RTC (LSI 驱动) / IWDG 看门狗 / 状态 LED (PE7)
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	chosen {
+		zephyr,ethernet = &eth0;
+		zephyr,entropy = &rng;
+		zephyr,settings-partition = &storage_partition;
+	};
+
+	aliases {
+		led0 = &status_led;
+		mcuboot-led0 = &status_led;
+		watchdog0 = &iwdg;
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+		/* 状态 LED: MCUboot 引导指示 + 主循环心跳 (PE7, 兼作 ETH 状态) */
+		status_led: led_status {
+			gpios = <&gpioe 7 GPIO_ACTIVE_HIGH>;
+			label = "Status LED";
+		};
+	};
+
+	zephyr,user {
+		/* 16 路 DI (光耦隔离输入, 下拉)
+		 * DI1-16: PD3,PD4,PD5,PD6,PB5,PB6,PB7,PB8,
+		 *         PB9,PB10,PB11,PD2,PB0,PB1,PB3,PB4
+		 */
+		di-gpios = <&gpiod 3 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiod 4 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiod 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiod 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 7 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 8 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 9 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 10 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 11 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiod 2 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 0 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 1 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 3 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 4 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+
+		/* 8 路 DO (驱动输出): PD7-PD14 */
+		do-gpios = <&gpiod 7 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 8 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 9 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 10 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 11 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 12 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 13 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 14 GPIO_ACTIVE_HIGH>;
+
+		/* 8 路 LED (跟随 DO): PE8-PE15 */
+		led-gpios = <&gpioe 8 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 9 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 10 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 11 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 12 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 13 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 14 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 15 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/* ============================================================
+ * SPI2: W5500 以太网 (SCK=PB13, MISO=PB14, MOSI=PB15, CS=PB12)
+ * RST=PD0, INT=PD1 (MAC 运行时由 UID 派生, local-mac-address 仅默认)
+ * ============================================================ */
+&spi2 {
+	pinctrl-0 = <&spi2_sck_pb13 &spi2_miso_pb14 &spi2_mosi_pb15>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiob 12 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+	status = "okay";
+
+	eth0: w5500@0 {
+		compatible = "wiznet,w5500";
+		reg = <0>;
+		spi-max-frequency = <21000000>;
+		int-gpios = <&gpiod 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		reset-gpios = <&gpiod 0 GPIO_ACTIVE_LOW>;
+		local-mac-address = [00 08 DC 01 02 03];
+		status = "okay";
+	};
+};
+
+/* ============================================================
+ * ADC1: 4 通道模拟输入 (PC0-PC3 = IN10-13)
+ * AI0/AI1 电流 4-20mA, AI2/AI3 电压 0-10V
+ * ============================================================ */
+&adc1 {
+	status = "okay";
+	pinctrl-0 = <&adc1_in10_pc0 &adc1_in11_pc1
+		     &adc1_in12_pc2 &adc1_in13_pc3>;
+	pinctrl-names = "default";
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <2>;
+};
+
+
+/* ============================================================
+ * USART2: RS485 Modbus RTU (TX=PA2, RX=PA3, DE/RE=PA1)
+ * ============================================================ */
+&usart2 {
+	pinctrl-0 = <&usart2_tx_pa2 &usart2_rx_pa3>;
+	pinctrl-names = "default";
+	current-speed = <9600>;
+	status = "okay";
+
+	modbus0 {
+		compatible = "zephyr,modbus-serial";
+		status = "okay";
+		de-gpios = <&gpioa 1 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/* ============================================================
+ * RTC: LSI 驱动 (板载无 LSE 晶振)
+ * ============================================================ */
+&rtc {
+	clocks = <&rcc STM32_CLOCK(APB1, 28)>,
+		 <&rcc STM32_SRC_LSI RTC_SEL(2)>;
+	status = "okay";
+};
+
+/* ============================================================
+ * IWDG: 独立看门狗
+ * ============================================================ */
+&iwdg {
+	status = "okay";
+};

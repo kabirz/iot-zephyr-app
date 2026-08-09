@@ -1,0 +1,58 @@
+/*
+ * Copyright (c) 2026 Kabirz.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * 硬件看门狗 (STM32 独立看门狗 IWDG)
+ * 10 秒超时, 由 DI/AI 采样线程周期喂狗; 采样线程冻结则系统复位。
+ */
+
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/watchdog.h>
+#include <zephyr/logging/log.h>
+#include "watchdog.h"
+
+LOG_MODULE_REGISTER(io_wdt, LOG_LEVEL_INF);
+
+#define WDG_TIMEOUT_MS	10000
+
+static const struct device *const wdt_dev = DEVICE_DT_GET(DT_NODELABEL(iwdg));
+static int wdt_channel;
+
+int watchdog_init(void)
+{
+	if (!device_is_ready(wdt_dev)) {
+		LOG_ERR("IWDG device not ready");
+		return -ENODEV;
+	}
+
+	struct wdt_timeout_cfg cfg = {
+		.window = { .min = 0, .max = WDG_TIMEOUT_MS },
+		.callback = NULL,
+	};
+
+	wdt_channel = wdt_install_timeout(wdt_dev, &cfg);
+	if (wdt_channel < 0) {
+		LOG_ERR("wdt_install_timeout failed: %d", wdt_channel);
+		return wdt_channel;
+	}
+
+	int rc = wdt_setup(wdt_dev, WDT_OPT_PAUSE_HALTED_BY_DBG);
+
+	if (rc) {
+		LOG_ERR("wdt_setup failed: %d", rc);
+		return rc;
+	}
+
+	LOG_INF("IWDG started (%dms)", WDG_TIMEOUT_MS);
+	return 0;
+}
+
+void watchdog_feed(void)
+{
+	if (wdt_channel >= 0) {
+		wdt_feed(wdt_dev, wdt_channel);
+	}
+}
+
+SYS_INIT(watchdog_init, APPLICATION, 50);
