@@ -167,9 +167,14 @@ CAN1 同时用于业务通信与 CAN 固件升级,默认 250kbps。`can_fw_upgra
 FTP Server 端口 21,根目录为 LittleFS(`/lfs1`),存放历史记录文件。
 
 - 认证:`admin`/`admin`(读写),`anonymous`(只读)
-- 模式:**PASV 被动模式**(主动模式 PORT 未实现)
-- 命令:USER/PASS/SYST/TYPE/PWD/CWD/PASV/LIST/RETR/STOR/DELE/SIZE/QUIT
-- 用途:下载历史文件(`data_MMDD_HHMM.raw`)、上传/删除文件
+- 数据连接:**PASV / EPSV 被动 + PORT / EPRT 主动**(RFC 959 + RFC 2428)
+- 最大客户端:**3 个**(单线程 select 多路复用;数据传输时该会话独占;第 4 个连接返回 421)
+- 传输类型:TYPE I(二进制,默认)/ TYPE A(ASCII,自动 CR/LF 转换)
+- 空闲超时:**120 秒**(无命令自动断开)
+- 命令:USER PASS SYST FEAT TYPE PWD CWD CDUP PASV LIST NLST RETR STOR APPE DELE MKD RMD RNFR RNTO SIZE REST NOOP QUIT
+  - LIST 返回标准 Unix `ls -l` 格式(GUI 客户端兼容)
+  - REST 支持 RETR/STOR 断点续传
+- 用途:下载历史文件(`data_MMDD_HHMM.raw`)、上传/删除/重命名文件、目录管理
 
 示例:`ftp 192.168.12.101`,登录后 `ls` / `get data_0809_1200.raw`。
 

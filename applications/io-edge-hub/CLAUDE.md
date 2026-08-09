@@ -46,7 +46,7 @@ main() 线程:
 - **MCUboot 跨 flash**:Primary Slot 内部 Flash(448KB),Secondary Slot + Scratch 外部 W25Q128(SWAP_SCRATCH)。slot1/scratch 必须在板 DTS(bootloader 独立编译,不含应用 overlay)。
 - **硬件 RNG**:`ENTROPY_STM32_RNG` + 板 DTS `&rng` status okay(MCUboot 与 app 共享),替代 `TEST_RANDOM_GENERATOR`。
 - **历史记录用 k_msgq**(非 k_fifo+k_malloc):`K_MSGQ_DEFINE`(16 槽,struct his_data),定长池无堆碎片,满则丢最新记录不阻塞采样线程。
-- **FTP 单线程 PASV**:`ftpd.c` 串行会话(一次一客户端),静态 buffer 无 malloc;仅 PASV 被动模式(主动 PORT 未实现)。
+- **FTP 单线程多客户端**:`ftpd.c` 单线程 select 多路复用(最多 3 个客户端命令交错,RETR/STOR/LIST 传输时该会话独占),per-session buffer;**PASV/EPSV + PORT/EPRT** 数据连接(RFC 959 + 2428);TYPE A(ASCII CR/LF 转换)与 TYPE I;LIST 标准 `ls -l`(历史文件 `data_MMDD_HHMM.raw` 从文件名解析真实创建时间,其他文件用当前 RTC——Zephyr `fs_dirent` 不暴露 mtime)。
 - **栈溢出保护**:`k_sys_fatal_error_handler` 捕获 `K_ERR_STACK_CHK_FAIL` → warm reboot。F4 有 MPU,板 defconfig 用 `HW_STACK_PROTECTION`(非 F1 的 `STACK_SENTINEL`)。
 - **网络断连 DO 安全**:`NET_EVENT_IF_DOWN` 回调立即清零所有 DO 输出(工业安全)+ 设 `link_down` 拒绝新 Modbus TCP 连接。
 - **MAC 从 UID 派生**:hwinfo 读 STM32 96-bit UID,前 3B = Wiznet OUI `00:08:DC`,后 3B 折叠,`net_if_up` 前 `SET_MAC_ADDRESS`。需 `CONFIG_ETH_NET_IF_NO_AUTO_START=y`。
@@ -97,7 +97,7 @@ src/
     time.c                 -- RTC (clock_init POST_KERNEL 41) + set_timestamp + 日志时间戳
     watchdog.c/.h          -- IWDG (10s) + watchdog_feed
   ftp_server/
-    ftpd.c                 -- FTP server (PASV, 串行会话, admin/admin)
+    ftpd.c                 -- FTP server (单线程 select, PASV/EPSV+PORT/EPRT, 3 客户端)
     ftp.h                  -- FTP 配置 (端口/用户/根目录)
 boards/
   io_edge_f407vet6.overlay -- 应用外设 (W5500/ADC/RS485+modbus/DI/DO/LED/RTC/IWDG, entropy chosen)

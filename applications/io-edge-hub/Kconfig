@@ -43,7 +43,7 @@ config IO_MODBUS_TCP_PRIORITY
 
 config IO_FTP_STACK_SIZE
 	int "FTP server thread stack size"
-	default 2048
+	default 4096
 
 config IO_FTP_PRIORITY
 	int "FTP server thread priority"
