@@ -38,6 +38,8 @@ LOG_MODULE_REGISTER(io_tcp, LOG_LEVEL_INF);
 extern const struct modbus_user_callbacks io_modbus_cbs;
 
 static int server_iface = -1;
+/* modbus server 的 unit_id 在启动时固定, 与 handle_client 校验保持一致 */
+static uint8_t srv_unit_id;
 
 /*
  * modbus server 处理在系统工作队列线程(异步, modbus_raw_submit_rx 内部
@@ -68,11 +70,14 @@ static int init_modbus_server(void)
 		return -ENODEV;
 	}
 
+	/* 缓存 unit_id: server 初始化后固定, 校验与 server 内部判定保持一致 */
+	srv_unit_id = (uint8_t)get_holding_reg(HOLDING_SLAVE_ID_IDX);
+
 	struct modbus_iface_param param = {
 		.mode = MODBUS_MODE_RAW,
 		.server = {
 			.user_cb = (struct modbus_user_callbacks *)&io_modbus_cbs,
-			.unit_id = (uint8_t)get_holding_reg(HOLDING_SLAVE_ID_IDX),
+			.unit_id = srv_unit_id,
 		},
 		.rawcb = { .raw_tx_cb = server_raw_cb, .user_data = NULL },
 	};
@@ -128,9 +133,9 @@ static int handle_client(int client)
 		}
 	}
 
-	/* unit_id 不匹配时 server 会丢帧不回复, 提前回异常避免等超时 */
-	if (req.unit_id != 0 &&
-	    req.unit_id != (uint8_t)get_holding_reg(HOLDING_SLAVE_ID_IDX)) {
+	/* unit_id 不匹配时 server 会丢帧不回复, 提前回异常避免等超时
+	 * (用 server 启动时固定的 srv_unit_id 判定, 与库内部一致) */
+	if (req.unit_id != 0 && req.unit_id != srv_unit_id) {
 		LOG_WRN("unit id mismatch: %u", req.unit_id);
 		resp = req;
 		modbus_raw_set_server_failure(&resp);

@@ -109,6 +109,10 @@ static int holding_reg_wr_cb(uint16_t addr, uint16_t reg)
 		/* DO 输出 + LED 联动 */
 		mb_set_do(reg & 0xFF);
 		break;
+	case HOLDING_SLAVE_ID_IDX:
+		/* RTU/TCP server 的 unit_id 在启动时固定, 需重启生效 */
+		LOG_WRN("slave_id change requires reboot");
+		break;
 	case HOLDING_HIS_SAVE_IDX:
 		history_enable_write(reg != 0);
 		break;

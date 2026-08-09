@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 模拟输入: 4 路 ADC (ADC1 IN10-IN13, PC0-PC3)
- *   - 通道号与工程量转换系数 st,coeff 均来自设备树:
+ *   - 通道号与工程量转换系数 (ai-coeffs) 均来自设备树:
  *     /zephyr,user 的 io-channels 引用 &adc1 下 channel@a-d 子节点
  *   - AI0/AI1 (IN10/11): 电流 4-20mA, value = 7.414 * voltage / 10  (单位 0.01mA)
  *   - AI2/AI3 (IN12/13): 电压 0-10V,  value = 3.7037 * voltage / 10 (单位 0.01V)
@@ -35,7 +35,8 @@ static const struct adc_dt_spec adc_specs[] = {
 };
 
 /* 工程量转换系数 (放大 1e4 倍做整数运算): 从 /zephyr,user 的 ai-coeffs 读取,
- * 与 io-channels 顺序一一对应 */
+ * 与 io-channels 顺序一一对应 (数量错误时按少于 AI_NUM 的配置静默补 0,
+ * 由 adc_init 的 io-channels 数量校验 + 线程 MIN 上限兜底) */
 #define AI_COEFF_FN(node_id, prop, idx) DT_PROP_BY_IDX(node_id, prop, idx),
 static const uint32_t ai_coeff[AI_NUM] = {
 	DT_FOREACH_PROP_ELEM(ADC_NODE, ai_coeffs, AI_COEFF_FN)
@@ -68,7 +69,11 @@ static void adc_thread(void *p1, void *p2, void *p3)
 			si = SAMPLE_INTERVAL_MAX;
 		}
 
-		for (int i = 0; i < (int)ARRAY_SIZE(adc_specs); i++) {
+		/* 采样循环上限取 min(adc_specs, AI_NUM), 防止 io-channels 配置过多时
+		 * 越界访问 ai_coeff[] (ai_coeff 固定 AI_NUM 大小) */
+		int ch_num = MIN(ARRAY_SIZE(adc_specs), AI_NUM);
+
+		for (int i = 0; i < ch_num; i++) {
 			if (!(en & BIT(i))) {
 				continue;
 			}

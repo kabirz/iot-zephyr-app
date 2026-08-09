@@ -2,16 +2,17 @@
  * Copyright (c) 2026 Kabirz.
  * SPDX-License-Identifier: Apache-2.0
  *
- * IO 历史记录: msgq 累积 + 系统工作队列 (k_work) 批量写
+ * IO 历史记录: msgq 累积 + 专用工作队列 (k_work) 批量写
  *
- *   - DI/AI 采样线程 send_history_data() 入 msgq + 触发延迟 work (1s)
- *   - work handler 批量取 msgq, 写当前文件 (保持打开, fs_sync 批量 flush),
- *     多条记录一次同步, 大幅减少 Flash 写次数
+ *   - DI/AI 采样线程 send_history_data() 入 msgq + 触发 work (合并去重)
+ *   - 专用工作队列 (hist_work_q) handler 批量取 msgq, 写当前文件
+ *     (保持打开, fs_sync 批量 flush), 多条记录一次同步, 减少 Flash 写次数
  *   - 单文件 1MB 上限: 超过则关闭 + 新建 data_MMDD_HHMMSS.raw
  *   - 保留至多 10 个文件, 超限删最旧 (按名序 = 时间序)
  *   - DI 10B / AI 16B, 与 RT-Thread / PC 解析工具兼容
  *
- * 无独立线程: 复用系统工作队列 (CONFIG_SYSTEM_WORKQUEUE)。
+ * 无独立应用线程: 复用专用工作队列 (独立于系统工作队列, 避免 LittleFS
+ * 写盘阻塞 Modbus server 的异步处理)。
  */
 
 #include <stdio.h>
@@ -32,6 +33,10 @@ LOG_MODULE_REGISTER(io_history, LOG_LEVEL_INF);
 
 K_MSGQ_DEFINE(his_msgq, sizeof(struct his_data), 16, 4);
 
+/* 专用工作队列: 历史落盘与 Modbus server (系统工作队列) 隔离 */
+K_KERNEL_STACK_DEFINE(hist_q_stack, 2048);
+static struct k_work_q hist_work_q;
+
 static volatile bool history_enabled;
 static struct fs_file_t his_fp;
 static bool his_fp_open;
@@ -42,7 +47,7 @@ static void cleanup_old_files(void)
 {
 	struct fs_dir_t dir;
 	struct fs_dirent ent;
-	char names[HIST_MAX_FILES + 2][24];
+	char names[32][24];
 	int n = 0;
 
 	fs_dir_t_init(&dir);
@@ -143,10 +148,16 @@ static void his_flush(bool close_after)
 			break;
 		}
 		size_t len = (d.type == DI_TYPE) ? 10U : 16U;
+		ssize_t wr = fs_write(&his_fp, &d, len);
 
-		if (fs_write(&his_fp, &d, len) == (ssize_t)len) {
+		if (wr == (ssize_t)len) {
 			his_cur_size += len;
 			wrote = true;
+		} else {
+			/* 部分写入: 文件可能超限, 强制下次轮转新文件 */
+			LOG_WRN("history write short (%zd/%zu)", wr, len);
+			his_cur_size = HIST_FILE_MAX;
+			break;
 		}
 	}
 
@@ -167,12 +178,22 @@ static void his_work_handler(struct k_work *work)
 
 K_WORK_DEFINE(his_work, his_work_handler);
 
+/* 专用工作队列初始化 (priority 5: 早于 settings 11, 供历史开关同步使用) */
+static int hist_work_q_init(void)
+{
+	k_work_queue_start(&hist_work_q, hist_q_stack,
+			   K_KERNEL_STACK_SIZEOF(hist_q_stack), 10, NULL);
+	return 0;
+}
+SYS_INIT(hist_work_q_init, APPLICATION, 5);
+
 void history_enable_write(bool en)
 {
 	history_enabled = en;
 	LOG_INF("history %s", en ? "enabled" : "disabled");
 	if (!en) {
-		his_flush(true);
+		/* 异步 flush + 关闭, 不在调用线程 (Modbus 写回调) 做 Flash IO */
+		k_work_submit_to_queue(&hist_work_q, &his_work);
 	}
 }
 
@@ -184,9 +205,9 @@ void send_history_data(const struct his_data *data)
 		return;
 	}
 	if (k_msgq_put(&his_msgq, data, K_NO_WAIT) == 0) {
-		/* 立即提交系统工作队列 (k_work 合并: 执行前重复提交只跑一次)。
+		/* 提交到专用工作队列 (k_work 合并: 执行前重复提交只跑一次)。
 		 * handler 批量取 msgq + 保持文件打开 + fs_sync, 减少 Flash 写 */
-		k_work_submit(&his_work);
+		k_work_submit_to_queue(&hist_work_q, &his_work);
 	} else if ((atomic_inc(&drop_cnt) % 100) == 0) {
 		/* 后台落盘慢时 msgq 会满, 节流告警 (已丢弃 %u 条) */
 		LOG_WRN("history msgq full, %u samples dropped", (uint32_t)drop_cnt);

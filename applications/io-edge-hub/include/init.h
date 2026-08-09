@@ -109,6 +109,11 @@ void send_history_data(const struct his_data *data);
 /* 网络链路是否就绪 (IF_UP/IF_DOWN 维护) */
 bool net_link_is_up(void);
 
+/* ==================== 延迟重启 (main.c) ==================== */
+/* 设置延迟重启标志 (主循环刷新日志后重启), 供 UDP 改 IP 等调用 */
+void set_reboot_status(bool en);
+bool get_reboot_status(void);
+
 #ifdef __cplusplus
 }
 #endif

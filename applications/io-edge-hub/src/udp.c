@@ -57,6 +57,10 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
 			ok = 1;
 		}
 		udp_fw_reply(cmd, &ok, sizeof(ok));
+		if (ok) {
+			/* 回复发出后延迟重启, 让新 IP 生效 */
+			set_reboot_status(true);
+		}
 		return true;
 	}
 
