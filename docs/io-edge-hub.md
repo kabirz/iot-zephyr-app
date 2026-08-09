@@ -8,8 +8,8 @@
 > **参考实现**: RT-Thread 版本 (已验证硬件) / Zephyr 版本 (已验证实现)
 > **代码仓库**: `~/code/app/apps/` (iot-zephyr-app west manifest + Zephyr module)
 > **共享库**: `~/code/app/apps/libs/` (`udp_fw_upgrade`, `can_fw_upgrade`)
-> **已有 Zephyr 实现**: 已验证实现 (Modbus/FTP/HTTP/RTC/心跳等已验证)
-> **文档版本**: v3.2 (v3.1 复核修正: 网络/签名/API 签名与库对齐)
+> **已有 Zephyr 实现**: 已验证实现 (Modbus/FTP/RTC/栈保护/状态 LED 等已验证)
+> **文档版本**: v3.3 (v3.2 复核修正: 心跳→TCP Keepalive, ADC 设备树化, code review 修复)
 > **日期**: 2026-08-09
 
 ---
@@ -38,7 +38,7 @@
 
 `io-edge-hub` 是一个基于 Zephyr RTOS 的工业级 IO 数据采集边缘节点，部署在 STM32F407VET6 MCU 上，通过 W5500 以太网芯片接入网络。设备具备 16 路数字输入采集、8 路数字输出控制、4 路模拟量采集能力，通过 Modbus TCP/RTU 协议向上位机提供实时数据，同时具备历史数据存储、FTP 文件访问、远程固件升级、远程参数配置等完整运维能力。
 
-本项目从已有的 RT-Thread 实现迁移至 Zephyr RTOS，复用已验证的硬件设计和业务逻辑。同时参考已有的 Zephyr 实现，直接复用其已验证的 Modbus RAW ADU TCP 服务器、FTP 服务器、RTC 时间管理、心跳看门狗、Settings 直接映射保持寄存器等核心模块。作为 `iot-zephyr-app` 仓库 (`~/code/app/apps/`) 下的一个应用，与已有项目 `n2e-gw` (W5500 + UDP 固件升级) 和 `angle-handler` (CAN 固件升级) 共享底层固件升级库。
+本项目从已有的 RT-Thread 实现迁移至 Zephyr RTOS，复用已验证的硬件设计和业务逻辑。同时参考已有的 Zephyr 实现，直接复用其已验证的 Modbus RAW ADU TCP 服务器、FTP 服务器、RTC 时间管理、Settings 直接映射保持寄存器等核心模块。主站连接存活检测使用 **TCP Keepalive**（不再使用应用层心跳）。作为 `iot-zephyr-app` 仓库 (`~/code/app/apps/`) 下的一个应用，与已有项目 `n2e-gw` (W5500 + UDP 固件升级) 和 `angle-handler` (CAN 固件升级) 共享底层固件升级库。
 
 > **术语说明**: 本文档沿用工业自动化标准缩写 —
 > - **DI** — Digital Input，数字输入（本设备 16 路）
@@ -62,12 +62,12 @@
 | F10 | **UDP 参数配置** | 远程配置 IP/采样率/Modbus 参数 | UDP 广播 + 文本协议 | **共享 `udp_fw_upgrade` 库 app handler** |
 | F11 | MCUboot 引导 | 安全引导 + 固件签名验证 | 无 bootloader | **MCUboot SWAP_SCRATCH + RSA-2048** |
 | F12 | CAN 通信 | CAN1 标准帧收发 + CAN 固件升级 | can_app.c | **共享库 `can_fw_upgrade` + app handler** |
-| F13 | 看门狗 | 独立看门狗 (IWDG) + **心跳看门狗** | 无 | Zephyr watchdog + **复用已验证实现 心跳机制** |
-| F14 | 时间同步 | RTC + SNTP | RTC | **复用已验证实现 `time.c`** (RTC→系统时钟同步) |
+| F13 | 看门狗 | 独立看门狗 (IWDG) + **TCP Keepalive** | 无 | Zephyr watchdog + Modbus TCP **SO_KEEPALIVE** |
+| F14 | 时间同步 | RTC | RTC | **复用已验证实现 `time.c`** (RTC→系统时钟同步) |
 | F15 | **参数持久化** | 设备参数 Flash 存储 | magic + CRC16 | **Zephyr settings + FCB，直接映射 holding 寄存器** |
 | F16 | **密钥哈希校验** | 固件升级时验证签名密钥 | 无 | **`fw_keyhash.h` (SHA-256)** |
 | F17 | **版本管理** | git commit 哈希版本号 | 无 | **`fw_gitver.h` (`gen_gitver.py`)** |
-| F18 | **心跳看门狗** | Modbus 通信超时自动清零 DO | 无 | **复用已验证实现 `init.c` heart_poll** |
+| F18 | **TCP Keepalive** | Modbus TCP 主站异常掉线自动断开连接 | 无 | **`SO_KEEPALIVE`** + `CONFIG_NET_TCP_KEEPALIVE` |
 | F19 | **网络断连安全** | link down 时清零 DO + 拒绝新连接 | 无 | **复用已验证实现 `tcp.c` NET_EVENT_IF_DOWN** |
 | F20 | **栈溢出保护** | 栈溢出时自动重启 | 无 | **复用已验证实现 `main.c` k_sys_fatal_error_handler** |
 | F21 | **状态 LED** | MCUboot LED + 主循环闪烁指示 | 无 | **复用已验证实现 `main.c` status LED** |
@@ -79,7 +79,7 @@
 - **W5500**: 硬件 TCP/IP 协议栈降低 MCU 负载，SPI 接口简化硬件设计
 - **W25Q128**: 16MB 容量满足 Secondary Slot (448KB) + Scratch (448KB) + 参数存储 (64KB) + 历史记录 (~15MB) 的需求
 - **共享库架构**: 复用 `~/code/app/apps/libs/` 下已验证的 `udp_fw_upgrade` 和 `can_fw_upgrade` 库，通过 SYS_INIT 自启动，应用仅需注册 app handler 处理业务命令
-- **已验证实现模块复用**: Modbus RAW ADU TCP 服务器 (`tcp.c`)、FTP 服务器 (`ftp_server/`)、ADC/DIO 驱动 (`adc.c`/`dio.c`)、RTC 时间管理 (`time.c`)、心跳看门狗 (`init.c` heart_poll)、历史记录 (`history.c`) 等模块已在 `已验证实现` 项目中验证通过，直接复用可大幅减少开发风险
+- **已验证实现模块复用**: Modbus RAW ADU TCP 服务器 (`tcp.c`)、FTP 服务器 (`ftp_server/`)、ADC/DIO 驱动 (`adc.c`/`dio.c`)、RTC 时间管理 (`time.c`)、历史记录 (`history.c`) 等模块已在 `已验证实现` 项目中验证通过，直接复用可大幅减少开发风险
 - **Modbus RAW ADU 模式**: 使用 `MODBUS_MODE_RAW` + 自定义 TCP Server (`select()` 多路复用)，比 Zephyr 内置 Modbus TCP Server 更灵活，可控制客户端连接数、超时、link-down 安全处理
 - **Settings 直接映射 holding 寄存器**: 使用 `"modbus/"` 命名空间直接映射 `holding_reg[]` 数组，避免维护两份数据 (参数结构体 + 寄存器数组)，`settings_save()` 全量导出，`settings_save_one()` 增量保存
 - **MCUboot SWAP_SCRATCH**: 支持固件回滚 (rollback)，比 Overwrite-only 更安全；与 `n2e-gw` 和 `angle-handler` 项目一致
@@ -423,8 +423,6 @@ STM32F407VET6 内部 Flash 共 512KB (0x08000000 - 0x0807FFFF)，划分为两个
 | `modbus/rs485_bps` | HOLDING_RS485_BPS_IDX | 2B | 9600 | RS485 波特率 | 0x08 |
 | `modbus/slave_id` | HOLDING_SLAVE_ID_IDX | 2B | 1 | Modbus RTU Slave ID | 0x09 |
 | `modbus/ip` | HOLDING_IP_ADDR_1..4 | 8B | 192.168.12.101 | IP 地址 (4x uint16_t) | 0x0A-0x0D |
-| `modbus/heart/enable` | HOLDING_HEART_EN_IDX | 2B | 0 | 心跳使能 | 0x12 |
-| `modbus/heart/time` | HOLDING_HEART_TIMEOUT_IDX | 2B | 2000 | 心跳超时 (ms) | 0x13 |
 
 #### 3.4.3 实现模式 (复用已验证实现 function.c)
 
@@ -616,14 +614,15 @@ SYS_INIT(main_settings_init, APPLICATION, 10);
 | **can_fw_rx** | 8 | 1024B | **CAN 固件升级 + 业务帧分发** (共享库) | can_fw_upgrade.c (SYS_INIT) |
 | **di** | 1 | 512B | **DI 定时采样** (复用已验证实现 `dio.c`) | dio.c (K_THREAD_DEFINE) |
 | **adc_io** | 1 | 512B | **AI 定时采样** (复用已验证实现 `adc.c`) | adc.c (K_THREAD_DEFINE) |
-| **heart** | 12 | 512B | **心跳看门狗** — Modbus 通信超时清零 DO (复用已验证实现) | init.c (K_THREAD_DEFINE) |
 | modbus_rtu | 13 | 1024B | Modbus RTU Slave (复用已验证实现 `rtu.c`) | rtu.c (SYS_INIT) |
 | **mb_tcp** | 13 | 2048B | **Modbus TCP RAW ADU Server** — select() 多路复用，3 客户端 (复用已验证实现 `tcp.c`) | tcp.c (K_THREAD_DEFINE) |
 | **ftp** | 13 | 2048B | **FTP 服务器** — 控制连接 + 数据连接 (复用已验证实现 `ftp_server/`) | ftpd.c (K_THREAD_DEFINE) |
 | history_writer | 6 | 2048B | 从 k_work + k_fifo 取数据写入 LittleFS (复用已验证实现 `history.c`) | history.c (K_WORK) |
 | **udp_tx** | 7 | 1024B | **UDP 异步发送** (msgq + 低优先级线程) | udp.c |
 
-> **v3.1 线程变化**: 从 已验证实现 复用的线程使用其原始优先级和栈大小。DI/AI 采样线程栈仅 512B (已验证实现足够)。新增心跳线程 (512B, 优先级 12)。Modbus TCP 栈 2048B (select() 需要较大栈)。总栈消耗约 15KB。
+> **v3.1 线程变化**: 从 已验证实现 复用的线程使用其原始优先级和栈大小。DI/AI 采样线程栈仅 512B (已验证实现足够)。Modbus TCP 栈 2048B (select() 需要较大栈)。总栈消耗约 15KB。
+>
+> **v3.3 变更**: 移除 `heart` 心跳线程（应用层心跳废除，改由 Modbus TCP socket 的 `SO_KEEPALIVE` 检测主站连接存活，无独立线程开销）。
 >
 > **固件升级库线程优先级**: `udp_fw_rx`/`can_fw_rx` 优先级为库 Kconfig 默认 `CONFIG_UDP_FW_RX_PRIORITY` / `CONFIG_CAN_FW_UPGRADE_RX_PRIORITY`（均为 8），并在 §8.1 prj.conf 显式固定为 8。如需更高优先级，改这两个 Kconfig 即可。
 
@@ -668,8 +667,7 @@ main()
        +-- 网络服务启动 (link up 后):
            |-- Modbus TCP Server (端口 502, K_THREAD_DEFINE, 复用已验证实现 tcp.c)
            |-- FTP Server (端口 21, K_THREAD_DEFINE, 复用已验证实现 ftp_server/)
-           |-- udp_fw_upgrade 自动绑定 socket (NET_EVENT_IF_UP 触发)
-           +-- SNTP 时间同步
+           +-- udp_fw_upgrade 自动绑定 socket (NET_EVENT_IF_UP 触发)
 ```
 
 > **关键配置** (prj.conf):
@@ -706,9 +704,8 @@ main()
  * holding_reg[] 和 input_reg[] 是唯一的参数数据源
  * settings 直接映射到 holding_reg[]，无需额外参数结构体
  */
-static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS]; /* 21 个 */
+static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS]; /* 18 个 */
 static uint16_t input_reg[CONFIG_MODBUS_INPUT_REGISTER_NUMBERS];     /* 6 个 */
-static uint8_t   coils_state[CONFIG_MODBUS_COLS_REGISTER_NUMBERS];   /* 8 个 */
 
 /* 全局访问函数 (复用已验证实现 function.c) */
 uint16_t get_holding_reg(uint16_t addr);
@@ -728,9 +725,6 @@ struct his_data {
         struct { uint16_t ai_en_status; uint16_t ai_value[AI_NUM]; } ai __packed;
     } __packed;
 } __packed;
-
-/* 心跳事件 (复用已验证实现 init.c) */
-void heart_event_send(void);  /* Modbus TCP 收到请求时调用 */
 ```
 
 ### 4.5 内存规划 (192KB RAM)
@@ -805,9 +799,10 @@ int mb_set_do(uint16_t val);  /* 设置 DO 输出 + LED 联动，val bit0-7 对�
 - **TCP Server**: 自定义 socket + `select()` 多路复用 (POSIX API)
 - **端口**: 502
 - **最大客户端**: 3 (同一时刻仅允许 1 个活跃连接，新连接等待)
-- **会话超时**: 30 秒无数据自动断开
+- **会话超时**: 30 秒无数据自动断开; 客户端 socket 设 `SO_RCVTIMEO`/`SO_SNDTIMEO` 5s 兜底 (防恶意/慢客户端挂死服务线程)
+- **TCP Keepalive**: 客户端 socket 启用 `SO_KEEPALIVE` (`CONFIG_NET_TCP_KEEPALIVE`, 空闲 30s / 探测 5s / 3 次)，主站异常掉线时协议栈自动断开连接
 - **网络事件**: `NET_EVENT_IF_DOWN` 时清零 DO 输出 + 设 `link_down` 标志 (拒绝新连接)
-- **心跳**: 每收到 Modbus TCP 请求调用 `heart_event_send()` 重置心跳定时器
+- **响应匹配**: 每个请求使用独立 `struct modbus_adu` + 按 MBAP `trans_id` 匹配响应，消除多客户端响应交叉污染 (库为异步处理)
 
 ```c
 /* 核心流程 (复用已验证实现 tcp.c) */
@@ -818,12 +813,11 @@ static void tcp_poll(void) {
     /* 2. init_modbus_server() — modbus_init_server(RAW mode) */
     /* 3. socket() + bind() + listen() on port 502 */
     /* 4. while(1): select() 多路复用 */
-    /*    - accept 新连接 (检查连接数/超时/link_down) */
-    /*    - recv MBAP header (7B) + modbus_raw_get_header() */
-    /*    - recv data + modbus_raw_submit_rx() */
-    /*    - k_sem_take(&received) 等待处理完成 */
+    /*    - accept 新连接 (检查连接数/超时/link_down; 设 SO_KEEPALIVE + SO_RCVTIMEO/SO_SNDTIMEO) */
+    /*    - recv MBAP header (8B) + modbus_raw_get_header() (校验 proto_id/length) */
+    /*    - recv data + 校验 unit_id + modbus_raw_submit_rx() */
+    /*    - 等待响应并按 trans_id 匹配 (k_sem_take + 超时) */
     /*    - modbus_raw_put_header() + send response */
-    /*    - heart_event_send() 重置心跳 */
 }
 ```
 
@@ -853,9 +847,11 @@ static void tcp_poll(void) {
 | 0x04 | INPUT_AI3 | AI4 值 (0.01V) |
 | 0x05 | INPUT_DI | DI1-16 状态 (16-bit bitmap) |
 
-**Holding Registers (读写, 21 个 — v3.1 扩展)**:
+**Holding Registers (读写, 18 个)**:
 
 > **v3.1 变更**: 从 15 个扩展到 21 个，新增 timestamp/reboot/heartbeat 寄存器。寄存器布局与已验证实现一致。
+>
+> **v3.3 变更**: 移除 heartbeat 寄存器 (0x12-0x14)，Holding 从 21 个缩减为 18 个 (心跳改由 TCP Keepalive 实现，不占寄存器)。
 
 | 地址 | 名称 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -877,9 +873,6 @@ static void tcp_poll(void) {
 | 0x0F | HOLDING_TIMESTAMPL | 0 | 时间戳低16位 (设置时间) |
 | 0x10 | HOLDING_CFG_SAVE | 0 | 参数保存触发 (写非0 → settings_save) |
 | 0x11 | HOLDING_REBOOT | 0 | 写1触发系统重启 |
-| 0x12 | HOLDING_HEART_EN | 0 | 心跳使能 |
-| 0x13 | HOLDING_HEART_TIMEOUT | 2000 | 心跳超时 (ms) |
-| 0x14 | HOLDING_HEART | 0 | 心跳值 (写1喂狗) |
 
 **保持寄存器写入回调** (复用已验证实现 `function.c` holding_reg_wr):
 
@@ -1081,8 +1074,6 @@ SETTINGS_STATIC_HANDLER_DEFINE(modbus, "modbus",
 | `modbus/rs485_bps` | HOLDING_RS485_BPS_IDX | 2B | RS485 波特率 |
 | `modbus/slave_id` | HOLDING_SLAVE_ID_IDX | 2B | Modbus Slave ID |
 | `modbus/ip` | HOLDING_IP_ADDR_1..4 | 8B | IP 地址 (4x uint16_t) |
-| `modbus/heart/enable` | HOLDING_HEART_EN_IDX | 2B | 心跳使能 |
-| `modbus/heart/time` | HOLDING_HEART_TIMEOUT_IDX | 2B | 心跳超时 |
 
 #### 5.5.2 参数加载与保存
 
@@ -1120,8 +1111,6 @@ int mb_handle_export(int (*cb)(const char *name, const void *value, size_t val_l
         !IN_RANGE(get_holding_reg(HOLDING_IP_ADDR_1_IDX), 224, 239)) {
         cb("modbus/ip", holding_reg + HOLDING_IP_ADDR_1_IDX, sizeof(uint16_t) * 4);
     }
-    cb("modbus/heart/enable", holding_reg + HOLDING_HEART_EN_IDX, sizeof(uint16_t));
-    cb("modbus/heart/time", holding_reg + HOLDING_HEART_TIMEOUT_IDX, sizeof(uint16_t));
     return 0;
 }
 ```
@@ -1191,32 +1180,24 @@ struct his_data {
 
 ### 5.7 系统管理模块 (`src/sys/` + `src/main.c`)
 
-#### 5.7.1 心跳看门狗 (`init.c` — 复用已验证实现)
+#### 5.7.1 主站连接保活 (TCP Keepalive — 取代应用层心跳)
 
-> **复用来源**: `modbus/init.c` (heart_poll + heart_event_send)
+> **v3.3 变更**: 废除应用层心跳 (原 `heart_poll` 线程 + HEART 寄存器 0x12-0x14 + `heart_event_send`)。Modbus 寄存器层不引入心跳机制，主站连接存活由 Modbus TCP 客户端 socket 的 **TCP Keepalive** 检测。
 
-- **功能**: Modbus TCP 通信心跳看门狗，超时无通信时自动清零 DO 输出 (工业安全)
-- **线程**: `K_THREAD_DEFINE(heart, 512, heart_poll, ..., 12, 0, 0)` — 优先级 12, 栈 512B
-- **超时**: 从 `holding_reg[HOLDING_HEART_TIMEOUT_IDX]` 读取 (默认 2000ms, 最小 500ms)
-- **喂狗**: 每收到 Modbus TCP 请求调用 `heart_event_send()` (通过 `k_sem_give(&sync_sem)`)
-- **超时动作**: 清零 `HOLDING_HEART_IDX` + `HOLDING_DO_IDX` + `mb_set_do(0)` (断开所有输出)
+- **原理**: `accept()` 后对客户端 socket 执行 `setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1)`，Zephyr 网络栈周期性发送 keepalive 探测包；主站异常掉线 (断电/网线拔出/进程崩溃) 时，探测无响应即判定连接断开并自动关闭该 socket (`select` 循环中 `recv` 返回 0/错误)。
+- **探测参数** (prj.conf，全局限定):
+  ```
+  CONFIG_NET_TCP_KEEPALIVE=y
+  CONFIG_NET_TCP_KEEPIDLE_DEFAULT=30   # 空闲 30s 后开始探测
+  CONFIG_NET_TCP_KEEPINTVL_DEFAULT=5   # 每 5s 一次探测
+  CONFIG_NET_TCP_KEEPCNT_DEFAULT=3     # 连续 3 次无响应判定掉线 (~45s)
+  ```
+- **DO 安全**: 仅由 `NET_EVENT_IF_DOWN` (以太网链路断开) 与 30s 会话超时关闭连接时处理，应用层不再有"超时无请求清零 DO"逻辑。
 
 ```c
-/* 复用已验证实现 init.c */
-static K_SEM_DEFINE(sync_sem, 0, 1);
-static void heart_poll(void *p) {
-    while (1) {
-        int timeout = MAX(get_holding_reg(HOLDING_HEART_TIMEOUT_IDX), 500);
-        if (k_sem_take(&sync_sem, K_MSEC(timeout))) {
-            if (get_holding_reg(HOLDING_HEART_EN_IDX)) {
-                update_holding_reg(HOLDING_HEART_IDX, 0);
-                update_holding_reg(HOLDING_DO_IDX, 0);
-                mb_set_do(0);  /* 安全断开所有 DO */
-            }
-        }
-    }
-}
-void heart_event_send(void) { k_sem_give(&sync_sem); }
+/* tcp.c — accept 后启用 Keepalive */
+int ka = 1;
+(void)setsockopt(c, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka));
 ```
 
 #### 5.7.2 RTC 时间管理 (`time.c` — 复用已验证实现)
@@ -1227,7 +1208,6 @@ void heart_event_send(void) { k_sem_give(&sync_sem); }
 - **启动同步**: `SYS_INIT(clock_init, POST_KERNEL, 41)` — 从 RTC 读取时间设置系统时钟
 - **日志时间戳**: `log_set_timestamp_func(sync_rtc_timestamp_get, 1)` — 日志使用 RTC 时间
 - **时间设置**: `set_timestamp(time_t t)` — 通过 Modbus 寄存器 0x0E/0x0F 或 UDP 命令设置
-- **SNTP**: 网络就绪后定期 SNTP 同步 (补充 RTC)
 
 ```c
 /* 复用已验证实现 time.c */
@@ -1338,10 +1318,9 @@ int main(void)
     /* 6. udp_fw_upgrade SYS_INIT — 创建配置 socket, 等待 NET_EVENT_IF_UP */
     /* 7. can_fw_upgrade SYS_INIT — 初始化 CAN, 启动 RX 线程 */
     /* 8. DI/AI 采样线程 (K_THREAD_DEFINE) — 自动启动 */
-    /* 9. 心跳线程 (K_THREAD_DEFINE) — 自动启动 */
-    /* 10. Modbus TCP 线程 (K_THREAD_DEFINE) — 自动启动 */
-    /* 11. FTP 线程 (K_THREAD_DEFINE) — 自动启动 */
-    /* 12. 注册固件升级 app handler */
+    /* 9. Modbus TCP 线程 (K_THREAD_DEFINE) — 自动启动 */
+    /* 10. FTP 线程 (K_THREAD_DEFINE) — 自动启动 */
+    /* 11. 注册固件升级 app handler */
     udp_fw_set_app_handler(app_cmd_handler, NULL);
     udp_fw_allow_broadcast_cmd(UDP_CMD_DISCOVER);
     can_fw_set_app_handler(mod_can_app_rx, NULL);
@@ -1503,9 +1482,11 @@ int main(void)
 | 30005 | 0x04 | AI4 值 (电压, 0.01V) |
 | 30006 | 0x05 | DI1-16 状态 (16-bit bitmap) |
 
-#### Holding Registers (读写, 21 个, 地址 40001-40021)
+#### Holding Registers (读写, 18 个, 地址 40001-40018)
 
 > **v3.1 变更**: 从 15 个扩展到 21 个，新增 timestamp/reboot/heartbeat 寄存器。布局与已验证实现一致。
+>
+> **v3.3 变更**: 移除 heartbeat 寄存器 (0x12-0x14)，Holding 从 21 个缩减为 18 个。
 
 | 地址 | 寄存器 | 默认值 | 说明 |
 |------|--------|--------|------|
@@ -1527,9 +1508,6 @@ int main(void)
 | 40016 | 0x0F | 0 | 时间戳低16位 |
 | 40017 | 0x10 | 0 | 参数保存触发 (写非0 → settings_save) |
 | 40018 | 0x11 | 0 | 写1触发系统重启 |
-| 40019 | 0x12 | 0 | 心跳使能 |
-| 40020 | 0x13 | 2000 | 心跳超时 (ms) |
-| 40021 | 0x14 | 0 | 心跳值 |
 
 ---
 
@@ -1585,7 +1563,7 @@ int main(void)
             │
             ├── modbus/                      # Modbus 通信模块 (复用已验证实现)
             │   ├── CMakeLists.txt
-            │   ├── init.c                   # modbus_init: 寄存器初始化 + settings_load + 静态IP + 心跳线程
+            │   ├── init.c                   # modbus_init: settings_subsys_init + load (恢复 holding_reg + 历史使能)
             │   ├── init.h                   # 寄存器枚举, his_data, 函数声明
             │   ├── function.c               # 寄存器读写回调 + Settings handler (modbus/ 命名空间)
             │   ├── tcp.c                    # Modbus TCP RAW ADU Server (select() 多路复用)
@@ -1690,6 +1668,12 @@ CONFIG_MODBUS_ROLE_SERVER=y
 CONFIG_MODBUS_RAW_ADU=y
 CONFIG_MODBUS_NUMOF_RAW_ADU=1
 
+# ==================== TCP Keepalive (检测主站连接存活, 取代应用层心跳) ====================
+CONFIG_NET_TCP_KEEPALIVE=y
+CONFIG_NET_TCP_KEEPIDLE_DEFAULT=30
+CONFIG_NET_TCP_KEEPINTVL_DEFAULT=5
+CONFIG_NET_TCP_KEEPCNT_DEFAULT=3
+
 # ==================== 固件升级 (共享库) ====================
 # UDP 固件升级 (端口 8600)
 CONFIG_UDP_FW_UPGRADE=y
@@ -1715,7 +1699,6 @@ CONFIG_IMG_MANAGER=y
 # ==================== 时间同步 (复用已验证实现 time.c) ====================
 CONFIG_RTC=y
 CONFIG_RTC_STM32=y
-CONFIG_SNTP=y
 
 # ==================== 看门狗 ====================
 CONFIG_WATCHDOG=y
@@ -1945,21 +1928,34 @@ SB_CONFIG_MCUBOOT_INDICATION_LED=y
 
 ### 9.6 ADC1 — 4 通道模拟输入
 
+> **v3.3 变更**: 通道号与工程量转换系数均配置到设备树 (`/zephyr,user` 的 `io-channels` 引用 `&adc1` 下 `channel@` 子节点；系数放 `ai-coeffs`，与 `io-channels` 顺序一一对应)。代码用 `ADC_DT_SPEC_GET_BY_IDX` / `adc_channel_setup_dt` / `adc_read_dt` 读取，不再硬编码 `ai_channel_id[]` / `ai_coeff[]`。
+
 ```dts
+/ {
+    zephyr,user {
+        io-channels = <&adc1 10>, <&adc1 11>, <&adc1 12>, <&adc1 13>;  /* IN10-13 */
+        ai-coeffs = <7414>, <7414>, <3704>, <3704>;  /* 电流 7.414 / 电压 3.7037, x1e4 */
+    };
+};
+
 &adc1 {
     status = "okay";
     pinctrl-0 = <&adc1_in10_pc0 &adc1_in11_pc1
                  &adc1_in12_pc2 &adc1_in13_pc3>;
     pinctrl-names = "default";
+    st,adc-clock-source = "SYNC";
+    st,adc-prescaler = <2>;
     #address-cells = <1>;
     #size-cells = <0>;
 
-    channel@10 { reg = <10>; zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL"; zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>; zephyr,resolution = <12>; };
-    channel@11 { reg = <11>; zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL"; zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>; zephyr,resolution = <12>; };
-    channel@12 { reg = <12>; zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL"; zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>; zephyr,resolution = <12>; };
-    channel@13 { reg = <13>; zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL"; zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>; zephyr,resolution = <12>; };
+    channel@a { reg = <0xa>; zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL"; zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>; zephyr,resolution = <12>; };
+    channel@b { reg = <0xb>; zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL"; zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>; zephyr,resolution = <12>; };
+    channel@c { reg = <0xc>; zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL"; zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>; zephyr,resolution = <12>; };
+    channel@d { reg = <0xd>; zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL"; zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>; zephyr,resolution = <12>; };
 };
 ```
+
+> 注意: 自定义系数属性 `st,coeff` 若放在 `&adc1` 子节点会触发 Zephyr binding 校验 (未在 `st,stm32f4-adc.yaml` 声明)，因此系数放 `/zephyr,user` 的 `ai-coeffs`（该节点无 binding，属性自由）。
 
 ### 9.7 USART2 — Modbus RTU (RS485)
 
@@ -2170,7 +2166,7 @@ cd tools && cmake . && make
 - [ ] **Modbus RTU Slave** (UART2 + RS485, PA1 DE 控制) [复用已验证实现 rtu.c]
 - [ ] **参数保存流程验证** (写 0x10 HOLDING_CFG_SAVE 触发 settings_save 全量导出)
 - [ ] **参数加载流程验证** (settings_load 从 FCB 恢复到 holding_reg)
-- [ ] **心跳看门狗验证** (heart_poll 线程，超时清零 DO) [复用已验证实现 init.c]
+- [ ] **TCP Keepalive 验证** (主站掉线 ~45s 自动断开连接)
 - [ ] TCP + RTU 并发运行验证
 
 ### Phase 6: FTP 服务 (Week 7)
@@ -2257,8 +2253,8 @@ cd tools && cmake . && make
 4. **Flash 分区表验证** (Phase 2): 确认 DTS 分区表正确 (slot1: 0-448K, scratch: 448K-896K, storage: 896K-960K, lfs: 960K-16M)
 5. **settings/FCB 参数持久化** (Phase 2): 确认 `modbus/` 命名空间参数写入/读取/出厂恢复正常
 6. **双通道固件升级验证** (Phase 7): UDP 和 CAN 各自独立完成固件升级全流程
-7. **Modbus 寄存器兼容性** (Phase 5): 确认上位机软件 (Modbus Poll) 可直接操作 21 个 holding 寄存器
-8. **心跳看门狗验证** (Phase 5): 确认 Modbus TCP 超时后 DO 自动清零
+7. **Modbus 寄存器兼容性** (Phase 5): 确认上位机软件 (Modbus Poll) 可直接操作 18 个 holding 寄存器
+8. **TCP Keepalive 验证** (Phase 5): 主站异常掉线 (拔网线/进程崩溃) 后 ~45s 内连接被自动断开
 9. **网络断连 DO 安全验证** (Phase 3): 确认 NET_EVENT_IF_DOWN 时 DO 清零 + 新连接被拒绝
 
 ---
@@ -2302,7 +2298,7 @@ cd tools && cmake . && make
 | **参数存储** | **`flash.c` (magic+CRC16)** | **`modbus/function.c` (settings/FCB, modbus/ 命名空间)** | **直接复用已验证实现 settings handler，直接映射 holding_reg[]** |
 | FTP 服务 | `ftpd.c + ftp_cmds.c` | `ftp_server/ftpd.c + ftp_cmds.c + ftp_handler.c` | **直接复用已验证实现** (Zephyr 原生, k_mem_slab, select()) |
 | **时间管理** | **无** | **`sys/time.c`** | **直接复用已验证实现** (RTC + clock_settime + log timestamp) |
-| **心跳看门狗** | **无** | **`modbus/init.c` (heart_poll)** | **直接复用已验证实现** (k_sem + 超时清零 DO) |
+| **主站保活** | **无** | **`modbus/tcp.c` (SO_KEEPALIVE)** | **TCP Keepalive** 检测主站连接存活 (取代应用层心跳) |
 | **栈溢出保护** | **无** | **`main.c` (k_sys_fatal_error_handler)** | **直接复用已验证实现** (K_ERR_STACK_CHK_FAIL → warm reboot) |
 | **状态 LED** | **无** | **`main.c` (mcuboot_led0)** | **直接复用已验证实现** (300ms on / 2700ms off) |
 | **UDP 配置** | **`udp_bcast.c` (文本协议, 9002)** | **`udp.c` (app handler, 8600)** | **重写**，使用 `udp_fw_upgrade` app handler 模式，操作 holding_reg |
@@ -2338,7 +2334,7 @@ cd tools && cmake . && make
 | Modbus | `subsys/modbus` | `CONFIG_MODBUS` | - |
 | ADC | `drivers/adc/adc_stm32.c` | `CONFIG_ADC_STM32` | - |
 | CAN | `drivers/can/can_stm32_bxcan.c` | `CONFIG_CAN_STM32_BXCAN` | - |
-| SNTP | `subsys/net/lib/sntp` | `CONFIG_SNTP` | - |
+| RTC | `drivers/rtc/rtc_stm32.c` | `CONFIG_RTC_STM32` | - |
 | MCUboot | `boot/zephyr/` | `CONFIG_BOOTLOADER_MCUBOOT` | - |
 | 看门狗 | `drivers/watchdog/iwdg_stm32.c` | `CONFIG_IWDG_STM32` | - |
 | RTC | `drivers/rtc/rtc_stm32.c` | `CONFIG_RTC_STM32` | - |
@@ -2352,7 +2348,7 @@ cd tools && cmake . && make
 
 ## 附录 B: 默认设备参数
 
-> **v3.1 变更**: Settings 命名空间从 `io/` 改为 `modbus/`，直接映射 holding_reg[]。寄存器布局与已验证实现一致 (21 个 holding 寄存器)。
+> **v3.1 变更**: Settings 命名空间从 `io/` 改为 `modbus/`，直接映射 holding_reg[]。寄存器布局与已验证实现一致 (v3.3 起 18 个 holding 寄存器)。
 
 | 参数 | 默认值 | 说明 | 对应 settings key | 对应 Modbus 寄存器 |
 |------|--------|------|-------------------|-------------------|
@@ -2377,8 +2373,6 @@ cd tools && cmake . && make
 | **CAN 固件升级帧 ID** | **0x101-0x105** | `can_fw_upgrade` 库定义 | - | - |
 | 历史文件最大数 | 10 | 10 x 1MB = 10MB | - | - |
 | 历史文件最大大小 | 1MB | 1024x1024 字节 | - | - |
-| **心跳使能** | **关闭 (0)** | Modbus TCP 通信看门狗 | `modbus/heart/enable` | 0x12 |
-| **心跳超时** | **2000ms** | 超时清零 DO 输出 | `modbus/heart/time` | 0x13 |
 | **时间戳** | **0** | 写 0x0E/0x0F 设置 RTC 时间 | - | 0x0E-0x0F |
 | **参数保存** | **0** | 写 0x10 非零触发 settings_save | - | 0x10 |
 | **系统重启** | **0** | 写 0x11 非零触发 sys_reboot | - | 0x11 |
@@ -2509,11 +2503,11 @@ cd tools && cmake . && make
 
 ### G.2 "复用已验证实现" 实际为全新实现
 
-§1 / §4 / §5 反复提到 "复用已验证实现" 的 Modbus RAW ADU TCP (tcp.c)、RTU (rtu.c)、FTP (ftp_server/)、DI/DO/AI (dio.c / adc.c)、历史记录 (history.c)、心跳 (init.c)、RTC (time.c)、栈溢出 / 状态 LED (main.c) 等模块 — **该源码并不在 iot-zephyr-app 仓库**, 全部按本文档规范全新实现。真正复用的是 `libs/udp_fw_upgrade` + `libs/can_fw_upgrade` 共享库。
+§1 / §4 / §5 反复提到 "复用已验证实现" 的 Modbus RAW ADU TCP (tcp.c)、RTU (rtu.c)、FTP (ftp_server/)、DI/DO/AI (dio.c / adc.c)、历史记录 (history.c)、RTC (time.c)、栈溢出 / 状态 LED (main.c) 等模块 — **该源码并不在 iot-zephyr-app 仓库**, 全部按本文档规范全新实现。真正复用的是 `libs/udp_fw_upgrade` + `libs/can_fw_upgrade` 共享库。
 
 ### G.3 设备树 (§9)
 
-- **ADC1** (§9.6): 不用 `channel@N` 子节点, 改用 aerocore2 风格 (`st,adc-clock-source = "SYNC"` + `st,adc-prescaler = <2>`), 通道在代码层 `adc_channel_setup` 配置 (aerocore2 用相同 PC0-3 引脚, 为 F4 ADC 配置参考)。
+- **ADC1** (§9.6): 用 `channel@a-d` 子节点 (含 `st,adc-clock-source = "SYNC"` + `st,adc-prescaler = <2>` 及 zephyr,gain/reference/acquisition-time/resolution)；通道号经 `/zephyr,user` 的 `io-channels` 引用，工程量转换系数放 `ai-coeffs`（自定义属性放 `&adc1` 子节点会触发 binding 校验报错）；代码用 `ADC_DT_SPEC_GET_BY_IDX` 生成 `adc_specs[]`（本 Zephyr 版本无 `ADC_DT_SPEC_ARRAY` 宏），系数用 `DT_PROP_BY_IDX` 读取。
 - **CAN1** (§9.8): `bus-speed` → **`bitrate`** (bus-speed 在 v4.4 deprecated); CAN1 配置从应用 overlay 移到 **板 DTS** (`boards/io_edge_f407vet6/io_edge_f407vet6.dts`), 供 MCUboot 与应用共享 (未来 MCUboot 可能用 CAN)。
 - **新增 chosen**: `zephyr,canbus = &can1` (can_fw_upgrade 库 `DT_CHOSEN(zephyr_canbus)` 必需); `zephyr,entropy = &rng` (硬件 RNG)。
 - **RNG** (本文档未覆盖): 板 DTS `&rng { status = "okay"; }` (STM32F407 硬件 RNG, rng 节点 clock 已在 stm32f405.dtsi 定义 `AHB2,6`)。
@@ -2536,16 +2530,36 @@ cd tools && cmake . && make
 - **FTP** (§5.3): 单文件 `ftpd.c` 实现 (非 ftpd.c / ftp_cmds.c / ftp_handler.c 三文件); **单线程 select 多路复用** (最多 3 个客户端命令交错, 数据传输时该会话独占, 第 4 个返回 421, per-session buffer); **PASV/EPSV + PORT/EPRT** 数据连接 (RFC 959 + 2428); **TYPE A (CR/LF 转换) + TYPE I**; LIST 标准 ls -l (历史文件名解析真实创建时间, Zephyr fs_dirent 不暴露 mtime)。
 - **历史记录** (§5.6): **msgq + 系统工作队列** (`K_MSGQ_DEFINE` 16 槽累积 + `k_work_submit` 立即提交 (k_work 合并去重) + `fs_sync` 批量写, 减少 Flash 写次数), 替代 k_fifo + 独立 writer 线程; **单文件 1MB 大小轮转** (非按分钟切换, `data_MMDD_HHMMSS.raw`, 保留 10 个); 无独立线程。
 - **DI / DO / LED** (§5.1): GPIO 通过 `/zephyr,user` 节点 `di-gpios` / `do-gpios` / `led-gpios` 列表定义, 代码 `DT_FOREACH_PROP_ELEM` 生成数组 (非独立 gpio-leds label 节点)。
-- **Modbus TCP** (§5.2.1): RAW ADU iface 名 `RAW_0`; `tmp_adu` 复用 (请求 → raw_tx_cb 回填响应); 多客户端用 select() 逐个串行处理 (submit + sem_take + reply)。
+- **Modbus TCP** (§5.2.1): RAW ADU iface 名 `RAW_0`; 每个请求独立 `struct modbus_adu`, 响应经全局槽 `g_resp` + 按 MBAP `trans_id` 匹配 (库 `modbus_server_handler` 回显 trans_id), 消除多客户端响应交叉污染; 客户端 socket 设 `SO_KEEPALIVE` + `SO_RCVTIMEO/SO_SNDTIMEO` (5s); 提交前提前校验 proto_id/length/unit_id, 避免无响应等待。
+- **心跳废除**: 移除应用层心跳 (`heart_poll` 线程 / HEART 寄存器 0x12-0x14 / `heart_event_send`), holding 寄存器 21 → 18; Modbus TCP 连接存活改由 `SO_KEEPALIVE` 检测 (`CONFIG_NET_TCP_KEEPALIVE`, 空闲 30s / 探测 5s / 3 次)。
 - **MCUboot** (§3.3): `sysbuild/mcuboot.conf` 加 `CONFIG_BOOT_MAX_IMG_SECTORS=256` (外部 Flash slot1/scratch 扇区数大) + `CONFIG_ENTROPY_GENERATOR` (硬件 RNG)。
 
 ### G.7 版本与构建
 
 - 编译命令: `west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild` (建议 `--build-dir` 独立目录, 默认 `build/` 可能被其他应用占用)。
-- debug 镜像 ~256KB, release (`-DCONF_FILE=prj_release.conf`) ~134KB (slot0 上限 448KB, 余量充足)。
+- debug 镜像 ~261KB, release (`-DCONF_FILE=prj_release.conf`) ~142KB (slot0 上限 448KB, 余量充足)。
 - `LOG=n` (release) 时 `log_process()` / `log_set_timestamp_func()` 需 `#ifdef CONFIG_LOG` 保护。
 - 项目文档: `applications/io-edge-hub/` 下新增 `README.md` / `USER_GUIDE.md` / `CLAUDE.md`。
 
 ---
 
-*文档结束 - io-edge-hub 方案规划 v3.2 (已验证模块复用 + RAW ADU Modbus + Settings 直接映射 + 心跳看门狗 + RTC 时间管理; 附录 G 记录实现差异)*
+## 附录 H: v3.2 -> v3.3 变更摘要 (code review 修复 + 心跳改 Keepalive + ADC 设备树化)
+
+> **v3.3 变更**: 对已落地代码做一轮 code review 修复，并将主站连接保活从应用层心跳改为 TCP Keepalive，ADC 通道/系数设备树化。
+
+| 变更项 | v3.2 | v3.3 | 原因 |
+|--------|------|------|------|
+| **主站保活** | 应用层心跳 (`heart_poll` 线程 + HEART 寄存器 0x12-0x14 + `heart_event_send`) | **TCP Keepalive** (`SO_KEEPALIVE`, `CONFIG_NET_TCP_KEEPALIVE`, 空闲30s/探测5s/3次) | Modbus 寄存器层无需心跳；keepalive 由协议栈检测连接存活，无线程开销；holding 21 → 18 |
+| **Modbus TCP 响应** | 全局 `tmp_adu` 单槽复用 | 每请求独立 `modbus_adu` + `trans_id` 匹配响应 | `modbus_raw_submit_rx` 异步处理 (系统工作队列)，单槽会多客户端交叉污染 |
+| **TCP 超时** | 无 recv/send 超时 | `SO_RCVTIMEO`/`SO_SNDTIMEO` 5s + 帧长/unit_id 提前校验 | 恶意/慢客户端可挂死单线程服务 |
+| **历史使能恢复** | settings 加载后 `history_enabled` 未同步 | `modbus_settings_init` 加载后调 `history_enable_write()` | 重启后已使能的历史实际不写入 |
+| **settings 键名** | `strncmp(name, "x", name_len)` 前缀匹配 | `NAME_IS` 宏长度精确匹配 | 防止 `di_enx` 之类误匹配 |
+| **采样间隔** | 仅下限 10ms | 上下限钳制 [10ms, 5s] | 远程调大两个采样间隔会导致 IWDG 复位 |
+| **FTP STOR** | `FS_O_CREATE\|FS_O_WRITE` | 追加 `FS_O_TRUNC` (REST 续传除外) | 覆盖上传残留旧文件尾部 |
+| **历史 fs_tell** | `(uint32_t)fs_tell()` 失败转大数 | 显式错误检查 | 失败时反复轮转新建小文件 |
+| **ADC 设备树化** | 通道/系数硬编码在 adc.c | `io-channels` + `channel@` 子节点 + `ai-coeffs` | 改通道/系数只动 overlay |
+| **死配置清理** | `MODBUS_COLS_*`、`IO_NET_INIT_PRIORITY`、`CONFIG_SNTP` | 全部删除 | 从未被引用/未使用 |
+
+---
+
+*文档结束 - io-edge-hub 方案规划 v3.3 (已验证模块复用 + RAW ADU Modbus + Settings 直接映射 + TCP Keepalive 保活 + RTC 时间管理; 附录 G/H 记录实现差异)*
