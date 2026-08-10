@@ -8,7 +8,7 @@
 #ifndef __WATCHDOG_H__
 #define __WATCHDOG_H__
 
-/* 初始化 IWDG (10s 超时), 失败返回负 errno */
+/* 初始化 IWDG (30s 超时), 失败返回负 errno */
 int watchdog_init(void);
 
 /* 喂狗 (DI/AI 采样线程周期调用) */

@@ -92,6 +92,11 @@ static void make_hist_name(char *buf, size_t len)
 	time_t t = time(NULL);
 	struct tm *lt = gmtime(&t);
 
+	/* RTC 未同步时 gmtime 可能返回 NULL, 用全零填充文件名兜底 */
+	if (lt == NULL) {
+		snprintf(buf, len, "data_0101_000000.raw");
+		return;
+	}
 	snprintf(buf, len, "data_%02d%02d_%02d%02d%02d.raw",
 		 lt->tm_mon + 1, lt->tm_mday, lt->tm_hour, lt->tm_min, lt->tm_sec);
 }

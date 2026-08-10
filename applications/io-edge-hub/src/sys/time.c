@@ -34,13 +34,25 @@ static uint32_t rtc_timestamp_get(void)
 }
 #endif
 
+/* 合法时间戳范围: [2000-01-01, 2100-01-01)。超出范围的值通常是主站写入错误
+ * (如只写低 16 位、高字为 0 -> 1970 年), gmtime 对部分非法输入会返回 NULL,
+ * 解引用将触发 HardFault。这里直接拒绝越界值。 */
+#define TS_MIN	946684800U	/* 2000-01-01 00:00:00 UTC */
+#define TS_MAX	4102444800U	/* 2100-01-01 00:00:00 UTC */
+
 void set_timestamp(time_t t)
 {
-	if (!rtc_dev) {
+	if (!rtc_dev || t < (time_t)TS_MIN || t > (time_t)TS_MAX) {
+		LOG_WRN("invalid timestamp %lld, ignored", (long long)t);
 		return;
 	}
 
 	struct tm *lt = gmtime(&t);
+
+	if (lt == NULL) {
+		LOG_WRN("gmtime failed for %lld", (long long)t);
+		return;
+	}
 	struct rtc_time tm;
 
 	memset(&tm, 0, sizeof(tm));

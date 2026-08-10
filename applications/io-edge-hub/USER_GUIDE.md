@@ -130,11 +130,11 @@ UDP 配置端口同时承载固件升级命令(0x01-0x05,库处理)与应用业�
 |-----|------|---------|
 | 0x10 | SET_IP | ip(4B) |
 | 0x11 | GET_NET | → ip(4B)+slave_id(1B)+tcp_port(2B) |
-| 0x12 | SET_MODBUS | slave_id(1B)+rs485_baud(4B) |
+| 0x12 | SET_MODBUS | slave_id(1B)+rs485_baud(2B) |
 | 0x13 | GET_MODBUS | 同 SET |
 | 0x14 | SET_SAMPLE | di_en(2B)+ai_en(2B)+di_si(2B)+ai_si(2B) |
 | 0x15 | GET_SAMPLE | 同 SET |
-| 0x16 | SET_CAN | can_id(2B)+can_baud(4B) |
+| 0x16 | SET_CAN | can_id(2B)+can_baud(2B,x1000) |
 | 0x17 | GET_CAN | 同 SET |
 | 0x18 | DISCOVER | → "io-edge-hub \<ip\> v\<ver\>"(允许广播发现) |
 | 0x19 | FACTORY_RESET | 擦除参数分区 + 重启 |

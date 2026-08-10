@@ -13,6 +13,7 @@
 #include <zephyr/fs/littlefs.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/logging/log.h>
+#include "watchdog.h"
 
 LOG_MODULE_REGISTER(io_lfs, LOG_LEVEL_INF);
 
@@ -46,17 +47,23 @@ static int littlefs_init(void)
 {
 	int rc = fs_mount(&lfs_mnt);
 
-	if (rc == -ENODEV || rc == -EINVAL) {
-		LOG_INF("LittleFS unformatted, running mkfs");
+	/* 任何挂载失败都尝试一次 mkfs: 脏分区/半擦分区可能返回 -EIO/-EILSEQ 等,
+	 * 仅限 -ENODEV/-EINVAL 会漏掉这些场景导致永久挂载失败。 */
+	if (rc != 0) {
+		LOG_INF("LittleFS mount failed (%d), running mkfs", rc);
+		/* mkfs 擦整个分区 (15MB SPI NOR) 耗时可达数十秒, 超过看门狗窗口,
+		 * 擦除前后喂狗避免中途复位导致文件系统半损坏 */
+		watchdog_feed();
 		rc = fs_mkfs(FS_LITTLEFS, (uintptr_t)lfs_mnt.storage_dev,
 			     &lfs_data, 0);
+		watchdog_feed();
 		if (rc == 0) {
 			rc = fs_mount(&lfs_mnt);
 		}
 	}
 
 	if (rc != 0) {
-		LOG_ERR("LittleFS mount failed: %d", rc);
+		LOG_ERR("LittleFS mount failed after mkfs: %d", rc);
 		return rc;
 	}
 

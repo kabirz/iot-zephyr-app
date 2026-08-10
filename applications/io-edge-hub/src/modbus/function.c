@@ -23,6 +23,15 @@
 
 LOG_MODULE_REGISTER(io_function, LOG_LEVEL_INF);
 
+/* 寄存器并发保护: holding_reg[] 单字读写对齐时原子, 但 coil 的"读-改-写"
+ * (FC05/15 写单个 DO 位) 与 holding_reg_save() 的全量导出读存在并发:
+ *  - Modbus TCP/RTU 的 coil_wr_cb (系统工作队列) 与 UDP handler 的 update
+ *    并发写 DO 位会丢失更新;
+ *  - CFG_SAVE 回调或 UDP handler 调 holding_reg_save() 期间, 并发 update_holding_reg
+ *    会让持久化到半更新状态 (如 IP 只写了前 2 字节)。
+ * 用一把互斥锁覆盖这两类临界区 (单字 update/read 本身原子, 不加锁)。 */
+static K_MUTEX_DEFINE(reg_lock);
+
 /* ==================== 寄存器数组 (唯一数据源) ==================== */
 static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS] = {
 	[HOLDING_DI_EN_IDX]	= 0xFFFF,	/* DI 全使能 */
@@ -79,10 +88,15 @@ int update_input_reg(uint16_t addr, uint16_t reg)
 	return 0;
 }
 
-/* 触发全量保存 (供 UDP handler 改参数后持久化) */
+/* 触发全量保存 (供 UDP handler 改参数后持久化)。
+ * 加锁: 防止 export 读全量 holding_reg 期间, 其他线程并发 update 写入导致
+ * 持久化到半更新状态。注意 CFG_SAVE 写回调也调 settings_save, 但那条路径
+ * 跑在 wr_cb 里不会与本锁递归 (wr_cb 不持锁)。 */
 void holding_reg_save(void)
 {
+	k_mutex_lock(&reg_lock, K_FOREVER);
 	settings_save();
+	k_mutex_unlock(&reg_lock);
 }
 
 /* ==================== Modbus 用户回调 (FC01/02/03/04/05/06/15/16) ==================== */
@@ -163,10 +177,13 @@ static int coil_wr_cb(uint16_t addr, bool state)
 	if (addr >= DO_NUM) {
 		return -ENOTSUP;
 	}
+	/* 读-改-写加锁: 防止并发 coil 写 / holding_reg_save 期间丢失位更新 */
+	k_mutex_lock(&reg_lock, K_FOREVER);
 	val = holding_reg[HOLDING_DO_IDX];
 	WRITE_BIT(val, addr, state);
 	mb_set_do(val & 0xFF);
 	holding_reg[HOLDING_DO_IDX] = val & 0xFF;
+	k_mutex_unlock(&reg_lock);
 	return 0;
 }
 

@@ -31,9 +31,13 @@ LOG_MODULE_REGISTER(io_tcp, LOG_LEVEL_INF);
 
 #define MODBUS_TCP_PORT		502
 #define MB_TCP_MAX_CLIENTS	3
-#define MB_TCP_SESSION_TIMEOUT	30000	/* ms */
-#define MB_TCP_IO_TIMEOUT	5000	/* ms: 客户端 recv/send 超时 */
-#define MB_TCP_RESP_TIMEOUT	2000	/* ms: 等待 modbus server 处理超时 */
+/* 会话超时须 > TCP Keepalive 总探测时间 (KEEPIDLE+KEEPCNT*KEEPINTVL = 30+3*5 = 45s),
+ * 否则正常空闲主站会被应用层误踢而 keepalive 尚未生效。 */
+#define MB_TCP_SESSION_TIMEOUT	60000	/* ms */
+/* recv/send 超时压到亚秒级, 避免单慢/恶意客户端长时间阻塞 select 主循环
+ * (本线程为单线程 select 多路复用, 阻塞会拖死全部 3 个客户端)。 */
+#define MB_TCP_IO_TIMEOUT	500	/* ms: 客户端 recv/send 超时 */
+#define MB_TCP_RESP_TIMEOUT	800	/* ms: 等待 modbus server 处理超时 */
 
 extern const struct modbus_user_callbacks io_modbus_cbs;
 
@@ -104,16 +108,35 @@ static int reply_adu(int client, const struct modbus_adu *adu)
 	return 0;
 }
 
+/* 循环读满指定字节数。MSG_WAITALL 在 SO_RCVTIMEO 下可能因超时返回短读,
+ * 短读被当作成功会让后续解析读到未初始化字节 → 帧同步丢失。这里自己做循环,
+ * 任何 recv <=0 都按断连/错误处理, 保证读到的字节数恰好 == want。
+ * 返回 0 成功, <0 失败 (rc==0 → -ENOTCONN, 否则 -EIO)。 */
+static int recv_full(int sock, uint8_t *buf, size_t want)
+{
+	size_t total = 0;
+
+	while (total < want) {
+		int rc = recv(sock, buf + total, want - total, 0);
+
+		if (rc <= 0) {
+			return rc == 0 ? -ENOTCONN : -EIO;
+		}
+		total += rc;
+	}
+	return 0;
+}
+
 /* 处理一条客户端请求: 返回 0 继续, <0 关闭连接 */
 static int handle_client(int client)
 {
 	uint8_t header[MODBUS_MBAP_AND_FC_LENGTH];
 	struct modbus_adu req;
 	struct modbus_adu resp;
-	int rc = recv(client, header, sizeof(header), MSG_WAITALL);
+	int rc = recv_full(client, header, sizeof(header));
 
-	if (rc <= 0) {
-		return rc == 0 ? -ENOTCONN : -EIO;
+	if (rc < 0) {
+		return rc;
 	}
 
 	modbus_raw_get_header(&req, header);
@@ -127,9 +150,9 @@ static int handle_client(int client)
 	}
 
 	if (req.length > 0) {
-		rc = recv(client, req.data, req.length, MSG_WAITALL);
-		if (rc <= 0) {
-			return rc == 0 ? -ENOTCONN : -EIO;
+		rc = recv_full(client, req.data, req.length);
+		if (rc < 0) {
+			return rc;
 		}
 	}
 
@@ -146,6 +169,13 @@ static int handle_client(int client)
 	if (modbus_raw_submit_rx(server_iface, &req)) {
 		LOG_ERR("submit raw ADU failed");
 		return -EIO;
+	}
+
+	/* 广播 (unit_id=0): Modbus 协议规定不回复任何响应。库执行完副作用
+	 * (FC05/06/15/16 写 DO/参数) 后不会回调 raw_tx_cb, 故不等待响应,
+	 * 直接返回保持连接, 避免等满超时后误回 SERVER_DEVICE_FAILURE 致主站重发。 */
+	if (req.unit_id == 0) {
+		return 0;
 	}
 
 	/*

@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 硬件看门狗 (STM32 独立看门狗 IWDG)
- * 10 秒超时, 由 DI/AI 采样线程周期喂狗; 采样线程冻结则系统复位。
+ * 30 秒超时, 由 DI/AI 采样线程周期喂狗; 采样线程冻结则系统复位。
+ * 30s 窗口需容纳外部 SPI NOR 擦除耗时 (LittleFS mkfs 擦 15MB 可达数十秒)。
  */
 
 #include <zephyr/kernel.h>
@@ -14,7 +15,7 @@
 
 LOG_MODULE_REGISTER(io_wdt, LOG_LEVEL_INF);
 
-#define WDG_TIMEOUT_MS	10000
+#define WDG_TIMEOUT_MS	30000
 
 static const struct device *const wdt_dev = DEVICE_DT_GET(DT_NODELABEL(iwdg));
 static int wdt_channel;

@@ -78,23 +78,24 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
 	}
 
 	case UDP_CMD_SET_MODBUS: {
-		if (len >= 5) {
+		/* slave_id(1B) + rs485_baud(2B): 与 holding_reg 16 位存储宽度一致
+		 * (原 4B 协议会把 >65535 的波特率截断成错误值) */
+		if (len >= 3) {
 			update_holding_reg(HOLDING_SLAVE_ID_IDX, data[0]);
-			update_holding_reg(HOLDING_RS485_BPS_IDX,
-					   sys_get_be32(&data[1]));
+			update_holding_reg(HOLDING_RS485_BPS_IDX, sys_get_be16(&data[1]));
 			holding_reg_save();
 		}
-		uint8_t ok = (len >= 5) ? 1 : 0;
+		uint8_t ok = (len >= 3) ? 1 : 0;
 
 		udp_fw_reply(cmd, &ok, sizeof(ok));
 		return true;
 	}
 
 	case UDP_CMD_GET_MODBUS: {
-		uint8_t buf[5];
+		uint8_t buf[3];
 
 		buf[0] = (uint8_t)get_holding_reg(HOLDING_SLAVE_ID_IDX);
-		sys_put_be32(get_holding_reg(HOLDING_RS485_BPS_IDX), &buf[1]);
+		sys_put_be16(get_holding_reg(HOLDING_RS485_BPS_IDX), &buf[1]);
 		udp_fw_reply(cmd, buf, sizeof(buf));
 		return true;
 	}
@@ -125,22 +126,23 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
 	}
 
 	case UDP_CMD_SET_CAN: {
-		if (len >= 6) {
+		/* can_id(2B) + can_baud(2B, x1000): 与 holding_reg 16 位存储宽度一致 */
+		if (len >= 4) {
 			update_holding_reg(HOLDING_CAN_ID_IDX, sys_get_be16(&data[0]));
-			update_holding_reg(HOLDING_CAN_BPS_IDX, sys_get_be32(&data[2]));
+			update_holding_reg(HOLDING_CAN_BPS_IDX, sys_get_be16(&data[2]));
 			holding_reg_save();
 		}
-		uint8_t ok = (len >= 6) ? 1 : 0;
+		uint8_t ok = (len >= 4) ? 1 : 0;
 
 		udp_fw_reply(cmd, &ok, sizeof(ok));
 		return true;
 	}
 
 	case UDP_CMD_GET_CAN: {
-		uint8_t buf[6];
+		uint8_t buf[4];
 
 		sys_put_be16(get_holding_reg(HOLDING_CAN_ID_IDX), &buf[0]);
-		sys_put_be32(get_holding_reg(HOLDING_CAN_BPS_IDX), &buf[2]);
+		sys_put_be16(get_holding_reg(HOLDING_CAN_BPS_IDX), &buf[2]);
 		udp_fw_reply(cmd, buf, sizeof(buf));
 		return true;
 	}
