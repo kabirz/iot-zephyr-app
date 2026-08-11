@@ -21,7 +21,6 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 #include <init.h>
-#include "watchdog.h"
 
 LOG_MODULE_REGISTER(io_dio, LOG_LEVEL_INF);
 
@@ -71,8 +70,8 @@ static void di_thread(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p3);
 
 	while (1) {
-		uint32_t si = get_holding_reg(HOLDING_DI_SI_IDX);
-		uint16_t en = get_holding_reg(HOLDING_DI_EN_IDX);
+		uint32_t si = get_holding_reg(HOLDING_DI_SAMPLE_MS_IDX);
+		uint16_t en = get_holding_reg(HOLDING_DI_ENABLE_IDX);
 		uint16_t val = 0;
 
 		if (si < 10) {
@@ -99,7 +98,6 @@ static void di_thread(void *p1, void *p2, void *p3)
 			send_history_data(&d);
 		}
 
-		watchdog_feed();
 		k_msleep(si);
 	}
 }

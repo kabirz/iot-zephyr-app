@@ -34,18 +34,18 @@ static K_MUTEX_DEFINE(reg_lock);
 
 /* ==================== 寄存器数组 (唯一数据源) ==================== */
 static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS] = {
-	[HOLDING_DI_EN_IDX]	= 0xFFFF,	/* DI 全使能 */
-	[HOLDING_AI_EN_IDX]	= 0x000F,	/* AI 全使能 */
-	[HOLDING_DI_SI_IDX]	= 200,		/* DI 采样间隔 ms */
-	[HOLDING_AI_SI_IDX]	= 200,		/* AI 采样间隔 ms */
+	[HOLDING_DI_ENABLE_IDX]	= 0xFFFF,	/* DI 全使能 */
+	[HOLDING_AI_ENABLE_IDX]	= 0x000F,	/* AI 全使能 */
+	[HOLDING_DI_SAMPLE_MS_IDX]	= 200,		/* DI 采样间隔 ms */
+	[HOLDING_AI_SAMPLE_MS_IDX]	= 200,		/* AI 采样间隔 ms */
 	[HOLDING_CAN_ID_IDX]	= 0x0111,	/* CAN ID */
-	[HOLDING_CAN_BPS_IDX]	= 10,		/* CAN 波特率 x1000 */
-	[HOLDING_RS485_BPS_IDX]	= 9600,		/* RS485 波特率 */
+	[HOLDING_CAN_BAUDRATE_IDX]	= 10,		/* CAN 波特率 x1000 */
+	[HOLDING_RS485_BAUDRATE_IDX]	= 9600,		/* RS485 波特率 */
 	[HOLDING_SLAVE_ID_IDX]	= 1,		/* Modbus Slave ID */
-	[HOLDING_IP_ADDR_1_IDX]	= 192,		/* 默认 IP 192.168.12.101 */
-	[HOLDING_IP_ADDR_2_IDX]	= 168,
-	[HOLDING_IP_ADDR_3_IDX]	= 12,
-	[HOLDING_IP_ADDR_4_IDX]	= 101,
+	[HOLDING_IP_OCTET1_IDX]	= 192,		/* 默认 IP 192.168.12.101 */
+	[HOLDING_IP_OCTET2_IDX]	= 168,
+	[HOLDING_IP_OCTET3_IDX]	= 12,
+	[HOLDING_IP_OCTET4_IDX]	= 101,
 };
 
 static uint16_t input_reg[CONFIG_MODBUS_INPUT_REGISTER_NUMBERS] = {
@@ -106,6 +106,15 @@ static int holding_reg_rd_cb(uint16_t addr, uint16_t *reg)
 	if (addr >= ARRAY_SIZE(holding_reg)) {
 		return -ENOTSUP;
 	}
+	/* 时间戳寄存器读时返回实时系统时间 (而非数组里的陈旧值) */
+	if (addr == HOLDING_TIMESTAMP_HI_IDX) {
+		*reg = (uint16_t)((uint32_t)time(NULL) >> 16);
+		return 0;
+	}
+	if (addr == HOLDING_TIMESTAMP_LO_IDX) {
+		*reg = (uint16_t)(uint32_t)time(NULL);
+		return 0;
+	}
 	*reg = holding_reg[addr];
 	return 0;
 }
@@ -127,15 +136,15 @@ static int holding_reg_wr_cb(uint16_t addr, uint16_t reg)
 		/* RTU/TCP server 的 unit_id 在启动时固定, 需重启生效 */
 		LOG_WRN("slave_id change requires reboot");
 		break;
-	case HOLDING_HIS_SAVE_IDX:
+	case HOLDING_HISTORY_ENABLE_IDX:
 		history_enable_write(reg != 0);
 		break;
-	case HOLDING_TIMESTAMPL_IDX:
+	case HOLDING_TIMESTAMP_LO_IDX:
 		/* 写低16位时, 组合高低位设置 RTC 时间 */
-		set_timestamp((time_t)(((uint32_t)holding_reg[HOLDING_TIMESTAMPH_IDX] << 16) |
+		set_timestamp((time_t)(((uint32_t)holding_reg[HOLDING_TIMESTAMP_HI_IDX] << 16) |
 				       reg));
 		break;
-	case HOLDING_CFG_SAVE_IDX:
+	case HOLDING_CONFIG_SAVE_IDX:
 		/* 写非0 → 全量保存参数到 FCB, 然后恢复为 0 */
 		holding_reg[addr] = 0;
 		settings_save();
@@ -238,7 +247,7 @@ static int mb_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 
 			if (read_cb(cb_arg, ip, sizeof(ip)) == sizeof(ip)) {
 				for (int i = 0; i < 4; i++) {
-					holding_reg[HOLDING_IP_ADDR_1_IDX + i] = ip[i];
+					holding_reg[HOLDING_IP_OCTET1_IDX + i] = ip[i];
 				}
 			}
 		}
@@ -250,28 +259,28 @@ static int mb_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 	}
 
 	if (NAME_IS(name, name_len, "di_en")) {
-		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_DI_EN_IDX);
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_DI_ENABLE_IDX);
 	}
 	if (NAME_IS(name, name_len, "ai_en")) {
-		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_AI_EN_IDX);
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_AI_ENABLE_IDX);
 	}
 	if (NAME_IS(name, name_len, "di_si")) {
-		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_DI_SI_IDX);
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_DI_SAMPLE_MS_IDX);
 	}
 	if (NAME_IS(name, name_len, "ai_si")) {
-		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_AI_SI_IDX);
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_AI_SAMPLE_MS_IDX);
 	}
 	if (NAME_IS(name, name_len, "his")) {
-		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_HIS_SAVE_IDX);
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_HISTORY_ENABLE_IDX);
 	}
 	if (NAME_IS(name, name_len, "can_id")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_CAN_ID_IDX);
 	}
 	if (NAME_IS(name, name_len, "can_bps")) {
-		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_CAN_BPS_IDX);
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_CAN_BAUDRATE_IDX);
 	}
 	if (NAME_IS(name, name_len, "rs485_bps")) {
-		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_RS485_BPS_IDX);
+		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_RS485_BAUDRATE_IDX);
 	}
 	if (NAME_IS(name, name_len, "slave_id")) {
 		return mb_set_one(name, len, read_cb, cb_arg, HOLDING_SLAVE_ID_IDX);
@@ -280,35 +289,41 @@ static int mb_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 	return -ENOENT;
 }
 
-/* IP 合法性: 末字节非 0/0xff, 首字节非组播 224-239 */
-static bool ip_is_valid_for_export(void)
+/* IP 合法性: 末字节非 0/0xff, 首字节非 0/127/组播(224-239)/保留(>=240) */
+bool ip_addr_valid(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 {
-	uint16_t a = holding_reg[HOLDING_IP_ADDR_1_IDX];
-	uint16_t d = holding_reg[HOLDING_IP_ADDR_4_IDX];
-
 	if (d == 0 || d == 0xFF) {
 		return false;
 	}
-	if (a >= 224 && a <= 239) {
+	if (a == 0 || a == 127 || a >= 224) {
 		return false;
 	}
 	return true;
 }
 
+/* 导出前校验 holding_reg 中的 IP */
+static bool ip_is_valid_for_export(void)
+{
+	return ip_addr_valid((uint8_t)holding_reg[HOLDING_IP_OCTET1_IDX],
+			     (uint8_t)holding_reg[HOLDING_IP_OCTET2_IDX],
+			     (uint8_t)holding_reg[HOLDING_IP_OCTET3_IDX],
+			     (uint8_t)holding_reg[HOLDING_IP_OCTET4_IDX]);
+}
+
 static int mb_handle_export(int (*cb)(const char *name, const void *value,
 				      size_t val_len))
 {
-	(void)cb("modbus/di_en", &holding_reg[HOLDING_DI_EN_IDX], sizeof(uint16_t));
-	(void)cb("modbus/ai_en", &holding_reg[HOLDING_AI_EN_IDX], sizeof(uint16_t));
-	(void)cb("modbus/di_si", &holding_reg[HOLDING_DI_SI_IDX], sizeof(uint16_t));
-	(void)cb("modbus/ai_si", &holding_reg[HOLDING_AI_SI_IDX], sizeof(uint16_t));
-	(void)cb("modbus/his", &holding_reg[HOLDING_HIS_SAVE_IDX], sizeof(uint16_t));
+	(void)cb("modbus/di_en", &holding_reg[HOLDING_DI_ENABLE_IDX], sizeof(uint16_t));
+	(void)cb("modbus/ai_en", &holding_reg[HOLDING_AI_ENABLE_IDX], sizeof(uint16_t));
+	(void)cb("modbus/di_si", &holding_reg[HOLDING_DI_SAMPLE_MS_IDX], sizeof(uint16_t));
+	(void)cb("modbus/ai_si", &holding_reg[HOLDING_AI_SAMPLE_MS_IDX], sizeof(uint16_t));
+	(void)cb("modbus/his", &holding_reg[HOLDING_HISTORY_ENABLE_IDX], sizeof(uint16_t));
 	(void)cb("modbus/can_id", &holding_reg[HOLDING_CAN_ID_IDX], sizeof(uint16_t));
-	(void)cb("modbus/can_bps", &holding_reg[HOLDING_CAN_BPS_IDX], sizeof(uint16_t));
-	(void)cb("modbus/rs485_bps", &holding_reg[HOLDING_RS485_BPS_IDX], sizeof(uint16_t));
+	(void)cb("modbus/can_bps", &holding_reg[HOLDING_CAN_BAUDRATE_IDX], sizeof(uint16_t));
+	(void)cb("modbus/rs485_bps", &holding_reg[HOLDING_RS485_BAUDRATE_IDX], sizeof(uint16_t));
 	(void)cb("modbus/slave_id", &holding_reg[HOLDING_SLAVE_ID_IDX], sizeof(uint16_t));
 	if (ip_is_valid_for_export()) {
-		(void)cb("modbus/ip", &holding_reg[HOLDING_IP_ADDR_1_IDX],
+		(void)cb("modbus/ip", &holding_reg[HOLDING_IP_OCTET1_IDX],
 			 sizeof(uint16_t) * 4);
 	}
 	return 0;

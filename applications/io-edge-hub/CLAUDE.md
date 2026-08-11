@@ -96,7 +96,7 @@ src/
     fs_littlefs.c/.h       -- LittleFS 挂载 (flash-area 模式, /lfs1) + 就绪信号量
   sys/
     time.c                 -- RTC (clock_init POST_KERNEL 41) + set_timestamp + 日志时间戳
-    watchdog.c/.h          -- IWDG (10s) + watchdog_feed
+    watchdog.c/.h          -- IWDG (30s) + watchdog_feed (main 主循环 + mkfs 事件)
   ftp_server/
     ftpd.c                 -- FTP server (单线程 select, PASV/EPSV+PORT/EPRT, 3 客户端)
     ftp.h                  -- FTP 配置 (端口/用户/根目录)

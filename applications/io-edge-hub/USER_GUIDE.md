@@ -14,7 +14,7 @@
 | Modbus TCP | 以太网 502 | Server,最多 3 客户端 |
 | Modbus RTU | RS485 (USART2) | Slave,波特率/ID 可配 |
 | FTP | 以太网 21 | 历史文件下载/管理 |
-| 远程配置 | UDP 8600 | IP/Modbus/采样/CAN 参数 + 设备发现 |
+| 远程配置 | UDP 8600 | IP/Modbus 参数 + 时间 + 设备发现 |
 | 固件升级 | UDP 8600 / CAN | 双通道,MCUboot 签名验证 |
 | 历史记录 | LittleFS | DI/AI 采样,10 文件轮转 |
 | 时间 | RTC (LSI) | 日志时间戳,Modbus/UDP 可设时间 |
@@ -114,7 +114,7 @@ STM32F407VET6 ── SPI1  ── W25Q128 (16MB Flash: 升级镜像+参数+历�
 | 0x08 | 9600 | RS485 波特率 |
 | 0x09 | 1 | Modbus RTU Slave ID |
 | 0x0A-0x0D | 192.168.12.101 | IP 地址(4 字节) |
-| 0x0E-0x0F | 0 | 时间戳高/低16位(写后设 RTC) |
+| 0x0E-0x0F | 0 | 时间戳高/低16位(写后设 RTC;读时返回实时系统时间) |
 | 0x10 | 0 | 参数保存触发(写非0 → 持久化) |
 | 0x11 | 0 | 写1 → 系统重启 |
 
@@ -128,20 +128,14 @@ UDP 配置端口同时承载固件升级命令(0x01-0x05,库处理)与应用业�
 
 | Cmd | 名称 | Payload |
 |-----|------|---------|
-| 0x10 | SET_IP | ip(4B) |
-| 0x11 | GET_NET | → ip(4B)+slave_id(1B)+tcp_port(2B) |
+| 0x10 | SET_IP | ip(4B) → 持久化(需手动重启生效) |
+| 0x11 | GET_IP | → ip(4B)(允许广播发现) |
 | 0x12 | SET_MODBUS | slave_id(1B)+rs485_baud(2B) |
-| 0x13 | GET_MODBUS | 同 SET |
-| 0x14 | SET_SAMPLE | di_en(2B)+ai_en(2B)+di_si(2B)+ai_si(2B) |
-| 0x15 | GET_SAMPLE | 同 SET |
-| 0x16 | SET_CAN | can_id(2B)+can_baud(2B,x1000) |
-| 0x17 | GET_CAN | 同 SET |
-| 0x18 | DISCOVER | → "io-edge-hub \<ip\> v\<ver\>"(允许广播发现) |
+| 0x13 | GET_MODBUS | → slave_id(1B)+rs485_baud(2B) |
+| 0x14 | SET_TIME | unix 时间戳(4B,大端) → 设 RTC |
 | 0x19 | FACTORY_RESET | 擦除参数分区 + 重启 |
-| 0x1A | SET_HIS | his_save(1B) |
-| 0x1B | GET_HIS | → his_save(1B) |
 
-> 多字节字段为网络序(大端)。SET 类命令改参数后持久化(重启生效 IP)。跨子网广播回复发往 8601 端口。
+> 多字节字段为网络序(大端)。SET_IP 持久化但不自动重启,需客户端发 0x11 holding 寄存器 0x11=1 触发重启或重新上电使新 IP 生效。跨子网广播回复发往 8601 端口。
 
 ---
 
@@ -209,7 +203,7 @@ FTP Server 端口 21,根目录为 LittleFS(`/lfs1`),存放历史记录文件。
 
 ## 9. 历史数据文件
 
-历史使能(holding 0x05 或 UDP 0x1A)后,DI/AI 采样数据写入 LittleFS。**单文件最大 1MB**(超过则新建 `data_MMDD_HHMMSS.raw`),保留至多 10 个;采样数据经 msgq 累积,系统工作队列批量写(减少 Flash 写次数)。
+历史使能(holding 0x05 写非 0)后,DI/AI 采样数据写入 LittleFS。**单文件最大 1MB**(超过则新建 `data_MMDD_HHMMSS.raw`),保留至多 10 个;采样数据经 msgq 累积,系统工作队列批量写(减少 Flash 写次数)。
 
 文件为连续记录流(小端):
 

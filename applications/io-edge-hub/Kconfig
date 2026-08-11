@@ -8,9 +8,9 @@ source "Kconfig.zephyr"
 # ==================== Modbus 寄存器数量 ====================
 config MODBUS_HOLDING_REGISTER_NUMBERS
 	int "Number of Modbus holding registers"
-	default 21
+	default 18
 	help
-	  Size of the holding_reg[] array (21 holding registers, see init.h).
+	  Size of the holding_reg[] array (18 holding registers, see init.h).
 
 config MODBUS_INPUT_REGISTER_NUMBERS
 	int "Number of Modbus input registers"

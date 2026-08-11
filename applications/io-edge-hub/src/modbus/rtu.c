@@ -38,7 +38,7 @@ static int rtu_init(void)
 			.unit_id = (uint8_t)get_holding_reg(HOLDING_SLAVE_ID_IDX),
 		},
 		.serial = {
-			.baud = get_holding_reg(HOLDING_RS485_BPS_IDX),
+			.baud = get_holding_reg(HOLDING_RS485_BAUDRATE_IDX),
 			.parity = UART_CFG_PARITY_NONE,
 		},
 	};

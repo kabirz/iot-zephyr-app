@@ -33,14 +33,14 @@ static int modbus_settings_init(void)
 
 	/* settings 恢复后同步历史开关, 否则重启后 history_enabled 仍为 false,
 	 * 已使能的历史记录实际不会写入 (function.c 写回调/UDP 才会触发该函数) */
-	history_enable_write(get_holding_reg(HOLDING_HIS_SAVE_IDX) != 0);
+	history_enable_write(get_holding_reg(HOLDING_HISTORY_ENABLE_IDX) != 0);
 
 	LOG_INF("settings loaded (slave_id=%u ip=%u.%u.%u.%u)",
 		get_holding_reg(HOLDING_SLAVE_ID_IDX),
-		get_holding_reg(HOLDING_IP_ADDR_1_IDX),
-		get_holding_reg(HOLDING_IP_ADDR_2_IDX),
-		get_holding_reg(HOLDING_IP_ADDR_3_IDX),
-		get_holding_reg(HOLDING_IP_ADDR_4_IDX));
+		get_holding_reg(HOLDING_IP_OCTET1_IDX),
+		get_holding_reg(HOLDING_IP_OCTET2_IDX),
+		get_holding_reg(HOLDING_IP_OCTET3_IDX),
+		get_holding_reg(HOLDING_IP_OCTET4_IDX));
 	return 0;
 }
 

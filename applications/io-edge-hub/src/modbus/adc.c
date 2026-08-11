@@ -19,7 +19,6 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/logging/log.h>
 #include <init.h>
-#include "watchdog.h"
 
 LOG_MODULE_REGISTER(io_adc, LOG_LEVEL_INF);
 
@@ -60,8 +59,8 @@ static void adc_thread(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p3);
 
 	while (1) {
-		uint32_t si = get_holding_reg(HOLDING_AI_SI_IDX);
-		uint16_t en = get_holding_reg(HOLDING_AI_EN_IDX);
+		uint32_t si = get_holding_reg(HOLDING_AI_SAMPLE_MS_IDX);
+		uint16_t en = get_holding_reg(HOLDING_AI_ENABLE_IDX);
 
 		if (si < 10) {
 			si = 10;
@@ -104,7 +103,6 @@ static void adc_thread(void *p1, void *p2, void *p3)
 			send_history_data(&d);
 		}
 
-		watchdog_feed();
 		k_msleep(si);
 	}
 }

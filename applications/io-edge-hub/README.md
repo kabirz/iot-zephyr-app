@@ -29,7 +29,7 @@ io-edge-hub 提供 **16 路数字输入**、**8 路数字输出**、**4 路模�
 - **历史记录**:LittleFS,`data_MMDD_HHMMSS.raw`,单文件 1MB 轮转(保留 10 个),系统工作队列批量写
 - **参数持久化**:Zephyr settings + FCB,直接映射 Modbus holding 寄存器(`modbus/` 命名空间)
 - **时间管理**:STM32 内部 RTC(LSI),日志使用 RTC 时间戳,Modbus/UDP 可设时间
-- **安全机制**:网络断连 DO 安全、栈溢出保护(自动重启)、IWDG(采样线程喂狗);TCP Keepalive 检测主站连接存活
+- **安全机制**:网络断连 DO 安全、栈溢出保护(自动重启)、IWDG(30s, main 主循环喂狗 + mkfs 事件喂狗);TCP Keepalive 检测主站连接存活
 
 ## 编译
 

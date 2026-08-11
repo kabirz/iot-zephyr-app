@@ -9,8 +9,8 @@
 > **代码仓库**: `~/code/app/apps/` (iot-zephyr-app west manifest + Zephyr module)
 > **共享库**: `~/code/app/apps/libs/` (`udp_fw_upgrade`, `can_fw_upgrade`)
 > **已有 Zephyr 实现**: 已验证实现 (Modbus/FTP/RTC/栈保护/状态 LED 等已验证)
-> **文档版本**: v3.3 (v3.2 复核修正: 心跳→TCP Keepalive, ADC 设备树化, code review 修复)
-> **日期**: 2026-08-09
+> **文档版本**: v3.4 (v3.3 基础上: UDP 协议精简, 看门狗策略调整, 寄存器重命名, IP 校验统一)
+> **日期**: 2026-08-11
 
 ---
 
@@ -405,7 +405,7 @@ STM32F407VET6 内部 Flash 共 512KB (0x08000000 - 0x0807FFFF)，划分为两个
 - **分区**: `storage_partition` (外部 Flash 0x0E0000, 64KB)
 - **设备树**: `zephyr,settings-partition = &storage_partition` (chosen 节点)
 - **磨损均衡**: FCB 采用追加写入 + 循环覆盖，天然支持磨损均衡
-- **全量保存**: 写 `HOLDING_CFG_SAVE` (0x10) 寄存器触发 `settings_save()` 全量导出
+- **全量保存**: 写 `HOLDING_CONFIG_SAVE` (0x10) 寄存器触发 `settings_save()` 全量导出
 
 #### 3.4.2 参数键值定义 (直接映射 holding_reg, modbus/ 命名空间)
 
@@ -413,16 +413,16 @@ STM32F407VET6 内部 Flash 共 512KB (0x08000000 - 0x0807FFFF)，划分为两个
 
 | Settings Key | 对应 holding_reg | 大小 | 默认值 | 说明 | Modbus 地址 |
 |--------------|-------------------|------|--------|------|-------------|
-| `modbus/ai/enable` | HOLDING_AI_EN_IDX | 2B | 0x000F | AI 使能 bitmap | 0x02 |
-| `modbus/ai/time` | HOLDING_AI_SI_IDX | 2B | 200 | AI 采样间隔 (ms) | 0x04 |
-| `modbus/di/enable` | HOLDING_DI_EN_IDX | 2B | 0xFFFF | DI 使能 bitmap | 0x01 |
-| `modbus/di/time` | HOLDING_DI_SI_IDX | 2B | 200 | DI 采样间隔 (ms) | 0x03 |
-| `modbus/history` | HOLDING_HIS_SAVE_IDX | 2B | 0 | 历史记录保存使能 | 0x05 |
+| `modbus/ai/enable` | HOLDING_AI_ENABLE_IDX | 2B | 0x000F | AI 使能 bitmap | 0x02 |
+| `modbus/ai/time` | HOLDING_AI_SAMPLE_MS_IDX | 2B | 200 | AI 采样间隔 (ms) | 0x04 |
+| `modbus/di/enable` | HOLDING_DI_ENABLE_IDX | 2B | 0xFFFF | DI 使能 bitmap | 0x01 |
+| `modbus/di/time` | HOLDING_DI_SAMPLE_MS_IDX | 2B | 200 | DI 采样间隔 (ms) | 0x03 |
+| `modbus/history` | HOLDING_HISTORY_ENABLE_IDX | 2B | 0 | 历史记录保存使能 | 0x05 |
 | `modbus/can/id` | HOLDING_CAN_ID_IDX | 2B | 0x0111 | CAN ID (标准帧) | 0x06 |
-| `modbus/can/bps` | HOLDING_CAN_BPS_IDX | 2B | 10 | CAN 波特率 (x1000) | 0x07 |
-| `modbus/rs485_bps` | HOLDING_RS485_BPS_IDX | 2B | 9600 | RS485 波特率 | 0x08 |
+| `modbus/can/bps` | HOLDING_CAN_BAUDRATE_IDX | 2B | 10 | CAN 波特率 (x1000) | 0x07 |
+| `modbus/rs485_bps` | HOLDING_RS485_BAUDRATE_IDX | 2B | 9600 | RS485 波特率 | 0x08 |
 | `modbus/slave_id` | HOLDING_SLAVE_ID_IDX | 2B | 1 | Modbus RTU Slave ID | 0x09 |
-| `modbus/ip` | HOLDING_IP_ADDR_1..4 | 8B | 192.168.12.101 | IP 地址 (4x uint16_t) | 0x0A-0x0D |
+| `modbus/ip` | HOLDING_IP_OCTET1..4 | 8B | 192.168.12.101 | IP 地址 (4x uint16_t) | 0x0A-0x0D |
 
 #### 3.4.3 实现模式 (复用已验证实现 function.c)
 
@@ -435,10 +435,10 @@ SETTINGS_STATIC_HANDLER_DEFINE(modbus, "modbus",
     mb_handle_export    /* export: 导出 holding_reg 到 FCB */
 );
 
-/* 全量保存: 写 HOLDING_CFG_SAVE (0x10) 寄存器触发 */
+/* 全量保存: 写 HOLDING_CONFIG_SAVE (0x10) 寄存器触发 */
 static int holding_reg_wr(uint16_t addr, uint16_t reg) {
     holding_reg[addr] = reg;
-    if (addr == HOLDING_CFG_SAVE_IDX) {
+    if (addr == HOLDING_CONFIG_SAVE_IDX) {
         holding_reg[addr] = 0;  /* 恢复为 0 */
         settings_save();        /* 全量导出到 FCB */
     }
@@ -452,8 +452,8 @@ static int main_settings_init(void) {
 SYS_INIT(main_settings_init, APPLICATION, 10);
 ```
 
-> **IP 合法性检查** (复用已验证实现 `mb_handle_export`):
-> 导出 IP 地址前检查: 最后一字节不为 0/0xff，第一字节不在 224-239 (组播) 范围内。非法 IP 不导出，保留上次有效值。
+> **IP 合法性检查** (统一公共函数 `ip_addr_valid(a,b,c,d)`，定义在 `function.c`、声明在 `init.h`):
+> 拒绝以下 IP：末字节为 `0` (网络地址) / `0xFF` (广播)；首字节为 `0` (本网络) / `127` (环回) / `224-239` (组播 D 段) / `>=240` (保留 E 段，含限定广播)。非法 IP 既不会被 `UDP_CMD_SET_IP` 写入，也不会被 settings 导出，保留上次有效值。
 
 > **出厂恢复**: 出厂恢复通过擦除整个 `storage_partition` 实现:
 > ```c
@@ -646,7 +646,7 @@ main()
   |-- modbus_init() (SYS_INIT, priority 11):
   |   |-- 从 holding_regs[] 默认值初始化所有寄存器
   |   |-- settings_load() 加载持久化参数覆盖默认值
-  |   |-- 从 holding_reg[HOLDING_IP_ADDR_1..4] 读取 IP
+  |   |-- 从 holding_reg[HOLDING_IP_OCTET1..4] 读取 IP
   |   |-- net_if_ipv4_addr_add() + netmask /24
   |   +-- 启动 RTU (不依赖网络)
   |-- 启动 DI/AI 采样线程 (K_THREAD_DEFINE, 复用已验证实现)
@@ -756,8 +756,8 @@ struct his_data {
 - **DO 引脚**: PD7,PD8,PD9,PD10,PD11,PD12,PD13,PD14
 - **LED 引脚**: PE8,PE9,PE10,PE11,PE12,PE13,PE14,PE15
 - **引脚模式**: DI 为输入 (下拉)，DO/LED 为输出
-- **使能控制**: DI 每路独立使能 (16-bit bitmap, `holding_reg[HOLDING_DI_EN_IDX]`)，仅使能的通道参与采样
-- **采样方式**: `K_THREAD_DEFINE` 独立线程，周期从 `holding_reg[HOLDING_DI_SI_IDX]` 读取 (默认 200ms)
+- **使能控制**: DI 每路独立使能 (16-bit bitmap, `holding_reg[HOLDING_DI_ENABLE_IDX]`)，仅使能的通道参与采样
+- **采样方式**: `K_THREAD_DEFINE` 独立线程，周期从 `holding_reg[HOLDING_DI_SAMPLE_MS_IDX]` 读取 (默认 200ms)
 - **DO 控制**: `mb_set_do(uint16_t val)` — 写 `holding_reg[HOLDING_DO_IDX]` 时由寄存器回调调用，LED 自动跟随 DO
 - **历史记录**: 当 DI 使能且历史保存开启时，采样数据送入 `k_fifo` 异步写入
 - **初始化**: `SYS_INIT(dio_init, APPLICATION, 12)`
@@ -775,8 +775,8 @@ int mb_set_do(uint16_t val);  /* 设置 DO 输出 + LED 联动，val bit0-7 对�
 - **功能**: 读取 4 路 ADC 模拟输入 (12-bit)
 - **引脚**: PC0(IN10), PC1(IN11), PC2(IN12), PC3(IN13) — ADC1
 - **信号类型**: AI1-2 电流输入 (4-20mA)，AI3-4 电压输入 (0-10V)
-- **使能控制**: 4-bit bitmap (`holding_reg[HOLDING_AI_EN_IDX]`)，仅使能的通道参与采样
-- **采样方式**: `K_THREAD_DEFINE(adc_io, ...)` 独立线程，周期从 `holding_reg[HOLDING_AI_SI_IDX]` 读取 (默认 200ms)
+- **使能控制**: 4-bit bitmap (`holding_reg[HOLDING_AI_ENABLE_IDX]`)，仅使能的通道参与采样
+- **采样方式**: `K_THREAD_DEFINE(adc_io, ...)` 独立线程，周期从 `holding_reg[HOLDING_AI_SAMPLE_MS_IDX]` 读取 (默认 200ms)
 - **工程量转换** (复用已验证实现 `adc.c`):
   - AI0/AI1 (电流): `value = 7.414 * adc_voltage / 10`，单位 0.01mA
   - AI2/AI3 (电压): `value = 3.7037 * adc_voltage / 10`，单位 0.01V
@@ -828,7 +828,7 @@ static void tcp_poll(void) {
 - **角色**: Modbus RTU Slave
 - **UART**: USART2 (PA2/PA3)，DE/RE 控制 PA1
 - **模式**: `MODBUS_MODE_RTU`
-- **波特率**: 从 `holding_reg[HOLDING_RS485_BPS_IDX]` 读取 (默认 9600)
+- **波特率**: 从 `holding_reg[HOLDING_RS485_BAUDRATE_IDX]` 读取 (默认 9600)
 - **Slave ID**: 从 `holding_reg[HOLDING_SLAVE_ID_IDX]` 读取 (默认 1)
 - **初始化**: `SYS_INIT(rtu_init, APPLICATION, 13)`
 
@@ -852,26 +852,28 @@ static void tcp_poll(void) {
 > **v3.1 变更**: 从 15 个扩展到 21 个，新增 timestamp/reboot/heartbeat 寄存器。寄存器布局与已验证实现一致。
 >
 > **v3.3 变更**: 移除 heartbeat 寄存器 (0x12-0x14)，Holding 从 21 个缩减为 18 个 (心跳改由 TCP Keepalive 实现，不占寄存器)。
+>
+> **v3.4 变更**: 寄存器数量与 v3.3 一致 (18 个，`CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS` 默认值由 21 校正为 18)。寄存器枚举重命名以提升可读性：`HOLDING_DI_EN_IDX` → `HOLDING_DI_ENABLE_IDX`、`HOLDING_DI_SI_IDX` → `HOLDING_DI_SAMPLE_MS_IDX`、`HOLDING_HIS_SAVE_IDX` → `HOLDING_HISTORY_ENABLE_IDX`、`HOLDING_CAN_BPS_IDX` → `HOLDING_CAN_BAUDRATE_IDX`、`HOLDING_RS485_BPS_IDX` → `HOLDING_RS485_BAUDRATE_IDX`、`HOLDING_IP_ADDR_1..4_IDX` → `HOLDING_IP_OCTET1..4_IDX`、`HOLDING_TIMESTAMPH/L_IDX` → `HOLDING_TIMESTAMP_HI/LO_IDX`、`HOLDING_CFG_SAVE_IDX` → `HOLDING_CONFIG_SAVE_IDX` (settings 键名字符串不变，已部署设备无影响)。`HOLDING_TIMESTAMP_HI/LO` 读时不再返回数组陈旧值，改为实时 `time(NULL)` 拆分。
 
 | 地址 | 名称 | 默认值 | 说明 |
 |------|------|--------|------|
 | 0x00 | HOLDING_DO | 0 | DO1-8 输出控制 (8-bit) |
-| 0x01 | HOLDING_DI_EN | 0xFFFF | DI1-16 使能 |
-| 0x02 | HOLDING_AI_EN | 0x000F | AI1-4 使能 |
-| 0x03 | HOLDING_DI_SI | 200 | DI 采样间隔 (ms) |
-| 0x04 | HOLDING_AI_SI | 200 | AI 采样间隔 (ms) |
-| 0x05 | HOLDING_HIS_SAVE | 0 | 历史保存使能 |
+| 0x01 | HOLDING_DI_ENABLE | 0xFFFF | DI1-16 使能 |
+| 0x02 | HOLDING_AI_ENABLE | 0x000F | AI1-4 使能 |
+| 0x03 | HOLDING_DI_SAMPLE_MS | 200 | DI 采样间隔 (ms) |
+| 0x04 | HOLDING_AI_SAMPLE_MS | 200 | AI 采样间隔 (ms) |
+| 0x05 | HOLDING_HISTORY_ENABLE | 0 | 历史保存使能 |
 | 0x06 | HOLDING_CAN_ID | 0x0111 | CAN ID |
-| 0x07 | HOLDING_CAN_BPS | 10 | CAN 波特率 (x1000, 即 10=10K) |
-| 0x08 | HOLDING_RS485_BPS | 9600 | RS485 波特率 |
+| 0x07 | HOLDING_CAN_BAUDRATE | 10 | CAN 波特率 (x1000, 即 10=10K) |
+| 0x08 | HOLDING_RS485_BAUDRATE | 9600 | RS485 波特率 |
 | 0x09 | HOLDING_SLAVE_ID | 1 | Modbus RTU Slave ID |
-| 0x0A | HOLDING_IP_ADDR_1 | 192 | IP 地址段1 |
-| 0x0B | HOLDING_IP_ADDR_2 | 168 | IP 地址段2 |
-| 0x0C | HOLDING_IP_ADDR_3 | 12 | IP 地址段3 |
-| 0x0D | HOLDING_IP_ADDR_4 | 101 | IP 地址段4 |
-| 0x0E | HOLDING_TIMESTAMPH | 0 | 时间戳高16位 (设置时间) |
-| 0x0F | HOLDING_TIMESTAMPL | 0 | 时间戳低16位 (设置时间) |
-| 0x10 | HOLDING_CFG_SAVE | 0 | 参数保存触发 (写非0 → settings_save) |
+| 0x0A | HOLDING_IP_OCTET1 | 192 | IP 地址段1 |
+| 0x0B | HOLDING_IP_OCTET2 | 168 | IP 地址段2 |
+| 0x0C | HOLDING_IP_OCTET3 | 12 | IP 地址段3 |
+| 0x0D | HOLDING_IP_OCTET4 | 101 | IP 地址段4 |
+| 0x0E | HOLDING_TIMESTAMP_HI | 0 | 时间戳高16位 (设置时间) |
+| 0x0F | HOLDING_TIMESTAMP_LO | 0 | 时间戳低16位 (设置时间) |
+| 0x10 | HOLDING_CONFIG_SAVE | 0 | 参数保存触发 (写非0 → settings_save) |
 | 0x11 | HOLDING_REBOOT | 0 | 写1触发系统重启 |
 
 **保持寄存器写入回调** (复用已验证实现 `function.c` holding_reg_wr):
@@ -879,9 +881,9 @@ static void tcp_poll(void) {
 | 寄存器 | 回调动作 | 说明 |
 |--------|----------|------|
 | 0x00 (DO) | `mb_set_do(reg & 0xff)` | 更新 DO 输出 + LED |
-| 0x05 (HIS_SAVE) | `history_enable_write(!!reg)` | 开关历史记录写入 |
-| 0x0E-0x0F (TS) | `set_timestamp(combine)` | 设置 RTC 时间 |
-| 0x10 (CFG_SAVE) | `settings_save()` + 恢复为0 | 全量保存参数到 FCB |
+| 0x05 (HISTORY_ENABLE) | `history_enable_write(!!reg)` | 开关历史记录写入 |
+| 0x0E-0x0F (TIMESTAMP_HI/LO) | `set_timestamp(combine)` | 设置 RTC 时间 |
+| 0x10 (CONFIG_SAVE) | `settings_save()` + 恢复为0 | 全量保存参数到 FCB |
 | 0x11 (REBOOT) | `sys_reboot(SYS_REBOOT_COLD)` | 系统重启 |
 
 ### 5.3 FTP 服务模块 (`src/ftp_server/` — 直接复用已验证实现)
@@ -939,11 +941,11 @@ static void tcp_poll(void) {
 **应用集成** (`src/udp.c`):
 
 ```c
-/* 注册 app handler (main.c 初始化时调用) */
+/* 注册 app handler (udp_app_init SYS_INIT, priority 80, 在库 priority 90 之前) */
 udp_fw_set_app_handler(app_cmd_handler, NULL);
 
-/* 允许 DISCOVER 命令跨子网广播回复 */
-udp_fw_allow_broadcast_cmd(UDP_CMD_DISCOVER);
+/* 允许 GET_IP 命令跨子网广播回复 (LAN 内广播 0x11 即可发现设备) */
+udp_fw_allow_broadcast_cmd(UDP_CMD_GET_IP);
 
 /* App 命令处理 (0x10+) — 直接操作 holding_reg[]
  * 回调签名必须与 udp_fw_app_cmd_cb_t 一致:
@@ -953,40 +955,19 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data,
                              size_t len, void *user_data)
 {
     switch (cmd) {
-    case UDP_CMD_SET_IP:       /* 0x10: 设置 IP */
-        /* 解析 4B IP，写入 holding_reg[HOLDING_IP_ADDR_1..4] */
-        /* 触发 settings_save() 持久化 */
+    case UDP_CMD_SET_IP:        /* 0x10: 设置 IP (持久化, 需手动重启) */
+        /* 校验 ip_addr_valid(a,b,c,d) → 写 holding_reg[HOLDING_IP_OCTET1..4]
+         * → holding_reg_save(); 不再自动 set_reboot_status */
         break;
-    case UDP_CMD_GET_NET:      /* 0x11: 查询网络配置 */
-        /* 构造回复: [4B IP from holding_reg][1B slave_id][2B tcp_port] */
-        udp_fw_reply(UDP_CMD_GET_NET, reply_buf, reply_len);
+    case UDP_CMD_GET_IP:        /* 0x11: 返回 4B IP (同时承担广播发现) */
         break;
-    case UDP_CMD_SET_MODBUS:   /* 0x12: 设置 Modbus 参数 */
-        /* 写入 holding_reg[HOLDING_SLAVE_ID_IDX / HOLDING_RS485_BPS_IDX] */
+    case UDP_CMD_SET_MODBUS:    /* 0x12: slave_id(1B) + rs485_baud(2B) */
         break;
-    case UDP_CMD_GET_MODBUS:   /* 0x13: 查询 Modbus 参数 */
-        /* 从 holding_reg 读取 */
+    case UDP_CMD_GET_MODBUS:    /* 0x13: → slave_id(1B) + rs485_baud(2B) */
         break;
-    case UDP_CMD_SET_SAMPLE:   /* 0x14: 设置采样参数 */
-        /* 写入 holding_reg[HOLDING_DI_EN/AI_EN/DI_SI/AI_SI] */
+    case UDP_CMD_SET_TIME:      /* 0x14: unix 时间戳(4B 大端) → set_timestamp() 设 RTC */
         break;
-    case UDP_CMD_GET_SAMPLE:   /* 0x15: 查询采样参数 */
-        break;
-    case UDP_CMD_SET_CAN:      /* 0x16: 设置 CAN 参数 */
-        /* 写入 holding_reg[HOLDING_CAN_ID_IDX / HOLDING_CAN_BPS_IDX] */
-        break;
-    case UDP_CMD_GET_CAN:      /* 0x17: 查询 CAN 参数 */
-        break;
-    case UDP_CMD_DISCOVER:     /* 0x18: 设备发现 (广播) */
-        /* 回复设备信息: 名称 + IP(from holding_reg) + 版本 */
-        break;
-    case UDP_CMD_FACTORY_RESET:/* 0x19: 恢复出厂 */
-        /* 擦除 storage_partition，重新初始化 settings，holding_reg 恢复默认值 */
-        break;
-    case UDP_CMD_SET_HIS:      /* 0x1A: 设置历史参数 */
-        /* 写入 holding_reg[HOLDING_HIS_SAVE_IDX] */
-        break;
-    case UDP_CMD_GET_HIS:      /* 0x1B: 查询历史参数 */
+    case UDP_CMD_FACTORY_RESET: /* 0x19: 擦 storage_partition + 冷重启 */
         break;
     default:
         return false;  /* 未处理 */
@@ -995,8 +976,10 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data,
 }
 ```
 
+> **v3.4 协议精简**: 移除 SET_SAMPLE/GET_SAMPLE (0x14/0x15)、SET_CAN/GET_CAN (0x16/0x17)、SET_HIS/GET_HIS (0x1A/0x1B)；`DISCOVER` (0x18) 与 `GET_NET` (0x11) 合并为 `GET_IP` (0x11, 仅返回 4B IP, 注册为广播允许命令)；新增 `SET_TIME` (0x14)。最终保留 6 条应用命令：SET_IP / GET_IP / SET_MODBUS / GET_MODBUS / SET_TIME / FACTORY_RESET。SET_IP 不再自动重启，由客户端通过 holding 0x11=1 或重新上电使新 IP 生效。
+
 > **回复发送**: 配置端口回复通过库的 `udp_fw_reply(cmd, data, len)` 在**库 RX 线程内同步** `sendto()` 发送（`udp_fw_upgrade.c` 无内部发送队列）。n2e-gw 的 `udp_tx` 线程 + `k_msgq` 是**数据端口**（nRF24→上位机）的转发路径，与配置端口回复无关。注意:
-> - 回复缓冲固定 64B（`udp_fw_reply` 内 `uint8_t buf[64]`），**数据部分 >63B 被截断**；DISCOVER 等回复需精简。
+> - 回复缓冲固定 64B（`udp_fw_reply` 内 `uint8_t buf[64]`），**数据部分 >63B 被截断**；当前最长回复为 GET_MODBUS 的 3B，余量充足。
 > - 跨子网广播回复发往 **`CONFIG_UDP_FW_CONFIG_PORT + 1` (8601)** 端口，上位机需监听 8601 接收广播回复。
 > - 若确需异步化，可在 handler 内自行入队（参考 n2e-gw 数据端口模式），默认配置端口回复为同步。
 
@@ -1064,16 +1047,16 @@ SETTINGS_STATIC_HANDLER_DEFINE(modbus, "modbus",
 
 | Settings Key | 对应 holding_reg | 大小 | 说明 |
 |--------------|-------------------|------|------|
-| `modbus/ai/enable` | HOLDING_AI_EN_IDX | 2B | AI 使能 |
-| `modbus/ai/time` | HOLDING_AI_SI_IDX | 2B | AI 采样间隔 |
-| `modbus/di/enable` | HOLDING_DI_EN_IDX | 2B | DI 使能 |
-| `modbus/di/time` | HOLDING_DI_SI_IDX | 2B | DI 采样间隔 |
-| `modbus/history` | HOLDING_HIS_SAVE_IDX | 2B | 历史保存使能 |
+| `modbus/ai/enable` | HOLDING_AI_ENABLE_IDX | 2B | AI 使能 |
+| `modbus/ai/time` | HOLDING_AI_SAMPLE_MS_IDX | 2B | AI 采样间隔 |
+| `modbus/di/enable` | HOLDING_DI_ENABLE_IDX | 2B | DI 使能 |
+| `modbus/di/time` | HOLDING_DI_SAMPLE_MS_IDX | 2B | DI 采样间隔 |
+| `modbus/history` | HOLDING_HISTORY_ENABLE_IDX | 2B | 历史保存使能 |
 | `modbus/can/id` | HOLDING_CAN_ID_IDX | 2B | CAN ID |
-| `modbus/can/bps` | HOLDING_CAN_BPS_IDX | 2B | CAN 波特率 |
-| `modbus/rs485_bps` | HOLDING_RS485_BPS_IDX | 2B | RS485 波特率 |
+| `modbus/can/bps` | HOLDING_CAN_BAUDRATE_IDX | 2B | CAN 波特率 |
+| `modbus/rs485_bps` | HOLDING_RS485_BAUDRATE_IDX | 2B | RS485 波特率 |
 | `modbus/slave_id` | HOLDING_SLAVE_ID_IDX | 2B | Modbus Slave ID |
-| `modbus/ip` | HOLDING_IP_ADDR_1..4 | 8B | IP 地址 (4x uint16_t) |
+| `modbus/ip` | HOLDING_IP_OCTET1..4 | 8B | IP 地址 (4x uint16_t) |
 
 #### 5.5.2 参数加载与保存
 
@@ -1081,11 +1064,11 @@ SETTINGS_STATIC_HANDLER_DEFINE(modbus, "modbus",
 /* 加载: settings_subsys_init() (SYS_INIT, priority 10) 自动调用 mb_handle_set() 逐键加载 */
 /* 未找到的键使用 holding_regs[] 中的默认值 */
 
-/* 全量保存: 写 HOLDING_CFG_SAVE (0x10) 寄存器触发 */
+/* 全量保存: 写 HOLDING_CONFIG_SAVE (0x10) 寄存器触发 */
 static int holding_reg_wr(uint16_t addr, uint16_t reg) {
     holding_reg[addr] = reg;
     switch (addr) {
-    case HOLDING_CFG_SAVE_IDX:
+    case HOLDING_CONFIG_SAVE_IDX:
         holding_reg[addr] = 0;  /* 恢复为 0 */
         settings_save();        /* 全量导出到 FCB */
         break;
@@ -1096,20 +1079,20 @@ static int holding_reg_wr(uint16_t addr, uint16_t reg) {
 
 /* mb_handle_export: 导出当前所有 holding_reg 到 FCB */
 int mb_handle_export(int (*cb)(const char *name, const void *value, size_t val_len)) {
-    cb("modbus/ai/enable", holding_reg + HOLDING_AI_EN_IDX, sizeof(uint16_t));
-    cb("modbus/ai/time", holding_reg + HOLDING_AI_SI_IDX, sizeof(uint16_t));
-    cb("modbus/di/enable", holding_reg + HOLDING_DI_EN_IDX, sizeof(uint16_t));
-    cb("modbus/di/time", holding_reg + HOLDING_DI_SI_IDX, sizeof(uint16_t));
-    cb("modbus/history", holding_reg + HOLDING_HIS_SAVE_IDX, sizeof(uint16_t));
+    cb("modbus/ai/enable", holding_reg + HOLDING_AI_ENABLE_IDX, sizeof(uint16_t));
+    cb("modbus/ai/time", holding_reg + HOLDING_AI_SAMPLE_MS_IDX, sizeof(uint16_t));
+    cb("modbus/di/enable", holding_reg + HOLDING_DI_ENABLE_IDX, sizeof(uint16_t));
+    cb("modbus/di/time", holding_reg + HOLDING_DI_SAMPLE_MS_IDX, sizeof(uint16_t));
+    cb("modbus/history", holding_reg + HOLDING_HISTORY_ENABLE_IDX, sizeof(uint16_t));
     cb("modbus/can/id", holding_reg + HOLDING_CAN_ID_IDX, sizeof(uint16_t));
-    cb("modbus/can/bps", holding_reg + HOLDING_CAN_BPS_IDX, sizeof(uint16_t));
-    cb("modbus/rs485_bps", holding_reg + HOLDING_RS485_BPS_IDX, sizeof(uint16_t));
+    cb("modbus/can/bps", holding_reg + HOLDING_CAN_BAUDRATE_IDX, sizeof(uint16_t));
+    cb("modbus/rs485_bps", holding_reg + HOLDING_RS485_BAUDRATE_IDX, sizeof(uint16_t));
     cb("modbus/slave_id", holding_reg + HOLDING_SLAVE_ID_IDX, sizeof(uint16_t));
     /* IP 合法性检查后才导出 */
-    if (get_holding_reg(HOLDING_IP_ADDR_4_IDX) != 0xff &&
-        get_holding_reg(HOLDING_IP_ADDR_4_IDX) != 0 &&
-        !IN_RANGE(get_holding_reg(HOLDING_IP_ADDR_1_IDX), 224, 239)) {
-        cb("modbus/ip", holding_reg + HOLDING_IP_ADDR_1_IDX, sizeof(uint16_t) * 4);
+    if (get_holding_reg(HOLDING_IP_OCTET4_IDX) != 0xff &&
+        get_holding_reg(HOLDING_IP_OCTET4_IDX) != 0 &&
+        !IN_RANGE(get_holding_reg(HOLDING_IP_OCTET1_IDX), 224, 239)) {
+        cb("modbus/ip", holding_reg + HOLDING_IP_OCTET1_IDX, sizeof(uint16_t) * 4);
     }
     return 0;
 }
@@ -1176,7 +1159,7 @@ struct his_data {
 - **写入策略**: 通过 `k_fifo` + `k_work` 异步写入 (复用已验证实现 `history.c`)
   - `send_history_data()` 将数据放入 `k_fifo`
   - `his_process_save()` 作为 `k_work` 回调在 workqueue 中执行文件写入
-- **历史保存使能**: 由 `holding_reg[HOLDING_HIS_SAVE_IDX]` 控制
+- **历史保存使能**: 由 `holding_reg[HOLDING_HISTORY_ENABLE_IDX]` 控制
 
 ### 5.7 系统管理模块 (`src/sys/` + `src/main.c`)
 
@@ -1284,8 +1267,11 @@ static void net_event_handler(struct net_mgmt_event_callback *cb,
 #### 5.7.6 硬件看门狗 (`watchdog.c/h`)
 
 - 使用 STM32 独立看门狗 (IWDG)
-- 超时时间: 10 秒
-- DI/AI 采样线程 (adc_io / dio 线程) 定期喂狗
+- 超时时间: 30 秒 (`WDG_TIMEOUT_MS = 30000`)
+- 喂狗策略 (v3.4):
+  - **main 主循环** (`main.c`) 每次迭代 (~3s) 喂一次狗，保护主循环不卡死
+  - **`fs_littlefs.c::littlefs_init`** mkfs 擦整个 15MB SPI NOR 前后各喂一次狗（mkfs 耗时数十秒，超过 30s 看门狗窗口，且此时 `main` 尚未运行，需事件型喂狗防止文件系统半损坏）
+  - **DI/AI 采样线程不再喂狗**（v3.3 及之前由 `dio`/`adc_io` 线程周期喂狗）
 
 > **DTS 使能**: `CONFIG_IWDG_STM32` 由设备树 `st,stm32-watchdog` 节点自动拉起
 > (`depends on DT_HAS_ST_STM32_WATCHDOG_ENABLED`)，需在 overlay 中使能节点:
@@ -1295,8 +1281,10 @@ static void net_event_handler(struct net_mgmt_event_callback *cb,
 > };
 > ```
 > **超时配置**: IWDG 预分频/重载由驱动根据 `watchdog_install_timeout()` 传入的超时 (us)
-> 自动换算（见 `wdt_iwdg_stm32.c` 的 `iwdg_stm32_convert_timeout`），10s 超时在
+> 自动换算（见 `wdt_iwdg_stm32.c` 的 `iwdg_stm32_convert_timeout`），30s 超时在
 > `watchdog.c` 代码中通过 watchdog API 设置，不写进设备树。
+
+> **语义变化**: v3.3 及之前由 DI/AI 采样线程喂狗，语义是"采样线程冻结则系统复位"。v3.4 改为 main 喂狗后这层保护丢失——采样线程死循环时 main 仍正常喂狗，看门狗不会触发。看门狗现在只保护 main 主循环不卡死。
 
 #### 5.7.7 系统初始化 (`src/main.c` — 参考 已验证实现)
 
@@ -1322,7 +1310,7 @@ int main(void)
     /* 10. FTP 线程 (K_THREAD_DEFINE) — 自动启动 */
     /* 11. 注册固件升级 app handler */
     udp_fw_set_app_handler(app_cmd_handler, NULL);
-    udp_fw_allow_broadcast_cmd(UDP_CMD_DISCOVER);
+    udp_fw_allow_broadcast_cmd(UDP_CMD_GET_IP);
     can_fw_set_app_handler(mod_can_app_rx, NULL);
 
     /* 13. 网络初始化 */
@@ -1419,20 +1407,14 @@ int main(void)
 
 | Cmd | 名称 | 方向 | Payload | 说明 |
 |-----|------|------|---------|------|
-| 0x10 | SET_IP | 上位机->设备 | ip(4B) | 设置静态 IP 地址 |
-| 0x11 | GET_NET | 双向 | ip(4B) + slave_id(1B) + tcp_port(2B) | 查询网络配置 |
-| 0x12 | SET_MODBUS | 上位机->设备 | slave_id(1B) + rs485_baud(4B) + tcp_port(2B) | 设置 Modbus 参数 |
+| 0x10 | SET_IP | 上位机->设备 | ip(4B) | 设置静态 IP 地址 (持久化, 不自动重启) |
+| 0x11 | GET_IP | 双向 | ip(4B) | 返回当前 IP (允许广播发现) |
+| 0x12 | SET_MODBUS | 上位机->设备 | slave_id(1B) + rs485_baud(2B) | 设置 Modbus 参数 |
 | 0x13 | GET_MODBUS | 双向 | 同 SET_MODBUS | 查询 Modbus 参数 |
-| 0x14 | SET_SAMPLE | 上位机->设备 | di_en(2B) + ai_en(2B) + di_si(2B) + ai_si(2B) | 设置采样参数 |
-| 0x15 | GET_SAMPLE | 双向 | 同 SET_SAMPLE | 查询采样参数 |
-| 0x16 | SET_CAN | 上位机->设备 | can_id(2B) + can_baud(4B) | 设置 CAN 参数 |
-| 0x17 | GET_CAN | 双向 | 同 SET_CAN | 查询 CAN 参数 |
-| 0x18 | DISCOVER | 上位机->设备 | (无) | 设备发现 (允许广播) |
+| 0x14 | SET_TIME | 上位机->设备 | unix 时间戳(4B 大端) | 设置 RTC 时间 |
 | 0x19 | FACTORY_RESET | 上位机->设备 | (无) | 恢复出厂设置 |
-| 0x1A | SET_HIS | 上位机->设备 | his_save(1B) | 设置历史参数 |
-| 0x1B | GET_HIS | 双向 | his_save(1B) | 查询历史参数 |
 
-> **DISCOVER 命令**: 允许跨子网广播回复 (`udp_fw_allow_broadcast_cmd(0x18)`)。回复包含设备名称、IP 地址、版本字符串；注意回复总长须 ≤63B（库回复缓冲 64B 含 1B cmd）。
+> **GET_IP 命令**: 允许跨子网广播回复 (`udp_fw_allow_broadcast_cmd(0x11)`)，承担 LAN 内设备发现职责。回复固定 4B IP，远小于 63B 缓冲限制。
 
 > **FACTORY_RESET 命令**: 擦除整个 `storage_partition`，重新初始化 settings，恢复所有参数为默认值。
 
@@ -2164,7 +2146,7 @@ cd tools && cmake . && make
 - [ ] **保持寄存器写入回调** (DO/CFG_SAVE/REBOOT/TIMESTAMP/HIS_SAVE) [复用已验证实现 function.c]
 - [ ] **Modbus TCP RAW ADU Server** (select() 多路复用，端口 502) [复用已验证实现 tcp.c]
 - [ ] **Modbus RTU Slave** (UART2 + RS485, PA1 DE 控制) [复用已验证实现 rtu.c]
-- [ ] **参数保存流程验证** (写 0x10 HOLDING_CFG_SAVE 触发 settings_save 全量导出)
+- [ ] **参数保存流程验证** (写 0x10 HOLDING_CONFIG_SAVE 触发 settings_save 全量导出)
 - [ ] **参数加载流程验证** (settings_load 从 FCB 恢复到 holding_reg)
 - [ ] **TCP Keepalive 验证** (主站掉线 ~45s 自动断开连接)
 - [ ] TCP + RTU 并发运行验证
@@ -2183,7 +2165,7 @@ cd tools && cmake . && make
 
 - [ ] **UDP 固件升级** — 启用 `CONFIG_UDP_FW_UPGRADE=y`
 - [ ] UDP app handler 注册 (`udp_fw_set_app_handler`) — 操作 holding_reg
-- [ ] UDP app 命令实现 (SET_IP/GET_NET/DISCOVER/FACTORY_RESET 等 0x10+)
+- [ ] UDP app 命令实现 (SET_IP/GET_IP/SET_MODBUS/GET_MODBUS/SET_TIME/FACTORY_RESET)
 - [ ] UDP 固件升级全流程测试 (FW_START -> FW_DATA -> FW_END -> 重启)
 - [ ] **CAN 固件升级** — 启用 `CONFIG_CAN_FW_UPGRADE=y`
 - [ ] CAN app handler 注册 (`can_fw_set_app_handler`)
@@ -2562,4 +2544,23 @@ cd tools && cmake . && make
 
 ---
 
-*文档结束 - io-edge-hub 方案规划 v3.3 (已验证模块复用 + RAW ADU Modbus + Settings 直接映射 + TCP Keepalive 保活 + RTC 时间管理; 附录 G/H 记录实现差异)*
+## 附录 I: v3.3 -> v3.4 变更摘要 (UDP 协议精简 + 看门狗策略调整 + 寄存器重命名 + IP 校验统一)
+
+> **v3.4 变更**: 对已落地代码做一轮协议精简与命名规范化，统一 IP 校验逻辑，调整看门狗喂狗策略。
+
+| 变更项 | v3.3 | v3.4 | 原因 |
+|--------|------|------|------|
+| **UDP 应用协议** | 12 条命令 (SET/GET IP/MODBUS/SAMPLE/CAN/HIS, DISCOVER, FACTORY_RESET) | **6 条** (SET_IP / GET_IP / SET_MODBUS / GET_MODBUS / SET_TIME / FACTORY_RESET) | DI/AI/CAN/历史参数完全可经 Modbus holding 寄存器配，UDP 通道无需重复；协议面收敛降低误操作与文档维护成本 |
+| **UDP 设备发现** | `DISCOVER` (0x18) 返回字符串 "io-edge-hub \<ip\> v\<ver\>" | `GET_IP` (0x11) 返回 4B 纯 IP，注册为广播允许命令 | DISCOVER 与 GET_NET 信息重叠；合并后协议更紧凑，对端解析简单 |
+| **UDP 时间设置** | 无 (仅 Modbus 0x0E/0x0F) | 新增 `SET_TIME` (0x14)，4B 大端 Unix 时间戳 | UDP 通道补齐时间设置能力，与 Modbus 通道对等 |
+| **SET_IP 行为** | 持久化后自动 `set_reboot_status(true)` 延迟重启 | 持久化后**不自动重启**，需客户端发 holding 0x11=1 或重新上电 | 自动重启会让上位机丢失连接难以确认结果；改由客户端显式控制生效时机 |
+| **IP 合法性校验** | `udp.c::ip_valid` 与 `function.c::ip_is_valid_for_export` 两份重复实现，规则仅拦末字节 0/0xFF 与组播 224-239 | 统一公共函数 `ip_addr_valid(a,b,c,d)` (声明在 `init.h`，实现在 `function.c`)，扩展规则：拒绝 0.x / 127.x / 224+ / 末字节 0/0xFF | 消除代码重复；扩展拦截本网络/环回/保留段/限定广播等非法地址 |
+| **看门狗超时** | 10s | **30s** | 与代码事实对齐 (`WDG_TIMEOUT_MS = 30000`)，文档原写 10s 为错误 |
+| **看门狗喂狗** | `dio` / `adc_io` 采样线程周期喂狗 | `main` 主循环 (~3s 周期) 喂狗；`fs_littlefs.c` mkfs 前后事件型喂狗 (mkfs 跨 30s 窗口且此时 main 未运行) | 简化喂狗路径，避免采样间隔被远程调大导致误触发复位；保留 mkfs 事件喂狗防文件系统半损坏。代价：丢失"采样线程冻结则复位"的语义 |
+| **HOLDING 寄存器数量** | Kconfig 默认 21 (实际枚举仅 18) | Kconfig 默认 **18** (与枚举一致) | 修正历史遗留过配，节省 6B RAM + 收敛 Modbus 可访问地址范围 |
+| **HOLDING 寄存器命名** | 缩写晦涩 (`_EN` / `_SI` / `_HIS` / `_BPS` / `_ADDR_1` / `TIMESTAMPH` / `_CFG`) | 全称清晰 (`_ENABLE` / `_SAMPLE_MS` / `_HISTORY_ENABLE` / `_BAUDRATE` / `_OCTET1` / `TIMESTAMP_HI` / `_CONFIG`) | 提升源码可读性；settings 键名字符串不变，已部署设备无影响 |
+| **TIMESTAMP 寄存器读取** | `holding_reg_rd_cb` 返回数组里的陈旧值 (仅写入时刷新) | 读 `0x0E/0x0F` 时实时调用 `time(NULL)` 拆分返回 | 修复读到上次写入值而非当前系统时间的 bug；副作用：FC03 成对读跨秒边界存在 < 1e-6 概率的时间撕裂，可重读恢复 |
+
+---
+
+*文档结束 - io-edge-hub 方案规划 v3.4 (已验证模块复用 + RAW ADU Modbus + Settings 直接映射 + TCP Keepalive 保活 + RTC 时间管理; 附录 G/H/I 记录实现差异)

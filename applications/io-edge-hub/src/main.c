@@ -30,6 +30,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
 #include <init.h>
+#include "watchdog.h"
 
 #ifndef CONFIG_FLASH_SIZE
 #define CONFIG_FLASH_SIZE 0x1000
@@ -147,10 +148,10 @@ static int net_init(void)
 	struct in_addr addr, mask, gw;
 	uint8_t *a = (uint8_t *)&addr.s_addr;
 
-	a[0] = (uint8_t)get_holding_reg(HOLDING_IP_ADDR_1_IDX);
-	a[1] = (uint8_t)get_holding_reg(HOLDING_IP_ADDR_2_IDX);
-	a[2] = (uint8_t)get_holding_reg(HOLDING_IP_ADDR_3_IDX);
-	a[3] = (uint8_t)get_holding_reg(HOLDING_IP_ADDR_4_IDX);
+	a[0] = (uint8_t)get_holding_reg(HOLDING_IP_OCTET1_IDX);
+	a[1] = (uint8_t)get_holding_reg(HOLDING_IP_OCTET2_IDX);
+	a[2] = (uint8_t)get_holding_reg(HOLDING_IP_OCTET3_IDX);
+	a[3] = (uint8_t)get_holding_reg(HOLDING_IP_OCTET4_IDX);
 
 	mask.s_addr = htonl(0xFFFFFF00);
 	memcpy(&gw, &addr, sizeof(addr));
@@ -215,6 +216,8 @@ int main(void)
 	}
 
 	while (1) {
+		watchdog_feed();
+
 		if (gpio_is_ready_dt(&status_led)) {
 			gpio_pin_set_dt(&status_led, 1);
 			k_msleep(300);
