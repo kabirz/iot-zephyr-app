@@ -8,10 +8,9 @@
  *     仅使能通道 (holding_reg[DI_EN] bitmap) 参与采样, 结果写 input_reg[DI]。
  *   - DO 由 mb_set_do() 驱动 (holding_reg[DO] 写回调 / 网络断连安全清零),
  *     LED 自动跟随 DO 状态。
- *   - DI 使能且历史开启时, 采样数据异步送历史记录。
- *   - 采样线程周期喂硬件看门狗。
+ *   - DI 使能且历史开启时, 采样数据异步送历史记录.
  *
- * GPIO 引脚定义在应用 overlay 的 /zephyr,user 节点 (di-gpios/do-gpios/led-gpios)。
+ * GPIO 引脚定义在应用 overlay 的 /zephyr,user 节点 (di-gpios/do-gpios/led-gpios).
  */
 
 #include <string.h>
@@ -24,7 +23,7 @@
 
 LOG_MODULE_REGISTER(io_dio, LOG_LEVEL_INF);
 
-/* 采样间隔上限: 必须小于 IWDG 10s, 防止远程调大间隔导致喂狗超时复位 */
+/* 采样间隔上限 5s: 业务合理性约束 (远程调大时钳制, 防止采样响应过慢) */
 #define SAMPLE_INTERVAL_MAX	5000U
 
 #define ZU_NODE DT_PATH(zephyr_user)

@@ -9,7 +9,7 @@
  *   - AI2/AI3 (IN12/13): 电压 0-10V,  value = 3.7037 * voltage / 10 (单位 0.01V)
  *
  * 仅使能通道 (holding_reg[AI_EN] 低 4 位) 参与采样, 结果写 input_reg[AI0..3]。
- * 使能且历史开启时, 采样数据异步送历史记录。采样线程周期喂看门狗。
+ * 使能且历史开启时, 采样数据异步送历史记录。
  */
 
 #include <string.h>
@@ -22,7 +22,7 @@
 
 LOG_MODULE_REGISTER(io_adc, LOG_LEVEL_INF);
 
-/* 采样间隔上限: 必须小于 IWDG 10s, 防止远程调大间隔导致喂狗超时复位 */
+/* 采样间隔上限 5s: 业务合理性约束 (远程调大时钳制, 防止采样响应过慢) */
 #define SAMPLE_INTERVAL_MAX	5000U
 
 #define ADC_NODE DT_PATH(zephyr_user)

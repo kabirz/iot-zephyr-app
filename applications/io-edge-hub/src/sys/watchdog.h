@@ -11,7 +11,7 @@
 /* 初始化 IWDG (30s 超时), 失败返回负 errno */
 int watchdog_init(void);
 
-/* 喂狗 (DI/AI 采样线程周期调用) */
+/* 喂狗 (main 主循环周期调用, fs_littlefs.c mkfs 事件型调用) */
 void watchdog_feed(void);
 
 #endif /* __WATCHDOG_H__ */

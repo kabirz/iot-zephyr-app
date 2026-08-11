@@ -10,6 +10,7 @@
 
 #include <string.h>
 #include <time.h>
+#include <stdbool.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/rtc.h>
@@ -40,18 +41,18 @@ static uint32_t rtc_timestamp_get(void)
 #define TS_MIN	946684800U	/* 2000-01-01 00:00:00 UTC */
 #define TS_MAX	4102444800U	/* 2100-01-01 00:00:00 UTC */
 
-void set_timestamp(time_t t)
+bool set_timestamp(time_t t)
 {
 	if (!rtc_dev || t < (time_t)TS_MIN || t > (time_t)TS_MAX) {
 		LOG_WRN("invalid timestamp %lld, ignored", (long long)t);
-		return;
+		return false;
 	}
 
 	struct tm *lt = gmtime(&t);
 
 	if (lt == NULL) {
 		LOG_WRN("gmtime failed for %lld", (long long)t);
-		return;
+		return false;
 	}
 	struct rtc_time tm;
 
@@ -66,12 +67,18 @@ void set_timestamp(time_t t)
 	tm.tm_yday = lt->tm_yday;
 	tm.tm_isdst = lt->tm_isdst;
 
-	rtc_set_time(rtc_dev, &tm);
+	int rc = rtc_set_time(rtc_dev, &tm);
+
+	if (rc != 0) {
+		LOG_WRN("rtc_set_time failed: %d", rc);
+		return false;
+	}
 
 	struct timespec ts = { .tv_sec = t, .tv_nsec = 0 };
 
 	clock_settime(CLOCK_REALTIME, &ts);
 	LOG_INF("time set: %lld", (long long)t);
+	return true;
 }
 
 static int clock_init(void)

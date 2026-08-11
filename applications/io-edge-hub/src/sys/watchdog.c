@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 硬件看门狗 (STM32 独立看门狗 IWDG)
- * 30 秒超时, 由 DI/AI 采样线程周期喂狗; 采样线程冻结则系统复位。
- * 30s 窗口需容纳外部 SPI NOR 擦除耗时 (LittleFS mkfs 擦 15MB 可达数十秒)。
+ * 30 秒超时, 由 main 主循环周期喂狗; 主循环冻结则系统复位.
+ * fs_littlefs.c mkfs 擦整个 15MB NOR 期间事件型喂狗 (此时 main 尚未运行).
+ * 30s 窗口需容纳外部 SPI NOR 擦除耗时 (LittleFS mkfs 擦 15MB 可达数十秒).
  */
 
 #include <zephyr/kernel.h>

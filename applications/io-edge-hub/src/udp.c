@@ -10,7 +10,6 @@
  * SET 类命令改 holding_reg[] 后 holding_reg_save() 持久化。
  */
 
-#include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/reboot.h>
@@ -83,8 +82,7 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
 		uint8_t ok = 0;
 
 		if (len >= 4) {
-			set_timestamp((time_t)sys_get_be32(data));
-			ok = 1;
+			ok = set_timestamp((time_t)sys_get_be32(data)) ? 1 : 0;
 		}
 		udp_fw_reply(cmd, &ok, sizeof(ok));
 		return true;

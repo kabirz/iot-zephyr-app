@@ -103,8 +103,9 @@ int settings_factory_reset(void);
 int mb_set_do(uint16_t val);
 
 /* ==================== 时间管理 (time.c) ==================== */
-/* 设置 RTC + 系统时钟 (Modbus 0x0E/0x0F 或 UDP 命令调用) */
-void set_timestamp(time_t t);
+/* 设置 RTC + 系统时钟 (Modbus 0x0E/0x0F 或 UDP 命令调用).
+ * 返回 true=成功, false=参数越界或 RTC 写入失败. */
+bool set_timestamp(time_t t);
 
 /* ==================== 历史记录 (history.c) ==================== */
 /* 开关历史写入 (holding_reg[0x05] 回调调用) */

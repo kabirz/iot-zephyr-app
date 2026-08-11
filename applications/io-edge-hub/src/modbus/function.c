@@ -106,7 +106,9 @@ static int holding_reg_rd_cb(uint16_t addr, uint16_t *reg)
 	if (addr >= ARRAY_SIZE(holding_reg)) {
 		return -ENOTSUP;
 	}
-	/* 时间戳寄存器读时返回实时系统时间 (而非数组里的陈旧值) */
+	/* 时间戳寄存器读时返回实时系统时间 (而非数组里的陈旧值).
+	 * 注意: 设备首次上电若 RTC 未初始化 (LSI 默认), time(NULL) 可能返回 0,
+	 * 客户端读到 0x0000_0000 属正常, 设置时间后即正常. */
 	if (addr == HOLDING_TIMESTAMP_HI_IDX) {
 		*reg = (uint16_t)((uint32_t)time(NULL) >> 16);
 		return 0;
