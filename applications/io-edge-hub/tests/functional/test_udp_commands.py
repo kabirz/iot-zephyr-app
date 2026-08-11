@@ -149,17 +149,16 @@ def test_set_time_current(udp):
     assert ok, "SET_TIME 当前时间被拒绝 (应在 [2000-01-01, 2100-01-01) 范围内)"
 
 
-def test_set_time_reject_year_1999(udp):
-    """1999-12-31 23:59:59 = 946684799, < TS_MIN (946684800), 应被拒绝."""
-    # 注意: 固件 set_timestamp 内部判断, 但 UDP handler 当前不预检, ok=1 仅表示收到
-    # 实际 v3.4 行为: UDP 端 ok=1 (只要 len >= 4), 设备内部 LOG_WRN 但不会反馈
-    udp.set_time(946684799)
-    # 此处不严格断言, 仅验证通信路径
+def test_set_time_out_of_range_before_2000(udp):
+    """1999-12-31 23:59:59 = 946684799, < TS_MIN (946684800). 设备应拒绝 (ok=0)."""
+    ok = udp.set_time(946684799)
+    assert not ok, "SET_TIME 1999-12-31 设备应返回 ok=0 (< TS_MIN)"
 
 
-def test_set_time_reject_far_future(udp):
-    """2100-01-01 = 4102444800, > TS_MAX, 应被设备内部拒绝 (但 UDP 回 ok=1)."""
-    udp.set_time(4102444800)
+def test_set_time_out_of_range_after_2100(udp):
+    """2100-01-01 = 4102444800, > TS_MAX. 设备应拒绝 (ok=0)."""
+    ok = udp.set_time(4102444800)
+    assert not ok, "SET_TIME 2100-01-01 设备应返回 ok=0 (> TS_MAX)"
 
 
 # ==================== 异常路径 ====================

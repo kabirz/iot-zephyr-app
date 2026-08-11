@@ -161,6 +161,7 @@ class CanClient:
         """发业务帧 (设备接受, 不响应)."""
         self.send(business_id, data)
 
-    def change_business_id(self, modbus, new_id: int):
-        """通过 Modbus 改 holding 0x06 CAN_ID."""
+    def set_business_id_holding(self, modbus, new_id: int):
+        """通过 Modbus 改 holding 0x06 CAN_ID. 注意: 固件启动时读 holding,
+        运行时改 holding 不会立即切换 CAN 接收过滤器 (需重启生效)."""
         modbus.write_holding(0x06, new_id)

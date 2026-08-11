@@ -53,6 +53,7 @@ def test_history_enable_toggle(modbus, restore_holding):
     assert modbus.read_holding(HOLDING["HISTORY_ENABLE"], 1)[0] == 0
 
 
+@pytest.mark.write
 def test_reboot_register_writes_then_device_resets(modbus, device_ip):
     """写 0x11 (REBOOT) = 1, 设备应重启. (此测试会让设备失联 ~5s)"""
     import socket

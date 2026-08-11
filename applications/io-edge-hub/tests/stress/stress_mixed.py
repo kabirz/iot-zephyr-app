@@ -36,7 +36,8 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 
-def modbus_worker(ip, port, idx, out):
+def modbus_worker(ip, port, idx, out, qps_limit):
+    """qps_limit=0 表示不限速."""
     mb = MbClient(ip, port)
     if not mb.connect():
         out[idx] = {"kind": "modbus", "ok": 0, "err": 1, "err_kinds": Counter(["connect failed"])}
@@ -44,7 +45,14 @@ def modbus_worker(ip, port, idx, out):
     ok = 0
     err = 0
     err_kinds = Counter()
+    interval = 1.0 / qps_limit if qps_limit > 0 else 0
+    next_send = time.monotonic()
     while not stop_flag.is_set():
+        if interval > 0:
+            now = time.monotonic()
+            if now < next_send:
+                time.sleep(min(0.001, next_send - now))
+            next_send += interval
         try:
             mb.read_holding(0, 18)
             ok += 1
@@ -62,13 +70,21 @@ def modbus_worker(ip, port, idx, out):
     out[idx] = {"kind": "modbus", "ok": ok, "err": err, "err_kinds": err_kinds}
 
 
-def udp_worker(ip, port, idx, out):
+def udp_worker(ip, port, idx, out, qps_limit):
+    """qps_limit=0 表示不限速."""
     udp = UdpClient(ip, port, timeout=2.0)
     ok = 0
     err = 0
     err_kinds = Counter()
     toggle = 0
+    interval = 1.0 / qps_limit if qps_limit > 0 else 0
+    next_send = time.monotonic()
     while not stop_flag.is_set():
+        if interval > 0:
+            now = time.monotonic()
+            if now < next_send:
+                time.sleep(min(0.001, next_send - now))
+            next_send += interval
         try:
             if toggle % 2 == 0:
                 udp.get_ip()
@@ -96,6 +112,8 @@ def main():
     ap.add_argument("--duration", type=float, default=300)
     ap.add_argument("--modbus-threads", type=int, default=2)
     ap.add_argument("--udp-threads", type=int, default=2)
+    ap.add_argument("--modbus-qps", type=int, default=0, help="每个 Modbus 线程 QPS 限速 (0=不限)")
+    ap.add_argument("--udp-qps", type=int, default=0, help="每个 UDP 线程 QPS 限速 (0=不限)")
     args = ap.parse_args()
 
     total_threads = args.modbus_threads + args.udp_threads
@@ -104,21 +122,23 @@ def main():
 
     print(f"=== Modbus + UDP 混合压力测试 ===")
     print(f"目标: {args.ip}, 时长: {args.duration}s")
-    print(f"Modbus 线程: {args.modbus_threads} (端口 {args.mb_port})")
-    print(f"UDP 线程:    {args.udp_threads} (端口 {args.udp_port})")
+    print(f"Modbus 线程: {args.modbus_threads} (端口 {args.mb_port}, "
+          f"{'不限速' if args.modbus_qps == 0 else str(args.modbus_qps) + ' QPS/线程'})")
+    print(f"UDP 线程:    {args.udp_threads} (端口 {args.udp_port}, "
+          f"{'不限速' if args.udp_qps == 0 else str(args.udp_qps) + ' QPS/线程'})")
     print(f"按 Ctrl+C 提前停止\n")
 
     idx = 0
     for _ in range(args.modbus_threads):
         t = threading.Thread(target=modbus_worker,
-                             args=(args.ip, args.mb_port, idx, results),
+                             args=(args.ip, args.mb_port, idx, results, args.modbus_qps),
                              daemon=True)
         t.start()
         threads.append(t)
         idx += 1
     for _ in range(args.udp_threads):
         t = threading.Thread(target=udp_worker,
-                             args=(args.ip, args.udp_port, idx, results),
+                             args=(args.ip, args.udp_port, idx, results, args.udp_qps),
                              daemon=True)
         t.start()
         threads.append(t)

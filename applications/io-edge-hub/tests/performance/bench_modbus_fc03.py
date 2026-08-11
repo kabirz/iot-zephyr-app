@@ -30,12 +30,20 @@ def measure_rtt(mb: MbClient, count: int = 200):
         mb.read_holding(0, 18)  # 读全部 18 个 holding
         rtts.append((time.perf_counter() - t0) * 1000)
     rtts.sort()
+    # P95/P99 仅在样本量足够时计算 (≥100/≥20), 否则 None
+    def pct(p):
+        if len(rtts) < 20:
+            return None
+        idx = int(len(rtts) * p / 100)
+        if idx >= len(rtts):
+            idx = len(rtts) - 1
+        return round(rtts[idx], 3)
     return {
         "count": len(rtts),
         "min_ms": round(rtts[0], 3),
         "p50_ms": round(statistics.median(rtts), 3),
-        "p95_ms": round(rtts[int(len(rtts) * 0.95)], 3),
-        "p99_ms": round(rtts[int(len(rtts) * 0.99)], 3),
+        "p95_ms": pct(95),
+        "p99_ms": pct(99),
         "max_ms": round(rtts[-1], 3),
         "mean_ms": round(statistics.mean(rtts), 3),
         "stdev_ms": round(statistics.stdev(rtts), 3) if len(rtts) > 1 else 0,
@@ -117,10 +125,12 @@ def main():
     try:
         print(f"[1/3] 单客户端 RTT ({args.rtt_count} 次采样)...")
         rtt = measure_rtt(mb, args.rtt_count)
-        print(f"      min={rtt['min_ms']:.2f}ms  P50={rtt['p50_ms']:.2f}ms  "
-              f"P95={rtt['p95_ms']:.2f}ms  P99={rtt['p99_ms']:.2f}ms  "
-              f"max={rtt['max_ms']:.2f}ms")
-        print(f"      mean={rtt['mean_ms']:.2f}ms  stdev={rtt['stdev_ms']:.2f}ms\n")
+        def fmt_ms(v):
+            return f"{v:.2f}ms" if v is not None else "N/A    "
+        print(f"      min={fmt_ms(rtt['min_ms'])}  P50={fmt_ms(rtt['p50_ms'])}  "
+              f"P95={fmt_ms(rtt['p95_ms'])}  P99={fmt_ms(rtt['p99_ms'])}  "
+              f"max={fmt_ms(rtt['max_ms'])}")
+        print(f"      mean={fmt_ms(rtt['mean_ms'])}  stdev={fmt_ms(rtt['stdev_ms'])}\n")
 
         print(f"[2/3] 单客户端 QPS ({args.duration}s 持续)...")
         qps = measure_qps(mb, args.duration)

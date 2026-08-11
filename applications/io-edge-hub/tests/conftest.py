@@ -105,7 +105,6 @@ def can(request) -> "CanClient":
         cli = CanClient(channel=channel, interface=CAN_INTERFACE)
     except CanError as e:
         pytest.skip(f"CAN 接口不可用 ({channel}): {e}", allow_module_level=False)
-        return None
     yield cli
     cli.close()
 
@@ -120,7 +119,6 @@ def rtu(request) -> MbClient:
                    bytesize=MODBUS_RTU_BYTESIZE)
     if not cli.connect():
         pytest.skip(f"无法打开 RTU 串口 {serial_port}@{baud}", allow_module_level=False)
-        return None
     yield cli
     cli.close()
 

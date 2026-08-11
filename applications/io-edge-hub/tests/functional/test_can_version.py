@@ -23,17 +23,7 @@ def test_can_version_query(can):
 
 def test_can_version_matches_udp(can, udp):
     """CAN VERSION 与 UDP GET_VERSION 应一致 (固件使用同一 fw_gitver.h)."""
-    import socket
-    # UDP GET_VERSION 用 0x04 命令
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(2.0)
-    try:
-        sock.sendto(bytes([0x04]), (udp.ip, udp.port))
-        data, _ = sock.recvfrom(256)
-        udp_ver = data[1:].decode("ascii", errors="replace")
-    finally:
-        sock.close()
-
+    udp_ver = udp.get_version()
     can_ver = can.query_version(timeout=3.0)
     # 完全相同 (两通道读同一 fw_gitver.h 字符串)
     assert can_ver == udp_ver or can_ver.rstrip("\0") == udp_ver.rstrip("\0"), (

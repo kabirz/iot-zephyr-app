@@ -29,14 +29,21 @@ def measure_cmd(udp: UdpClient, cmd_name: str, fn, count: int):
     rtts.sort()
     if not rtts:
         return {"cmd": cmd_name, "count": 0, "errors": errors}
+    def pct(p):
+        if len(rtts) < 20:
+            return None
+        idx = int(len(rtts) * p / 100)
+        if idx >= len(rtts):
+            idx = len(rtts) - 1
+        return round(rtts[idx], 3)
     return {
         "cmd": cmd_name,
         "count": len(rtts),
         "errors": errors,
         "min_ms": round(rtts[0], 3),
         "p50_ms": round(statistics.median(rtts), 3),
-        "p95_ms": round(rtts[int(len(rtts) * 0.95)], 3),
-        "p99_ms": round(rtts[int(len(rtts) * 0.99)], 3),
+        "p95_ms": pct(95),
+        "p99_ms": pct(99),
         "max_ms": round(rtts[-1], 3),
         "mean_ms": round(statistics.mean(rtts), 3),
     }
@@ -65,9 +72,11 @@ def main():
             r = measure_cmd(udp, name, fn, args.count)
             results.append(r)
             if r["count"] > 0:
-                print(f"{name:<14} {r['min_ms']:>7.2f}m {r['p50_ms']:>7.2f}m "
-                      f"{r['p95_ms']:>7.2f}m {r['p99_ms']:>7.2f}m {r['max_ms']:>7.2f}m "
-                      f"{r['mean_ms']:>7.2f}m {r['errors']:>8}")
+                def fmt(v):
+                    return f"{v:>7.2f}m" if v is not None else f"{'N/A':>8}"
+                print(f"{name:<14} {fmt(r['min_ms'])} {fmt(r['p50_ms'])} "
+                      f"{fmt(r['p95_ms'])} {fmt(r['p99_ms'])} {fmt(r['max_ms'])} "
+                      f"{fmt(r['mean_ms'])} {r['errors']:>8}")
             else:
                 print(f"{name:<14} {'-':>8} {'-':>8} {'-':>8} {'-':>8} {'-':>8} {'-':>8} "
                       f"{r['errors']:>8}")

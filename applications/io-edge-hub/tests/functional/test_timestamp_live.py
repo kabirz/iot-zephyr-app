@@ -5,6 +5,8 @@
 """
 import time
 
+import pytest
+
 from common.modbus_client import ModbusError
 
 
@@ -41,6 +43,7 @@ def test_timestamp_changes_over_time(modbus):
     assert (t2 - t1) >= 1, f"两次读时间戳差 < 1s: t1={t1}, t2={t2}, diff={t2-t1}"
 
 
+@pytest.mark.write
 def test_timestamp_via_udp_set_time(modbus, udp):
     """SET_TIME 设备时间 = 上位机时间, 立即读 holding 0x0E/0x0F 应一致."""
     import time as _time
