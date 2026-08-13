@@ -11,6 +11,9 @@ compile_commands.json
 __pycache__/
 *.pyc
 
+# C 工具二进制产物 (applications/*/tools/)
+applications/*/tools/firmware_upgrade
+
 # Logs
 *.log
 
