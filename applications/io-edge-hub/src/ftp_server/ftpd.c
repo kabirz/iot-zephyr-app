@@ -73,7 +73,15 @@ static int ftp_sendf(int s, const char *fmt, ...)
 	va_start(ap, fmt);
 	int len = vsnprintf(buf, sizeof(buf), fmt, ap);
 	va_end(ap);
-	return (len < 0) ? 0 : send(s, buf, len, 0);
+	if (len < 0) {
+		return 0;
+	}
+	if (len + 2 >= (int)sizeof(buf)) {
+		len = sizeof(buf) - 3;
+	}
+	buf[len++] = '\r';
+	buf[len++] = '\n';
+	return send(s, buf, len, 0);
 }
 
 /* 给 socket 设置 recv/send 超时 (毫秒) */
@@ -412,6 +420,24 @@ static int open_data(struct ftp_session *s)
 	if (s->data_listen < 0) {
 		return -1;
 	}
+	/* select + accept: Zephyr 的 SO_RCVTIMEO 对 accept() 不生效,
+	 * 必须用 select 等数据连接 (带超时), 否则客户端 PASV 后不连
+	 * 数据端口会永久阻塞单线程 FTP */
+	fd_set rfds;
+	struct timeval tv = {
+		.tv_sec = FTP_DATA_TIMEOUT_MS / 1000,
+		.tv_usec = (FTP_DATA_TIMEOUT_MS % 1000) * 1000,
+	};
+
+	FD_ZERO(&rfds);
+	FD_SET(s->data_listen, &rfds);
+	if (select(s->data_listen + 1, &rfds, NULL, NULL, &tv) <= 0 ||
+	    !FD_ISSET(s->data_listen, &rfds)) {
+		close(s->data_listen);
+		s->data_listen = -1;
+		return -1;
+	}
+
 	int d = accept(s->data_listen, NULL, NULL);
 
 	close(s->data_listen);
