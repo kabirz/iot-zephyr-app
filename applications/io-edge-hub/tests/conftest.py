@@ -72,6 +72,17 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_rtu)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def sync_device_time(device_ip):
+    """套件开始前对时 (LSI RTC 漂移会超出 timestamp 测试 ±2s 窗口)."""
+    import time as _time
+    try:
+        with UdpClient(ip=device_ip) as u:
+            u.set_time(int(_time.time()))
+    except Exception:
+        pass
+
+
 @pytest.fixture(scope="session")
 def device_ip(request) -> str:
     ip = request.config.getoption("--ip") or os.environ.get("IOEDGE_IP", DEVICE_IP)
@@ -130,11 +141,13 @@ def rtu_slave_id(request) -> int:
 
 @pytest.fixture(scope="function")
 def restore_holding(modbus: MbClient):
-    """保存所有 holding, 测试结束后恢复. 用于 write 测试隔离."""
+    """保存所有 holding, 测试结束后恢复. 重试避免设备重启后静默污染."""
+    import time as _time
     original = modbus.read_holding(0, 18)
     yield
-    try:
-        modbus.write_holdings(0, original)
-        # 不触发 settings_save (默认), 避免影响持久化测试
-    except Exception:
-        pass
+    for _ in range(3):
+        try:
+            modbus.write_holdings(0, original)
+            return
+        except Exception:
+            _time.sleep(1)

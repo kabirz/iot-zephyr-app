@@ -10,9 +10,12 @@ import pytest
 from common.modbus_client import ModbusError
 
 
-def test_timestamp_returns_live_time(modbus):
-    """读 HI+LO, 组合的 32 位 Unix 时间戳应与上位机当前时间相近 (±2s)."""
-    # 取读前的上位机时间
+def test_timestamp_returns_live_time(modbus, device_ip):
+    """读 HI+LO, 组合的 32 位 Unix 时间戳应与上位机当前时间相近 (±2s).
+    先 UDP 对时 (LSI RTC 漂移可能超窗)."""
+    from common.udp_client import UdpClient
+    with UdpClient(ip=device_ip) as u:
+        u.set_time(int(time.time()))
     t_before = int(time.time())
     hi = modbus.read_holding(0x0E, 1)[0]
     lo = modbus.read_holding(0x0F, 1)[0]

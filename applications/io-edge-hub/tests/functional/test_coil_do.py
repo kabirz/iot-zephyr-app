@@ -28,17 +28,17 @@ def test_fc05_write_all_8_do(modbus, restore_holding):
 
 @pytest.mark.write
 def test_fc15_write_multi_do(modbus, restore_holding):
-    """FC15 一次写 8 个 DO = 0xAA (奇数位 ON)."""
+    """FC15 一次写 8 个 DO: coil0,2,4,6=ON → 0x55."""
     pattern = [True, False, True, False, True, False, True, False]
     modbus.write_coils(0, pattern)
     val = modbus.read_holding(0, 1)[0]
-    assert val == 0xAA, f"FC15 写 0xAA 后 holding=0x{val:04X}, 期望 0x00AA"
+    assert val == 0x55, f"FC15 写 0101.. 后 holding=0x{val:04X}, 期望 0x0055"
 
 
 @pytest.mark.write
 def test_fc01_read_coils(modbus, restore_holding):
     """FC01 读 8 个 coil, 与 holding 0x00 低 8 位一致."""
-    modbus.write_holdings(0, 0x55)  # 01010101
+    modbus.write_holdings(0, [0x55])  # 01010101
     bits = modbus.read_coils(0, 8)
     expected = [bool(b) for b in [1, 0, 1, 0, 1, 0, 1, 0]]
     assert bits == expected, f"FC01 读 coils = {bits}, 期望 {expected}"

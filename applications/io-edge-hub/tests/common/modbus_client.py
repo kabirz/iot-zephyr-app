@@ -14,6 +14,7 @@ pymodbus 3.x 同步 API:
 from contextlib import contextmanager
 
 from pymodbus.client import ModbusTcpClient, ModbusSerialClient
+from pymodbus.exceptions import ModbusException
 
 from config import (
     DEVICE_IP, MODBUS_TCP_PORT, MODBUS_TIMEOUT,
@@ -47,7 +48,7 @@ class MbClient:
         self.timeout = timeout
 
         if transport == "tcp":
-            self._cli = ModbusTcpClient(hostname=ip, port=port, timeout=timeout)
+            self._cli = ModbusTcpClient(host=ip, port=port, timeout=timeout)
             self._id_str = f"tcp://{ip}:{port}"
         elif transport == "rtu":
             self._cli = ModbusSerialClient(
@@ -65,6 +66,25 @@ class MbClient:
     @property
     def id_str(self) -> str:
         return self._id_str
+
+    def _pdu(self, fn, /, *args, **kwargs):
+        """执行 pymodbus 调用; TCP 断连时自动重连重试一次."""
+        try:
+            return self._pdu_once(fn, *args, **kwargs)
+        except ModbusError:
+            if self.transport != "tcp" or not self._reconnect():
+                raise
+            return self._pdu_once(fn, *args, **kwargs)
+
+    def _pdu_once(self, fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except (ModbusException, OSError) as e:
+            raise ModbusError(f"{self._id_str}: {e}") from e
+
+    def _reconnect(self) -> bool:
+        self.close()
+        return self.connect()
 
     def connect(self) -> bool:
         return self._cli.connect()
@@ -87,28 +107,28 @@ class MbClient:
 
     def read_holding(self, addr: int, count: int = 1, slave: int = 1):
         """FC03 读 holding. 返回 list[int]. 出错抛 ModbusError."""
-        rr = self._cli.read_holding_registers(address=addr, count=count, slave=slave)
+        rr = self._pdu(self._cli.read_holding_registers, address=addr, count=count, slave=slave)
         if rr.isError():
             raise ModbusError(f"FC03 read_holding(addr={addr}, count={count}) 失败: {rr}")
         return list(rr.registers)
 
     def read_input(self, addr: int, count: int = 1, slave: int = 1):
         """FC04 读 input."""
-        rr = self._cli.read_input_registers(address=addr, count=count, slave=slave)
+        rr = self._pdu(self._cli.read_input_registers, address=addr, count=count, slave=slave)
         if rr.isError():
             raise ModbusError(f"FC04 read_input(addr={addr}, count={count}) 失败: {rr}")
         return list(rr.registers)
 
     def read_coils(self, addr: int, count: int = 1, slave: int = 1):
         """FC01 读 coils (DO)."""
-        rr = self._cli.read_coils(address=addr, count=count, slave=slave)
+        rr = self._pdu(self._cli.read_coils, address=addr, count=count, slave=slave)
         if rr.isError():
             raise ModbusError(f"FC01 read_coils(addr={addr}, count={count}) 失败: {rr}")
         return list(rr.bits)[:count]
 
     def read_discrete_inputs(self, addr: int, count: int = 1, slave: int = 1):
         """FC02 读 discrete inputs (DI)."""
-        rr = self._cli.read_discrete_inputs(address=addr, count=count, slave=slave)
+        rr = self._pdu(self._cli.read_discrete_inputs, address=addr, count=count, slave=slave)
         if rr.isError():
             raise ModbusError(f"FC02 read_discrete_inputs(addr={addr}, count={count}) 失败: {rr}")
         return list(rr.bits)[:count]
@@ -117,25 +137,25 @@ class MbClient:
 
     def write_holding(self, addr: int, value: int, slave: int = 1):
         """FC06 写单个 holding."""
-        rr = self._cli.write_register(address=addr, value=value, slave=slave)
+        rr = self._pdu(self._cli.write_register, address=addr, value=value, slave=slave)
         if rr.isError():
             raise ModbusError(f"FC06 write_holding(addr={addr}, value={value}) 失败: {rr}")
 
     def write_holdings(self, addr: int, values, slave: int = 1):
         """FC16 写多个 holding."""
-        rr = self._cli.write_registers(address=addr, values=list(values), slave=slave)
+        rr = self._pdu(self._cli.write_registers, address=addr, values=list(values), slave=slave)
         if rr.isError():
             raise ModbusError(f"FC16 write_holdings(addr={addr}, values={values}) 失败: {rr}")
 
     def write_coil(self, addr: int, value: bool, slave: int = 1):
         """FC05 写单个 coil (DO)."""
-        rr = self._cli.write_coil(address=addr, value=bool(value), slave=slave)
+        rr = self._pdu(self._cli.write_coil, address=addr, value=bool(value), slave=slave)
         if rr.isError():
             raise ModbusError(f"FC05 write_coil(addr={addr}, value={value}) 失败: {rr}")
 
     def write_coils(self, addr: int, values, slave: int = 1):
         """FC15 写多个 coils."""
-        rr = self._cli.write_coils(address=addr, values=[bool(v) for v in values], slave=slave)
+        rr = self._pdu(self._cli.write_coils, address=addr, values=[bool(v) for v in values], slave=slave)
         if rr.isError():
             raise ModbusError(f"FC15 write_coils(addr={addr}, values={values}) 失败: {rr}")
 

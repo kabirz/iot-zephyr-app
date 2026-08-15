@@ -51,10 +51,13 @@ class UdpClient:
     def __exit__(self, *exc):
         self.close()
 
-    def _send_recv(self, cmd: int, payload: bytes, expect_cmd: int = None) -> UdpReply:
+    def _send_recv(self, cmd: int, payload: bytes, expect_cmd: int = None,
+                   timeout: float = None) -> UdpReply:
         """发 [cmd][payload] 到 ip:port, 阻塞等回复. 校验首字节 == expect_cmd."""
         if expect_cmd is None:
             expect_cmd = cmd
+        if timeout is not None:
+            self._sock.settimeout(timeout)
         req = bytes([cmd]) + bytes(payload)
         t0 = time.perf_counter()
         try:
@@ -64,6 +67,9 @@ class UdpClient:
             raise UdpError(f"cmd 0x{cmd:02X}: 设备无响应 (timeout {self.timeout}s)") from e
         except OSError as e:
             raise UdpError(f"cmd 0x{cmd:02X}: socket 错误: {e}") from e
+        finally:
+            if timeout is not None:
+                self._sock.settimeout(self.timeout)
         rtt_ms = (time.perf_counter() - t0) * 1000
         if not data:
             raise UdpError(f"cmd 0x{cmd:02X}: 空回复")
@@ -242,53 +248,26 @@ def _get_bcast_linux():
 
 
 def _linux_ifnames():
-    """枚举 Linux 网卡名 (SIOCGIFCONF ioctl)."""
-    import array
-    import fcntl
-
-    SIOCGIFCONF = 0x8912
-    max_possible = 128
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    for _ in range(max_possible * 2):
-        buf = array.array("B", b"\0" * (max_possible * 32))
-        ifconf = struct.pack("iL", len(buf), buf.buffer_info()[0])
-        try:
-            fcntl.ioctl(sock.fileno(), SIOCGIFCONF, ifconf)
-        except OSError:
-            break
-        size, _ = struct.unpack("iL", ifconf)
-        if size < len(buf):
-            break
-        max_possible *= 2
-    else:
-        sock.close()
+    """枚举 Linux 网卡名."""
+    try:
+        return [name for _, name in socket.if_nameindex()]
+    except OSError:
         return []
-    sock.close()
-
-    # 解析 ifreq: name[16] + sockaddr_in(16)
-    names = set()
-    raw = buf.tobytes()[:size]
-    for i in range(0, len(raw), 32):
-        entry = raw[i:i + 32]
-        name = entry[:16].split(b"\0", 1)[0].decode("ascii", errors="replace")
-        if name:
-            names.add(name)
-    return sorted(names)
 
 
 def _linux_ifaddr(ifname: str):
-    """取 Linux 网卡的 (ip, netmask)."""
+    """取 Linux 网卡的 (ip, netmask). ifreq 中 sin_addr 位于偏移 20."""
     import fcntl
 
     SIOCGIFADDR = 0x8915
     SIOCGIFNETMASK = 0x891B
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        ifreq = struct.pack("16sH2s4s8s", ifname.encode(), socket.AF_INET, b"\0" * 2, b"\0" * 4, b"\0" * 8)
-        res = fcntl.ioctl(sock.fileno(), SIOCGIFADDR, ifreq)[:20]
-        ip = socket.inet_ntoa(res[20 - 4:20])
-        res = fcntl.ioctl(sock.fileno(), SIOCGIFNETMASK, ifreq)[:20]
-        mask = socket.inet_ntoa(res[20 - 4:20])
+        ifreq = struct.pack("16sH2s4s8s", ifname.encode()[:15], socket.AF_INET, b"\0" * 2, b"\0" * 4, b"\0" * 8)
+        res = fcntl.ioctl(sock.fileno(), SIOCGIFADDR, ifreq)
+        ip = socket.inet_ntoa(res[20:24])
+        res = fcntl.ioctl(sock.fileno(), SIOCGIFNETMASK, ifreq)
+        mask = socket.inet_ntoa(res[20:24])
         return ip, mask
     finally:
         sock.close()

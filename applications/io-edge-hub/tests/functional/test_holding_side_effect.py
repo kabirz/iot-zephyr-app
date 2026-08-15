@@ -85,3 +85,8 @@ def test_settings_persist_across_reboot(modbus, udp, device_ip):
 
     val = modbus.read_holding(HOLDING["DI_SAMPLE_MS"], 1)[0]
     assert val == 333, f"持久化参数重启后丢失: DI_SAMPLE_MS 期望 333, 实际 {val}"
+
+    # 恢复出厂值并持久化, 避免污染下一轮套件的 test_default_values
+    modbus.write_holding(HOLDING["DI_SAMPLE_MS"], 200)
+    modbus.write_holding(HOLDING["CONFIG_SAVE"], 1)
+    time.sleep(0.5)
