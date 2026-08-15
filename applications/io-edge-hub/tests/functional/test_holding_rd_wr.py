@@ -14,7 +14,7 @@ DEFAULTS = {
     0x04: 200,     # AI_SAMPLE_MS
     0x05: 0,       # HISTORY_ENABLE
     0x06: 0x0111,  # CAN_ID
-    0x07: 10,      # CAN_BAUDRATE
+    0x07: 250,     # CAN_BAUDRATE (kbps, 与固件 250kbps 一致)
     0x08: 9600,    # RS485_BAUDRATE
     0x09: 1,       # SLAVE_ID
     0x0A: 192,     # IP_OCTET1
