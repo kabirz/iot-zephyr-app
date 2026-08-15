@@ -96,13 +96,13 @@ static int init_modbus_server(void)
 
 static int reply_adu(int client, const struct modbus_adu *adu)
 {
-	uint8_t header[MODBUS_MBAP_AND_FC_LENGTH];
+	/* 头 (MBAP+unit+fc) 与数据合并为一次 send:
+	 * 分开 send 会拆成两个 TCP 段, 部分上位机按"一段=一帧"解析会失败 */
+	uint8_t buf[MODBUS_MBAP_AND_FC_LENGTH + CONFIG_MODBUS_BUFFER_SIZE];
 
-	modbus_raw_put_header(adu, header);
-	if (send(client, header, sizeof(header), 0) < 0) {
-		return -errno;
-	}
-	if (adu->length > 0 && send(client, adu->data, adu->length, 0) < 0) {
+	modbus_raw_put_header(adu, buf);
+	memcpy(buf + MODBUS_MBAP_AND_FC_LENGTH, adu->data, adu->length);
+	if (send(client, buf, MODBUS_MBAP_AND_FC_LENGTH + adu->length, 0) < 0) {
 		return -errno;
 	}
 	return 0;
