@@ -17,13 +17,15 @@ def test_read_all_input_6(modbus):
 
 
 def test_version_field(modbus):
-    """0x00 版本字段: major 在高字节, minor 在低字节."""
+    """0x00 版本字段: MAJOR<<12 | MINOR<<8 | PATCH (主/次<16)."""
     ver = modbus.read_input(0, 1)[0]
-    major = (ver >> 8) & 0xFF
-    minor = ver & 0xFF
-    # 应用版本 v0.1.x (主版本可能在 0-99 范围)
-    assert 0 <= major <= 99, f"主版本 {major} 异常"
-    assert 0 <= minor <= 99, f"次版本 {minor} 异常"
+    major = (ver >> 12) & 0xF
+    minor = (ver >> 8) & 0xF
+    patch = ver & 0xFF
+    # 应用版本 v0.1.x (主/次版本 0-15, patch 0-255)
+    assert 0 <= major <= 15, f"主版本 {major} 异常"
+    assert 0 <= minor <= 15, f"次版本 {minor} 异常"
+    assert 0 <= patch <= 255, f"patch {patch} 异常"
 
 
 def test_ai_channels(modbus):

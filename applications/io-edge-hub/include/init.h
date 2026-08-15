@@ -30,7 +30,7 @@ extern "C" {
 
 /* ==================== Input Registers (只读, 6 个) ==================== */
 enum input_reg_idx {
-	INPUT_VER_IDX = 0,	/* 固件版本 (major<<8 | minor) */
+	INPUT_VER_IDX = 0,	/* 固件版本 (MAJOR<<12 | MINOR<<8 | PATCH), 主/次<16 */
 	INPUT_AI0_IDX,		/* AI1 电流 (0.01mA) */
 	INPUT_AI1_IDX,		/* AI2 电流 (0.01mA) */
 	INPUT_AI2_IDX,		/* AI3 电压 (0.01V) */

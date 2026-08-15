@@ -28,10 +28,10 @@ def test_rtu_read_input(rtu, rtu_slave_id):
     """FC04 RTU 读 6 个 input."""
     regs = rtu.read_input(0, 6, slave=rtu_slave_id)
     assert len(regs) == 6
-    # 版本字段 (input 0x00): major 在高字节
+    # 版本字段 (input 0x00): MAJOR<<12 | MINOR<<8 | PATCH
     ver = regs[0]
-    major = (ver >> 8) & 0xFF
-    assert 0 <= major <= 99
+    major = (ver >> 12) & 0xF
+    assert 0 <= major <= 15
 
 
 def test_rtu_matches_tcp(rtu, rtu_slave_id, modbus):

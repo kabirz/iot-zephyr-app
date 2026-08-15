@@ -49,7 +49,9 @@ static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS] = {
 };
 
 static uint16_t input_reg[CONFIG_MODBUS_INPUT_REGISTER_NUMBERS] = {
-	[INPUT_VER_IDX] = ((APP_VERSION_MAJOR << 8) | APP_VERSION_MINOR),
+	/* 主/次版本 <16, 三段塞进 16 位: MAJOR<<12 | MINOR<<8 | PATCH */
+	[INPUT_VER_IDX] = ((APP_VERSION_MAJOR << 12) | (APP_VERSION_MINOR << 8) |
+			   APP_PATCHLEVEL),
 };
 
 /* ==================== 寄存器访问接口 ==================== */
