@@ -47,6 +47,7 @@ def modbus_worker(ip, port, idx, out, qps_limit):
     err_kinds = Counter()
     interval = 1.0 / qps_limit if qps_limit > 0 else 0
     next_send = time.monotonic()
+    last_report = time.monotonic()
     while not stop_flag.is_set():
         if interval > 0:
             now = time.monotonic()
@@ -66,6 +67,11 @@ def modbus_worker(ip, port, idx, out, qps_limit):
                     time.sleep(0.5)
             except Exception:
                 pass
+        # 定期上报进度 (进度循环实时显示, 而非仅结束时)
+        if time.monotonic() - last_report >= 1.0:
+            out[idx] = {"kind": "modbus", "ok": ok, "err": err,
+                        "err_kinds": err_kinds.copy()}
+            last_report = time.monotonic()
     mb.close()
     out[idx] = {"kind": "modbus", "ok": ok, "err": err, "err_kinds": err_kinds}
 
@@ -79,6 +85,7 @@ def udp_worker(ip, port, idx, out, qps_limit):
     toggle = 0
     interval = 1.0 / qps_limit if qps_limit > 0 else 0
     next_send = time.monotonic()
+    last_report = time.monotonic()
     while not stop_flag.is_set():
         if interval > 0:
             now = time.monotonic()
@@ -100,6 +107,11 @@ def udp_worker(ip, port, idx, out, qps_limit):
                 pass
             udp = UdpClient(ip, port, timeout=2.0)
         toggle += 1
+        # 定期上报进度 (进度循环实时显示, 而非仅结束时)
+        if time.monotonic() - last_report >= 1.0:
+            out[idx] = {"kind": "udp", "ok": ok, "err": err,
+                        "err_kinds": err_kinds.copy()}
+            last_report = time.monotonic()
     udp.close()
     out[idx] = {"kind": "udp", "ok": ok, "err": err, "err_kinds": err_kinds}
 
@@ -148,6 +160,10 @@ def main():
     start = time.monotonic()
     next_print = start + 10
     while any(t.is_alive() for t in threads) and not stop_flag.is_set():
+        # --duration 生效: 到时自动停止
+        if time.monotonic() - start >= args.duration:
+            stop_flag.set()
+            break
         now = time.monotonic()
         if now >= next_print:
             elapsed = now - start
