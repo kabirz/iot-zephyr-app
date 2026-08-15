@@ -93,14 +93,22 @@ static void make_hist_name(char *buf, size_t len)
 {
 	time_t t = time(NULL);
 	struct tm *lt = gmtime(&t);
+	int mon, mday, hour, min, sec;
 
 	/* RTC 未同步时 gmtime 可能返回 NULL, 用全零填充文件名兜底 */
 	if (lt == NULL) {
 		snprintf(buf, len, "data_0101_000000.raw");
 		return;
 	}
+	/* 钳位到合法范围: 消除 -Wformat-truncation (字段值域本应有界,
+	 * 钳位既保证 %02d 定宽 2 位, 也避免 RTC 异常数据生成非法文件名) */
+	mon  = CLAMP(lt->tm_mon + 1, 1, 12);
+	mday = CLAMP(lt->tm_mday, 1, 31);
+	hour = CLAMP(lt->tm_hour, 0, 23);
+	min  = CLAMP(lt->tm_min, 0, 59);
+	sec  = CLAMP(lt->tm_sec, 0, 59);
 	snprintf(buf, len, "data_%02d%02d_%02d%02d%02d.raw",
-		 lt->tm_mon + 1, lt->tm_mday, lt->tm_hour, lt->tm_min, lt->tm_sec);
+		 mon, mday, hour, min, sec);
 }
 
 /* 确保当前文件可写: 未打开或超 1MB 时新建 (data_MMDD_HHMMSS.raw) */
