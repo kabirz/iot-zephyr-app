@@ -1,20 +1,24 @@
-# io-edge-hub 固件升级工具
+# 固件升级工具
 
-提供两种实现, 功能对齐, 协议相同 (与固件 `libs/udp_fw_upgrade` + `libs/can_fw_upgrade` 对齐):
+仓库级工具 (原 io-edge-hub 专属, 现供全部应用共用), 两种实现功能对齐,
+协议相同 (与固件 `libs/udp_fw_upgrade` + `libs/can_fw_upgrade` 对齐):
 
 | 实现 | 文件 | 适用场景 |
 |---|---|---|
 | **Python** | `firmware_upgrade.py` | 跨平台 (Linux/Win/macOS), 易改易调试, 零编译 |
-| **C (Linux)** | `firmware_upgrade.c` + `Makefile` | 单二进制 30KB, 零运行时依赖, 启动快, 适合 CI/运维脚本 |
+| **C (Linux)** | `firmware_upgrade.c` + `CMakeLists.txt` | 单二进制 30KB, 零运行时依赖, 启动快, 适合 CI/运维脚本 |
 
 支持两条升级通道:
-- **UDP** (端口 8600, `FW_START/DATA/END`) — 跨子网, 常规运维
-- **CAN** (帧 `0x101-0x105`, Linux SocketCAN) — UDP 不可达时备用
+- **UDP** (端口 8600, `FW_START/DATA/END`) — 跨子网, 常规运维 (io-edge-hub)
+- **CAN** (帧 `0x101-0x107`, Linux SocketCAN) — UDP 不可达时备用;
+  `-b` bootloader 模式 (`0x106/0x107` 握手): 升级全程在 MCUboot 内完成,
+  应用损坏 (掉底牌) 也能升级
 
 ## 特性
 
 - **MCUboot 镜像解析**: 自动校验 magic + 提取 KEYHASH TLV (32B SHA-256)
 - **keyhash 预校验**: 升级前发到设备, 设备对比 `fw_keyhash.h`, 不匹配立即拒绝 (防错误密钥固件刷入)
+- **CAN bootloader 模式** (`-b`): 重启设备 → 应答 MCUboot 探测帧 → bootloader 内完成升级与交换
 - **CRC16-CCITT**: 与 Zephyr `crc16_ccitt` 完全一致 (poly 0x1021, init 0x0000, bit-reflected)
 - **进度条**: 纯文本 (无 tqdm 依赖)
 - **测试模式**: `--test` 升级后重启但不永久, MCUboot 下次启动自动回滚
@@ -41,6 +45,7 @@
 ```bash
 python firmware_upgrade.py upgrade -i 192.168.12.101 -f zephyr.signed.bin
 python firmware_upgrade.py upgrade -c can0 -f zephyr.signed.bin
+python firmware_upgrade.py upgrade -c can0 -b -f zephyr.signed.bin   # bootloader 模式
 python firmware_upgrade.py version -i 192.168.12.101
 python firmware_upgrade.py upgrade -i 192.168.12.101 -f app.signed.bin --test
 ```
@@ -52,6 +57,7 @@ cmake -B build && cmake --build build         # 配置 + 编译
 cd build && ctest                              # 跑烟雾测试
 ./build/firmware_upgrade upgrade -i 192.168.12.101 -f zephyr.signed.bin
 ./build/firmware_upgrade upgrade -c can0 -f zephyr.signed.bin
+./build/firmware_upgrade upgrade -c can0 -b -f zephyr.signed.bin   # bootloader 模式
 ./build/firmware_upgrade version -i 192.168.12.101
 ./build/firmware_upgrade upgrade -i 192.168.12.101 -f app.signed.bin --test
 sudo cmake --install build --prefix /usr/local # 安装到 /usr/local/bin
@@ -89,7 +95,9 @@ sudo cmake --install build --prefix /usr/local # 安装到 /usr/local/bin
 [4/4] 设备自动重启 → MCUboot SWAP_SCRATCH 交换镜像
 ```
 
-### CAN 通道 (帧 0x101-0x105)
+### CAN 通道 (帧 0x101-0x107)
+
+普通模式 (设备应用应答):
 
 ```
 [1/4] keyhash (0x104) × 5
@@ -109,8 +117,21 @@ sudo cmake --install build --prefix /usr/local # 安装到 /usr/local/bin
 [4/4] CONFIRM (0x101 cmd=1, arg=permanent?1:0)
         设备 boot_request_upgrade
         回: 0x102 CONFIRM(3) arg=0x55AA55AA
-        设备下次重启 → MCUboot SWAP
+        工具发 REBOOT → 设备重启 → MCUboot SWAP
 ```
+
+bootloader 模式 (`-b`, 仅 CAN): 在上述流程前加 `[0/4]` 引导握手,
+之后 keyhash/START/DATA/CONFIRM 全部由 MCUboot 应答:
+
+```
+[0/4] REBOOT → 设备重启进 MCUboot → 等 0x106 探测帧 (500ms 窗口重复发)
+        0x106: [0..3]='BTO1' magic, [4..6]=bootloader 版本
+        工具回 0x107 → 设备进入升级等待 (15s 空闲超时, 每帧刷新)
+[4/4] CONFIRM 后设备在 bootloader 本会话内直接完成交换 (无重启, ~30-40s)
+```
+
+> bootloader 需按各应用 README 的 `-Dmcuboot_EXTRA_CONF_FILE` 命令构建,
+> 设备侧才会应答 0x106 (见 `libs/can_fw_upgrade/mcuboot_can.conf`)。
 
 ## 镜像格式
 

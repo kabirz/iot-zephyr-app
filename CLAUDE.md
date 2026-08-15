@@ -18,7 +18,7 @@
 - `libs/` — 固件升级库（`can_fw_upgrade`、`udp_fw_upgrade`）+ 配置头生成（`gen_gitver.py`、`gen_keyhash.py`）。**只有一个顶层 `CMakeLists.txt`**，子模块源码直接在此用 `zephyr_sources_ifdef` / `zephyr_include_directories_ifdef` 汇总。
 - `drivers/` — 自定义驱动（`nrf24l01p`）。
 - `scripts/west_commands/` — 自定义 west 命令（`west archive`，由 `archive.py` 实现）。
-- `tools/` — 辅助脚本（如 `sh1106_font_generator.py`）。
+- `tools/` — 辅助脚本（如 `sh1106_font_generator.py`）+ `tools/firmware_upgrade/` 固件升级 CLI（Python/C 双实现, UDP+CAN, 含 MCUboot bootloader 模式）。
 - `.github/workflows/` — CI（`angle-handler.yml`、`n2e-gw.yml`）。
 
 ## 构建命令

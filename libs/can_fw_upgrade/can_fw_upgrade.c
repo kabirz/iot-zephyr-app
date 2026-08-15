@@ -21,9 +21,12 @@
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/sys/reboot.h>
 #include "can_fw_upgrade.h"
+#include "can_fw_upgrade_internal.h"
 #include <fw_gitver.h>
 
-#ifdef CONFIG_MCUBOOT_SIGNATURE_KEY_FILE
+/* keyhash 使能符号: app 构建与 mcuboot 构建不同名, 任一配置即启用 */
+#if defined(CONFIG_MCUBOOT_SIGNATURE_KEY_FILE) || defined(CONFIG_BOOT_SIGNATURE_KEY_FILE)
+#define CAN_FW_KEYHASH_ENABLE
 #include <fw_keyhash.h>
 #endif
 
@@ -47,6 +50,7 @@ enum fw_cmd {
 	FW_CMD_CONFIRM,
 	FW_CMD_VERSION,
 	FW_CMD_REBOOT,
+	FW_CMD_DEBUG_DUMP = 0xDE,	/* 调试: 读 flash 区域 (仅 BOOT_WAIT 构建) */
 };
 
 /* 响应码 */
@@ -79,7 +83,23 @@ static bool fw_img_initialized;
 static size_t fw_written;
 static size_t fw_total_size;
 
-#ifdef CONFIG_MCUBOOT_SIGNATURE_KEY_FILE
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+/* bootloader 等待状态 (RX 线程写, boot_go_hook 读) */
+K_SEM_DEFINE(can_fw_boot_ack_sem, 0, 1);
+volatile uint32_t can_fw_last_activity_ms;
+volatile bool can_fw_confirmed;
+
+static inline void can_fw_note_activity(void)
+{
+	can_fw_last_activity_ms = k_uptime_get_32();
+}
+#else
+static inline void can_fw_note_activity(void)
+{
+}
+#endif
+
+#ifdef CAN_FW_KEYHASH_ENABLE
 /* 上位机 keyhash 累积缓冲 (4 x 8B 分帧) + 到齐位图 */
 static uint8_t rx_keybuf[FW_KEYHASH_KEY_LEN];
 static uint8_t key_chunk_mask;
@@ -139,7 +159,7 @@ static void handle_platform_rx(struct can_frame *frame)
 			return;
 		}
 
-#ifdef CONFIG_MCUBOOT_SIGNATURE_KEY_FILE
+#ifdef CAN_FW_KEYHASH_ENABLE
 		/* 升级前 keyhash 校验: 仅当上位机先前把 4 帧 keyhash (0x104) 送齐才校验;
 		 * 不一致 → 拒绝且不触碰 slot1 flash. 老上位机不发 key 帧则放行 (兼容). */
 		if ((key_chunk_mask & CAN_FW_KEYHASH_FULL_MASK) == CAN_FW_KEYHASH_FULL_MASK) {
@@ -166,7 +186,11 @@ static void handle_platform_rx(struct can_frame *frame)
 			flash_area_erase(fa, 0, fa->fa_size);
 			flash_area_close(fa);
 
-			if (flash_img_init(&flash_img_ctx) != 0) {
+			/* 显式指定 slot1: flash_img_init() 在无 chosen
+			 * zephyr,code-partition 的构建 (mcuboot) 会选 slot0,
+			 * 数据将未擦除直接覆盖运行镜像 */
+			if (flash_img_init_id(&flash_img_ctx,
+					      SLOT1_PARTITION_ID) != 0) {
 				LOG_ERR("flash_img_init failed");
 				fw_img_initialized = false;
 				fw_can_reply(FW_CODE_FLASH_ERROR, 0);
@@ -212,19 +236,24 @@ static void handle_platform_rx(struct can_frame *frame)
 		int ret = boot_request_upgrade(permanent);
 
 		if (ret == 0) {
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+			LOG_INF("FW upgrade confirmed (permanent=%u), swap in this session",
+				permanent);
+			fw_can_reply(FW_CODE_CONFIRM, 0x55AA55AA);
+			can_fw_confirmed = true;
+#else
 			LOG_INF("FW upgrade confirmed (permanent=%u), waiting for reboot",
 				permanent);
 			fw_can_reply(FW_CODE_CONFIRM, 0x55AA55AA);
-			/* 不自动 reboot: 由上位机重启按钮 (FW_CMD_REBOOT) 触发 */
+#endif
 		} else {
 			LOG_ERR("boot_request_upgrade failed: %d", ret);
 			fw_can_reply(FW_CODE_TRANFER_ERROR, 0);
 		}
 
 	} else if (cmd == FW_CMD_VERSION) {
-		/* 版本字符串 "v<M>.<m>.<p>_<6hex>" 分帧回复:
-		 * 先发 FW_CODE_VERSION (offset=字符串总长度), 再发 N 帧 0x105 分片.
-		 * 上位机据 offset 等待对应字节数, 或遇 '\0' 截断. */
+		/* "v<M>.<m>.<p>_<6hex>" 分帧回复: 先发 code=VERSION (offset=
+		 * 总长度), 再发 N 帧 0x105 分片, 上位机遇 '\0' 截断 */
 		char ver[24];
 		int vlen = snprintf(ver, sizeof(ver), "v%d.%d.%d_%s",
 				    APP_VERSION_MAJOR, APP_VERSION_MINOR,
@@ -233,11 +262,54 @@ static void handle_platform_rx(struct can_frame *frame)
 		fw_can_send_version_string(ver, (uint8_t)vlen);
 
 	} else if (cmd == FW_CMD_REBOOT) {
-		/* 排空 deferred 日志缓冲再重启, 避免随 sys_reboot 丢失 */
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+		can_fw_confirmed = true;
+#else
+#if defined(CONFIG_LOG) && !defined(CONFIG_LOG_MODE_MINIMAL)
 		while (log_process()) {
 		}
+#endif
 		k_msleep(50);
 		sys_reboot(SYS_REBOOT_WARM);
+#endif
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+	} else if (cmd == FW_CMD_DEBUG_DUMP) {
+		/* 调试: 读 flash 56B 回 8 帧 0x109 (data[0]=seq, [1..7]=7B)。
+		 * arg = (area << 24) | byte_offset, area: 0=slot0 1=slot1 2=scratch */
+		uint32_t area = frame->data_32[1] >> 24;
+		uint32_t off = frame->data_32[1] & 0xFFFFFF;
+		uint8_t buf[56];
+		const struct flash_area *fa;
+		int fa_id =
+#if DT_NODE_EXISTS(DT_NODELABEL(scratch_partition))
+			area == 2 ? PARTITION_ID(scratch_partition) :
+#endif
+			(area == 1 ? PARTITION_ID(slot1_partition) :
+				     PARTITION_ID(slot0_partition));
+
+		if (flash_area_open(fa_id, &fa) != 0) {
+			fw_can_reply(FW_CODE_FLASH_ERROR, 0xDE01);
+			return;
+		}
+		if (off + sizeof(buf) > fa->fa_size) {
+			flash_area_close(fa);
+			fw_can_reply(FW_CODE_FLASH_ERROR, 0xDE02);
+			return;
+		}
+		flash_area_read(fa, off, buf, sizeof(buf));
+		flash_area_close(fa);
+
+		for (uint8_t seq = 0; seq < 8; seq++) {
+			struct can_frame f = {
+				.id = 0x109,
+				.dlc = can_bytes_to_dlc(8),
+			};
+
+			f.data[0] = seq;
+			memcpy(&f.data[1], &buf[seq * 7], 7);
+			can_send(can_dev, &f, K_MSEC(100), NULL, NULL);
+		}
+#endif
 	}
 }
 
@@ -245,7 +317,7 @@ static void handle_platform_rx(struct can_frame *frame)
  * keyhash 帧处理 (0x104): data[0]=seq(0..3), data[1..8]=8B chunk
  * 累积到 rx_keybuf, 全部到齐置 full mask, 供 START_UPDATE 校验用。
  * ================================================================ */
-#ifdef CONFIG_MCUBOOT_SIGNATURE_KEY_FILE
+#ifdef CAN_FW_KEYHASH_ENABLE
 static void handle_keyhash_frame(struct can_frame *frame)
 {
 	uint8_t seq = frame->data[0];
@@ -261,7 +333,7 @@ static void handle_keyhash_frame(struct can_frame *frame)
 	memcpy(&rx_keybuf[seq * CAN_FW_KEYHASH_CHUNK_BYTES], &frame->data[1], chunk);
 	key_chunk_mask |= (1U << seq);
 
-	LOG_INF("keyhash chunk %u/%d received", seq, CAN_FW_KEYHASH_CHUNKS);
+	LOG_DBG("keyhash chunk %u/%d received", seq, CAN_FW_KEYHASH_CHUNKS);
 }
 #endif
 
@@ -306,12 +378,19 @@ static void can_fw_rx_thread_fn(void *p1, void *p2, void *p3)
 		}
 
 		if (frame.id == CAN_FW_PLATFORM_RX) {
+			can_fw_note_activity();
 			handle_platform_rx(&frame);
 		} else if (frame.id == CAN_FW_FW_DATA_RX) {
+			can_fw_note_activity();
 			handle_fw_data(&frame);
-#ifdef CONFIG_MCUBOOT_SIGNATURE_KEY_FILE
+#ifdef CAN_FW_KEYHASH_ENABLE
 		} else if (frame.id == CAN_FW_KEYHASH_RX) {
+			can_fw_note_activity();
 			handle_keyhash_frame(&frame);
+#endif
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+		} else if (frame.id == CAN_FW_BOOT_ACK_RX) {
+			k_sem_give(&can_fw_boot_ack_sem);
 #endif
 		} else {
 			/* 广播给所有已注册的业务帧 handler; 若均未处理则告警 */
@@ -344,20 +423,28 @@ static int can_fw_init(void)
 {
 	int err;
 
+	/* bootloader 构建中 CAN 失败不致命 (SYS_INIT 失败会 k_panic
+	 * 拒绝启动), 最多损失升级功能 */
+#define CAN_INIT_BAIL(rc) \
+	do { \
+		IF_ENABLED(CONFIG_CAN_FW_UPGRADE_BOOT_WAIT, (return 0;)) \
+		return rc; \
+	} while (0)
+
 	if (!device_is_ready(can_dev)) {
 		LOG_ERR("CAN device not ready");
-		return -ENODEV;
+		CAN_INIT_BAIL(-ENODEV);
 	}
 
 	err = can_set_bitrate(can_dev, CONFIG_CAN_FW_UPGRADE_BITRATE);
 	if (err) {
 		LOG_ERR("CAN set bitrate failed: %d", err);
-		return err;
+		CAN_INIT_BAIL(err);
 	}
 	err = can_start(can_dev);
 	if (err) {
 		LOG_ERR("CAN start failed: %d", err);
-		return err;
+		CAN_INIT_BAIL(err);
 	}
 
 	/* 全接收过滤器 (mask=0): 所有 CAN 帧进入库 msgq */
@@ -367,6 +454,19 @@ static int can_fw_init(void)
 
 	LOG_INF("CAN FW upgrade initialized, version=v%d.%d.%d_%s",
 		APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL, FW_GIT_VERSION);
+
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+	/* trace 帧: 串口日志因 USB 重枚举丢失时在 candump 上标记启动阶段 */
+	{
+		struct can_frame t = {
+			.id = CAN_FW_BOOT_TRACE_TX,
+			.dlc = can_bytes_to_dlc(1),
+		};
+
+		t.data[0] = CAN_FW_TRACE_INIT_DONE;
+		(void)can_send(can_dev, &t, K_MSEC(100), NULL, NULL);
+	}
+#endif
 	return 0;
 }
 SYS_INIT(can_fw_init, APPLICATION, CONFIG_CAN_FW_UPGRADE_INIT_PRIORITY);

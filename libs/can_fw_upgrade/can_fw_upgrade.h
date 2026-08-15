@@ -15,6 +15,14 @@
  *   0x103 固件数据             [8B 数据]
  *   0x104 keyhash (默认开启)   [0]=seq(0..4), [1..7]=7B chunk, 5 帧凑齐 32B
  *   0x105 版本字符串 (设备发)  [0]=seq, [1..7]=7B 文本 (末帧 '\0' 填充)
+ *   0x106 bootloader 探测 (设备发, 仅 MCUboot) [0..3]='B''T''O''1', [4..6]=M.m.p
+ *   0x107 探测响应 (上位机发)  任意 1B → 设备进入固件升级等待
+ *
+ * MCUboot bootloader 升级 (CONFIG_CAN_FW_UPGRADE_BOOT_WAIT, boot_go_hook):
+ *   MCUboot 启动时发 0x106 探测上位机 (PROBE_TIMEOUT_MS 窗口, 默认 500ms),
+ *   收到 0x107 响应进入升级等待; IDLE_TIMEOUT_MS (默认 15s) 内无
+ *   0x101/0x103/0x104 固件帧 (有帧则刷新) 则正常启动应用;
+ *   CONFIRM 后 boot_go 在本会话内直接完成 swap (协议处理与本文件共用)。
  *
  * 响应码 fw_code:
  *   0 OFFSET / 1 UPDATE_SUCCESS / 2 VERSION / 3 CONFIRM

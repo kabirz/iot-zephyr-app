@@ -10,10 +10,12 @@
  * 协议:
  *   UDP: 端口 8600, FW_START(0x01)/FW_DATA(0x02)/FW_END(0x03), 跨子网可用
  *   CAN: Linux SocketCAN, 帧 0x101-0x105 (keyhash/START/DATA/CONFIRM)
+ *        0x106/0x107 = MCUboot 启动探测/响应 (bootloader 升级模式 -b)
  *
  * 用法:
  *   firmware_upgrade upgrade -i 192.168.12.101 -f app.signed.bin
  *   firmware_upgrade upgrade -c can0 -f app.signed.bin
+ *   firmware_upgrade upgrade -c can0 -b -f app.signed.bin  (MCUboot 内升级)
  *   firmware_upgrade version -i 192.168.12.101
  *   firmware_upgrade version -c can0
  *
@@ -63,6 +65,8 @@
 #define CAN_ID_FW_DATA             0x103
 #define CAN_ID_FW_KEYHASH          0x104
 #define CAN_ID_FW_VERSION          0x105
+#define CAN_ID_FW_BOOT_PROBE       0x106
+#define CAN_ID_FW_BOOT_ACK         0x107
 
 #define CAN_FW_CMD_START_UPDATE    0
 #define CAN_FW_CMD_CONFIRM         1
@@ -82,6 +86,11 @@
 #define CAN_KEYHASH_FRAMES         5
 #define CAN_DATA_FRAME_PAYLOAD     8
 #define CAN_OFFSET_REPLY_INTERVAL  8
+
+/* MCUboot 启动探测帧 (与 libs/can_fw_upgrade/can_fw_upgrade_internal.h 对齐) */
+#define CAN_FW_BOOT_PROBE_MAGIC    0x42544F31U  /* 'B''T''O''1' */
+#define CAN_BOOT_PROBE_WAIT_MS     5000
+#define CAN_BOOT_ACK_BYTE          0x5A
 
 /* MCUboot 镜像 */
 #define IMG_MAGIC                  0x96F3B83DU
@@ -781,6 +790,59 @@ static int can_get_version(const char *ifname, char *out, int out_cap)
 	return EXIT_OK;
 }
 
+static long now_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+/* bootloader 升级模式 (-b):
+ * 1. 给运行中的设备 (应用同样实现本协议) 发 REBOOT, 令其重启进 MCUboot;
+ *    设备已在 bootloader 等待中时该帧触发重新启动 → 重新探测。
+ * 2. 等 MCUboot 的 0x106 探测帧 (设备重启后 500ms 窗口内多次发送)。
+ * 3. 收到后立即回 0x107, 设备随即进入固件升级等待 (15s 空闲超时),
+ *    后续 START/DATA/CONFIRM 全部由 bootloader 应答。 */
+static int can_enter_boot(struct can_ctx *c)
+{
+	struct can_frame fr;
+	long deadline;
+	int rc;
+
+	can_flush_rx(c, 200);
+	printf("      REBOOT 已发送 (等待设备进 bootloader)...\n");
+	can_send_fw_cmd(c, CAN_FW_CMD_REBOOT, 0);
+
+	deadline = now_ms() + CAN_BOOT_PROBE_WAIT_MS;
+	for (;;) {
+		long remain = deadline - now_ms();
+
+		if (remain <= 0) {
+			fprintf(stderr, "未收到 bootloader 探测帧 (0x106), 设备未重启或未启用 CAN bootloader\n");
+			return -ETIMEDOUT;
+		}
+		rc = can_recv(c, CAN_ID_FW_BOOT_PROBE, &fr, (int)remain);
+		if (rc == 0) {
+			break;
+		}
+	}
+
+	if (fr.can_dlc < 8 || rd_le32(fr.data) != CAN_FW_BOOT_PROBE_MAGIC) {
+		fprintf(stderr, "探测帧格式异常 (dlc=%u)\n", fr.can_dlc);
+		return -EIO;
+	}
+	printf("      bootloader 就绪: v%u.%u.%u\n",
+	       fr.data[4], fr.data[5], fr.data[6]);
+
+	/* 立即应答 (设备探测窗口 500ms) */
+	{
+		u8 ack = CAN_BOOT_ACK_BYTE;
+
+		return can_send(c, CAN_ID_FW_BOOT_ACK, &ack, 1);
+	}
+}
+
 static int can_send_keyhash(struct can_ctx *c, const u8 *keyhash)
 {
 	int seq;
@@ -935,7 +997,7 @@ static int can_confirm(struct can_ctx *c, int permanent)
 }
 
 static int upgrade_can(const char *ifname, const char *file,
-		       int test_mode, int no_keyhash)
+		       int test_mode, int no_keyhash, int boot_mode)
 {
 	struct fw_image img = { 0 };
 	struct progress prog = { 0 };
@@ -954,6 +1016,19 @@ static int upgrade_can(const char *ifname, const char *file,
 		fprintf(stderr, "CAN 打开失败 (%s): %s\n", ifname, strerror(-rc));
 		rc = EXIT_COMM_ERR;
 		goto out_free;
+	}
+
+	/* [0/4] bootloader 模式: 命令设备重启 → 应答 MCUboot 探测,
+	 * 之后整个升级在 bootloader 内完成 (设备掉底牌也能升级) */
+	if (boot_mode) {
+		printf("[0/4] bootloader 模式: 等待 MCUboot 探测 (0x106)...\n");
+		rc = can_enter_boot(&c);
+		if (rc < 0) {
+			fprintf(stderr, "进入 bootloader 失败: %s\n", strerror(-rc));
+			rc = EXIT_COMM_ERR;
+			goto out_close;
+		}
+		printf("[0/4] bootloader 已应答, 升级将在 bootloader 内进行\n");
 	}
 
 	/* [1/4] keyhash */
@@ -1006,9 +1081,14 @@ static int upgrade_can(const char *ifname, const char *file,
 	}
 	printf("[4/4] CONFIRM OK (%s)\n", test_mode ? "测试模式" : "永久模式");
 
-	/* REBOOT: 设备收到立即热重启 (无回复) */
-	printf("      REBOOT (触发 MCUboot 交换)...\n");
-	can_send_fw_cmd(&c, CAN_FW_CMD_REBOOT, 0);
+	/* CONFIRM 后设备在 bootloader 本会话内直接完成交换 (无重启,
+	 * 约 30-40s); 普通模式需发 REBOOT 让设备重启触发交换 */
+	if (boot_mode) {
+		printf("      CONFIRM 完成, 设备在本会话内交换 (~30-40s), 等待新固件...\n");
+	} else {
+		printf("      REBOOT (触发设备重启)...\n");
+		can_send_fw_cmd(&c, CAN_FW_CMD_REBOOT, 0);
+	}
 	usleep(100000);
 	printf("升级完成 (%s), 等待设备重启...\n",
 	       test_mode ? "测试模式" : "永久模式");
@@ -1035,6 +1115,8 @@ static void usage(const char *prog)
 		"  -p <port>     UDP 端口 (默认 %d)\n"
 		"  -c <can>      SocketCAN 通道 (如 can0, 用 CAN 通道)\n"
 		"  -f <file>     固件镜像路径 (upgrade 必填)\n"
+		"  -b            bootloader 升级模式 (仅 CAN): 命令设备重启进\n"
+		"                MCUboot 并应答其探测帧, 升级全程在 bootloader 内\n"
 		"  --test        测试模式 (重启后回滚, 不永久)\n"
 		"  --no-keyhash  跳过 keyhash 校验 (不推荐)\n"
 		"  -h            显示帮助\n\n"
@@ -1042,12 +1124,12 @@ static void usage(const char *prog)
 		prog, prog, UDP_FW_PORT_DEFAULT);
 }
 
-/* 解析通用选项 (-i/-p/-c/-f/--test/--no-keyhash).
+/* 解析通用选项 (-i/-p/-c/-f/-b/--test/--no-keyhash).
  * 返回 0=成功, -1=错误 (已打印用法), 1=-h (要打印用法). */
 static int parse_common_opts(int argc, char **argv,
 			     const char **ip, int *port,
 			     const char **can, const char **file,
-			     int *test_mode, int *no_keyhash)
+			     int *test_mode, int *no_keyhash, int *boot_mode)
 {
 	/* 手动解析 (子命令后的参数), 不用 getopt 避免子命令 getopt 重置问题 */
 	optind = 1;
@@ -1064,6 +1146,8 @@ static int parse_common_opts(int argc, char **argv,
 			*can = argv[++optind];
 		} else if (strcmp(a, "-f") == 0 && optind + 1 < argc) {
 			*file = argv[++optind];
+		} else if (strcmp(a, "-b") == 0 || strcmp(a, "--boot") == 0) {
+			*boot_mode = 1;
 		} else if (strcmp(a, "--test") == 0) {
 			*test_mode = 1;
 		} else if (strcmp(a, "--no-keyhash") == 0) {
@@ -1086,6 +1170,7 @@ int main(int argc, char **argv)
 	int port = UDP_FW_PORT_DEFAULT;
 	int test_mode = 0;
 	int no_keyhash = 0;
+	int boot_mode = 0;
 	int rc;
 
 	if (argc < 2) {
@@ -1100,13 +1185,17 @@ int main(int argc, char **argv)
 	}
 
 	rc = parse_common_opts(argc - 1, argv + 1, &ip, &port, &can, &file,
-			       &test_mode, &no_keyhash);
+			       &test_mode, &no_keyhash, &boot_mode);
 	if (rc == 1) {
 		usage(argv[0]);
 		return EXIT_OK;
 	}
 	if (rc < 0) {
 		usage(argv[0]);
+		return EXIT_IMAGE_ERR;
+	}
+	if (boot_mode && !can) {
+		fprintf(stderr, "-b bootloader 模式仅支持 CAN 通道 (需 -c <can>)\n");
 		return EXIT_IMAGE_ERR;
 	}
 
@@ -1137,7 +1226,7 @@ int main(int argc, char **argv)
 		if (ip) {
 			return upgrade_udp(ip, port, file, test_mode, no_keyhash);
 		} else if (can) {
-			return upgrade_can(can, file, test_mode, no_keyhash);
+			return upgrade_can(can, file, test_mode, no_keyhash, boot_mode);
 		}
 		fprintf(stderr, "upgrade 需要 -i <ip> (UDP) 或 -c <can> (CAN)\n");
 		return EXIT_IMAGE_ERR;

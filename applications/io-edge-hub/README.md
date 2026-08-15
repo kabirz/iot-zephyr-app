@@ -46,6 +46,12 @@ west flash                   # 烧录 MCUboot + 应用 (一次两镜像)
 
 # 发布模式 (关 LOG/SHELL, ~134KB)
 west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild -DCONF_FILE=prj_release.conf
+
+# MCUboot 内置 CAN 固件升级 (bootloader 探测等待, 见 libs/can_fw_upgrade)
+# 注意: mcuboot_EXTRA_CONF_FILE 会顶替 sysbuild 自动注入的 sysbuild/mcuboot.conf,
+# 两个片段必须一起列出 (分号列表, 引号防 shell 展开)
+west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild \
+  "-Dmcuboot_EXTRA_CONF_FILE=$PWD/applications/io-edge-hub/sysbuild/mcuboot.conf;$PWD/libs/can_fw_upgrade/mcuboot_can.conf"
 ```
 
 > `build/` 目录默认可能被其他应用占用,可用 `--build-dir build/io-edge-hub` 指定独立目录。

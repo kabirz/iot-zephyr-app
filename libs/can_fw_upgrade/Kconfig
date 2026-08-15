@@ -44,3 +44,34 @@ config CAN_FW_UPGRADE_MAX_HANDLERS
 	help
 	  Capacity of the business-frame callback array. Each registered
 	  callback receives every non-upgrade CAN frame (broadcast).
+
+# BOOT_GO_HOOKS 仅存在于 MCUboot 构建, can_fw_boot.c 因此只编入 bootloader。
+config CAN_FW_UPGRADE_BOOT_WAIT
+	bool "Wait for CAN firmware upgrade inside MCUboot"
+	default y
+	depends on CAN_FW_UPGRADE && BOOT_GO_HOOKS
+	help
+	  Compile the MCUboot boot_go_hook (can_fw_boot.c): probe the host
+	  over CAN at bootloader startup, wait for a firmware transfer if
+	  the host responds, and let boot_go swap in the same session after
+	  CONFIRM. The upgrade protocol handling is shared with the
+	  application build (same sources).
+
+if CAN_FW_UPGRADE_BOOT_WAIT
+
+config CAN_FW_UPGRADE_PROBE_TIMEOUT_MS
+	int "Boot probe window (ms)"
+	default 500
+	help
+	  Window during which probe frames (0x106) are re-sent while
+	  awaiting the host response (0x107); expires into normal boot.
+
+config CAN_FW_UPGRADE_IDLE_TIMEOUT_MS
+	int "Firmware idle timeout in bootloader wait (ms)"
+	default 15000
+	help
+	  After the host acknowledges the probe, wait this long for
+	  upgrade frames (0x101/0x103/0x104), refreshed by each frame,
+	  before continuing normal boot.
+
+endif

@@ -1,6 +1,5 @@
 / {
 	chosen {
-		zephyr,canbus = &can1;
 		zephyr,settings-partition = &cfg_partition;
 		zephyr,display = &sh1106_sh1106_128x64;
 	};
@@ -45,12 +44,6 @@
 		ard-us = <1500>;
 		arc = <9>;
 	};
-};
-
-&can1 {
-	pinctrl-0 = <&can_rx_pa11 &can_tx_pa12>;
-	pinctrl-names = "default";
-	status = "okay";
 };
 
 &adc1 {
