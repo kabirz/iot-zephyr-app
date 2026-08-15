@@ -16,6 +16,7 @@
 #include <zephyr/drivers/flash.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/logging/log_ctrl.h>
 #include <zephyr/dfu/flash_img.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/sys/reboot.h>
@@ -152,7 +153,9 @@ static void handle_platform_rx(struct can_frame *frame)
 		}
 #endif
 
-		if (!fw_img_initialized) {
+		/* 每次都重新擦除 + 初始化: 上次中途失败的传输若不重置,
+		 * 旧偏移/缓冲状态会导致 flash 写错位 */
+		{
 			const struct flash_area *fa;
 
 			if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
@@ -165,11 +168,20 @@ static void handle_platform_rx(struct can_frame *frame)
 
 			if (flash_img_init(&flash_img_ctx) != 0) {
 				LOG_ERR("flash_img_init failed");
+				fw_img_initialized = false;
 				fw_can_reply(FW_CODE_FLASH_ERROR, 0);
 				return;
 			}
 			fw_img_initialized = true;
 			fw_written = 0;
+		}
+
+		/* 丢弃 msgq 中残留的旧 FW_DATA 帧 (擦除期间堆积的) */
+		{
+			struct can_frame stale;
+
+			while (k_msgq_get(&can_fw_rx_msgq, &stale, K_NO_WAIT) == 0) {
+			}
 		}
 
 		LOG_INF("FW upgrade start, size=%d", frame->data_32[1]);
@@ -221,6 +233,10 @@ static void handle_platform_rx(struct can_frame *frame)
 		fw_can_send_version_string(ver, (uint8_t)vlen);
 
 	} else if (cmd == FW_CMD_REBOOT) {
+		/* 排空 deferred 日志缓冲再重启, 避免随 sys_reboot 丢失 */
+		while (log_process()) {
+		}
+		k_msleep(50);
 		sys_reboot(SYS_REBOOT_WARM);
 	}
 }

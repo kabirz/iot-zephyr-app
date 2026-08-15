@@ -14,6 +14,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/logging/log_ctrl.h>
 #include <udp_fw_upgrade.h>
 #include <init.h>
 #include "udp.h"
@@ -93,6 +94,9 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
 
 		udp_fw_reply(cmd, &ok, sizeof(ok));
 		if (ok) {
+			/* 排空 deferred 日志缓冲再重启 */
+			while (log_process()) {
+			}
 			k_msleep(100);
 			sys_reboot(SYS_REBOOT_COLD);
 		}

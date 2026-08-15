@@ -43,7 +43,7 @@ static uint32_t rtc_timestamp_get(void)
 
 bool set_timestamp(time_t t)
 {
-	if (!rtc_dev || t < (time_t)TS_MIN || t > (time_t)TS_MAX) {
+	if (!rtc_dev || t < (time_t)TS_MIN || t >= (time_t)TS_MAX) {
 		LOG_WRN("invalid timestamp %lld, ignored", (long long)t);
 		return false;
 	}
