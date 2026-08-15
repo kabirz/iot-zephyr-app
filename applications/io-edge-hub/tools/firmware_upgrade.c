@@ -51,6 +51,13 @@
 #define UDP_FW_END_TIMEOUT_MS      10000
 #define UDP_CHUNK_SIZE             511
 
+/* UDP 固件命令码 (与 libs/udp_fw_upgrade 对齐) */
+#define UDP_FW_CMD_START           0x01
+#define UDP_FW_CMD_DATA            0x02
+#define UDP_FW_CMD_END             0x03
+#define UDP_FW_CMD_GET_VERSION     0x04
+#define UDP_FW_CMD_REBOOT          0x05
+
 #define CAN_ID_FW_CMD              0x101
 #define CAN_ID_FW_REPLY            0x102
 #define CAN_ID_FW_DATA             0x103
@@ -399,7 +406,7 @@ static int udp_get_version(const char *ip, int port, char *out, int out_cap)
 		fprintf(stderr, "UDP 打开失败: %s\n", strerror(-rc));
 		return EXIT_COMM_ERR;
 	}
-	n = udp_send_recv(&u, 0x04, NULL, 0, reply, sizeof(reply), UDP_TIMEOUT_MS);
+	n = udp_send_recv(&u, UDP_FW_CMD_GET_VERSION, NULL, 0, reply, sizeof(reply), UDP_TIMEOUT_MS);
 	udp_close(&u);
 	if (n < 0) {
 		fprintf(stderr, "GET_VERSION 失败: %s\n", strerror(-n));
@@ -457,7 +464,7 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 			memcpy(pl + 4, img.keyhash, IMG_KEYHASH_LEN);
 			plen += IMG_KEYHASH_LEN;
 		}
-		n = udp_send_recv(&u, 0x01, pl, plen, reply, sizeof(reply),
+		n = udp_send_recv(&u, UDP_FW_CMD_START, pl, plen, reply, sizeof(reply),
 				  UDP_FW_START_TIMEOUT_MS);
 	}
 	if (n < 0) {
@@ -494,7 +501,7 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 
 		pl[0] = 0x02;
 		memcpy(pl + 1, img.data + off, chunk);
-		n = udp_send_recv(&u, 0x02, pl + 1, chunk, reply, sizeof(reply),
+		n = udp_send_recv(&u, UDP_FW_CMD_DATA, pl + 1, chunk, reply, sizeof(reply),
 				  UDP_TIMEOUT_MS);
 		if (n < 0) {
 			fprintf(stderr, "\nFW_DATA 失败 (offset=%u): %s\n",
@@ -520,7 +527,7 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 
 		pl[0] = test_mode ? 1 : 0;
 		wr_le16(pl + 1, crc);
-		n = udp_send_recv(&u, 0x03, pl, 3, reply, sizeof(reply),
+		n = udp_send_recv(&u, UDP_FW_CMD_END, pl, 3, reply, sizeof(reply),
 				  UDP_FW_END_TIMEOUT_MS);
 	}
 	if (n < 0) {
@@ -536,7 +543,16 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 	}
 	progress_message(&prog, "[3/4] FW_END OK");
 
-	printf("[4/4] 升级完成 (%s), 设备将重启进行 MCUboot 交换\n",
+	/* [4/4] REBOOT: 设备回复后 100ms 冷重启, 无回复不视为失败 */
+	printf("[4/4] REBOOT (触发 MCUboot 交换)...\n");
+	n = udp_send_recv(&u, UDP_FW_CMD_REBOOT, NULL, 0, reply, sizeof(reply),
+			  UDP_TIMEOUT_MS);
+	if (n < 0) {
+		printf("[4/4] REBOOT 已发送 (无回复, 设备可能已重启)\n");
+	} else {
+		printf("[4/4] REBOOT OK\n");
+	}
+	printf("升级完成 (%s), 等待设备重启...\n",
 	       test_mode ? "测试模式" : "永久模式");
 	rc = EXIT_OK;
 
@@ -595,6 +611,7 @@ static void can_close(struct can_ctx *c)
 static int can_send(struct can_ctx *c, u32 id, const u8 *data, int len)
 {
 	struct can_frame fr;
+	int rc;
 
 	if (len < 0 || len > 8) {
 		return -EINVAL;
@@ -605,10 +622,17 @@ static int can_send(struct can_ctx *c, u32 id, const u8 *data, int len)
 	if (len > 0) {
 		memcpy(fr.data, data, len);
 	}
-	if (write(c->sock, &fr, sizeof(fr)) != (ssize_t)sizeof(fr)) {
-		return -errno;
-	}
-	return 0;
+	/* EAGAIN = 内核 TX 队列满 (总线拥塞), 小睡重试 */
+	do {
+		rc = write(c->sock, &fr, sizeof(fr));
+		if (rc == (ssize_t)sizeof(fr)) {
+			return 0;
+		}
+		if (rc < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+			return -errno;
+		}
+		usleep(1000);
+	} while (1);
 }
 
 /* 等下一帧. expect_id=0 表示接受任意 ID. 返回 0=成功, <0=错误/超时. */
@@ -815,7 +839,6 @@ static int can_send_data(struct can_ctx *c, const u8 *data, size_t len,
 	u8 frame_data[CAN_DATA_FRAME_PAYLOAD];
 	size_t off = 0;
 	int seq_in_block = 0;
-	u8 pad_buf[CAN_DATA_FRAME_PAYLOAD];
 
 	/* 主循环: 每 8B 一帧, 末尾不足 8B 的留到 while 后单独处理 */
 
@@ -858,15 +881,14 @@ static int can_send_data(struct can_ctx *c, const u8 *data, size_t len,
 		}
 	}
 
-	/* 处理不足 8B 的末尾 (填充 0xFF 后发) */
+	/* 不足 8B 的末尾用实际 DLC 发送: 补齐会使设备 fw_written 超过总数,
+	 * 不落流控边界导致设备不再回复 */
 	if (off < len) {
 		int rc;
 		u32 code, arg;
 		size_t remain = len - off;
 
-		memset(pad_buf, 0xFF, CAN_DATA_FRAME_PAYLOAD);
-		memcpy(pad_buf, data + off, remain);
-		rc = can_send(c, CAN_ID_FW_DATA, pad_buf, CAN_DATA_FRAME_PAYLOAD);
+		rc = can_send(c, CAN_ID_FW_DATA, data + off, (int)remain);
 		if (rc < 0) {
 			return rc;
 		}
@@ -982,7 +1004,13 @@ static int upgrade_can(const char *ifname, const char *file,
 		rc = EXIT_COMM_ERR;
 		goto out_close;
 	}
-	printf("[4/4] CONFIRM OK (%s), 设备下次启动 MCUboot 交换\n",
+	printf("[4/4] CONFIRM OK (%s)\n", test_mode ? "测试模式" : "永久模式");
+
+	/* REBOOT: 设备收到立即热重启 (无回复) */
+	printf("      REBOOT (触发 MCUboot 交换)...\n");
+	can_send_fw_cmd(&c, CAN_FW_CMD_REBOOT, 0);
+	usleep(100000);
+	printf("升级完成 (%s), 等待设备重启...\n",
 	       test_mode ? "测试模式" : "永久模式");
 	rc = EXIT_OK;
 
