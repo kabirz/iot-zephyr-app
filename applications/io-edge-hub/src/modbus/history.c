@@ -33,8 +33,10 @@ LOG_MODULE_REGISTER(io_history, LOG_LEVEL_INF);
 
 K_MSGQ_DEFINE(his_msgq, sizeof(struct his_data), 16, 4);
 
-/* 专用工作队列: 历史落盘与 Modbus server (系统工作队列) 隔离 */
-K_KERNEL_STACK_DEFINE(hist_q_stack, 2048);
+/* 专用工作队列: 历史落盘与 Modbus server (系统工作队列) 隔离.
+ * 4096: cleanup_old_files 的文件名数组 + LittleFS 目录遍历/写入调用链较深,
+ * 2048 会栈溢出 (深度溢出 → double fault → LOCKUP 静默复位) */
+K_KERNEL_STACK_DEFINE(hist_q_stack, 4096);
 static struct k_work_q hist_work_q;
 
 static volatile bool history_enabled;
@@ -47,7 +49,7 @@ static void cleanup_old_files(void)
 {
 	struct fs_dir_t dir;
 	struct fs_dirent ent;
-	char names[32][24];
+	char names[HIST_MAX_FILES + 2][24];
 	int n = 0;
 
 	fs_dir_t_init(&dir);
@@ -112,9 +114,12 @@ static int ensure_file(void)
 		his_fp_open = false;
 	}
 
+	char name[24];
 	char path[48];
 
-	make_hist_name(path, sizeof(path));
+	make_hist_name(name, sizeof(name));
+	/* fs_open 需要绝对路径 (以 '/' 开头的挂载点前缀 + 文件名) */
+	snprintf(path, sizeof(path), "%s/%s", HIST_DIR, name);
 	fs_file_t_init(&his_fp);
 	if (fs_open(&his_fp, path, FS_O_CREATE | FS_O_WRITE | FS_O_APPEND) != 0) {
 		return -EIO;
