@@ -24,3 +24,6 @@ target_sources(app PRIVATE
   src/ftp_server/ftpd.c
 )
 
+# 临时带宽测试端点: 仅在 CONFIG_IO_BW_TEST 启用时编译
+zephyr_sources_ifdef(CONFIG_IO_BW_TEST src/bwtest.c)
+

@@ -40,3 +40,16 @@ config IO_FTP_STACK_SIZE
 config IO_FTP_PRIORITY
 	int "FTP server thread priority"
 	default 13
+
+# ==================== 带宽测试 (临时, 测完移除) ====================
+config IO_BW_TEST
+	bool "Enable temporary TCP echo bandwidth test endpoint"
+	default n
+	help
+	  Temporary raw-TCP throughput measurement (echo on port 9900).
+	  For measurement only, no auth; remove after use.
+
+config IO_BW_TEST_PORT
+	int "BW test TCP port"
+	default 9900
+	depends on IO_BW_TEST

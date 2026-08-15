@@ -95,6 +95,12 @@
 	cs-gpios = <&gpiob 12 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 	status = "okay";
 
+	/* W5500 以太网 SPI2 用 DMA (F407: SPI2_RX=DMA1 Stream3 Ch0,
+	 * SPI2_TX=DMA1 Stream4 Ch0), 提升收发吞吐 */
+	dmas = <&dma1 4 0 STM32_DMA_PERIPH_TX 0>,
+	       <&dma1 3 0 STM32_DMA_PERIPH_RX 0>;
+	dma-names = "tx", "rx";
+
 	eth0: w5500@0 {
 		compatible = "wiznet,w5500";
 		reg = <0>;
@@ -104,6 +110,11 @@
 		local-mac-address = [00 08 DC 01 02 03];
 		status = "okay";
 	};
+};
+
+/* W5500 SPI2 DMA 需要 DMA1 控制器 */
+&dma1 {
+	status = "okay";
 };
 
 /* ============================================================
