@@ -33,5 +33,6 @@ enum can_fw_boot_trace {
 extern struct k_sem can_fw_boot_ack_sem;
 extern volatile uint32_t can_fw_last_activity_ms;
 extern volatile bool can_fw_confirmed;
+extern struct k_msgq can_fw_rx_msgq;
 
 #endif /* __CAN_FW_UPGRADE_INTERNAL_H__ */

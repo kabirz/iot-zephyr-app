@@ -101,6 +101,19 @@ fih_ret boot_go_hook(struct boot_rsp *rsp)
 		LOG_INF("host detected, waiting CAN firmware (idle %us)",
 			CONFIG_CAN_FW_UPGRADE_IDLE_TIMEOUT_MS / 1000);
 
+		/* 丢弃 ACK 前滞留的旧帧 (msgq/驱动缓冲): 上位机为让运行中
+		 * 应用重启进 bootloader 而发的 REBOOT 帧若在此被处理, 会经
+		 * FW_CMD_REBOOT 的 BOOT_WAIT 分支置 can_fw_confirmed, 等待
+		 * 循环立即退出, 后续 keyhash/START 全部丢失 */
+		{
+			struct can_frame stale;
+
+			while (k_msgq_get(&can_fw_rx_msgq, &stale, K_NO_WAIT) == 0) {
+			}
+		}
+		/* REBOOT 帧可能在 ACK 之前已被 RX 线程处理并置位, 一并复位 */
+		can_fw_confirmed = false;
+
 		can_fw_last_activity_ms = k_uptime_get_32();
 		while (!can_fw_confirmed) {
 			uint32_t now = k_uptime_get_32();
