@@ -180,11 +180,13 @@
 };
 
 /* ============================================================
- * RTC: LSI 驱动 (板载无 LSE 晶振)
+ * RTC: HSE/16 驱动 (板载无 LSE 晶振)
+ *   HSE 13MHz -> RTCPRE /16 = 812500Hz, async 125 x sync 6500 = 1Hz 精确
+ *   LSI 无校准精度差 (实测快 9%), HSE 为外部晶振温度稳定
  * ============================================================ */
 &rtc {
 	clocks = <&rcc STM32_CLOCK(APB1, 28)>,
-		 <&rcc STM32_SRC_LSI RTC_SEL(2)>;
+		 <&rcc STM32_SRC_HSE RTC_SEL(3)>;
 	status = "okay";
 };
 
