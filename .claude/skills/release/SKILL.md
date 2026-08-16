@@ -1,12 +1,12 @@
 ---
 name: release
-description: Use when the user asks to release/publish a firmware version for an app in this Zephyr repo (e.g. "release angle-handler to 0.1.5", "发布 n2e-gw 0.2.0", "给 angle-handler 发版 0.1.5"). 改写 app 的 VERSION 文件、提交、打 tag，然后用指定的 Python 虚拟环境编译并归档产物。需要用户提供三项输入：app 的相对路径、venv 目录路径、目标版本号（MAJOR.MINOR.PATCH）。仅用于正式发版，不要在普通编译/调试场景加载本 skill。
+description: Use when the user asks to release/publish a firmware version for an app in this Zephyr repo (e.g. "release angle-handler to 0.1.5", "发布 n2e-gw 0.2.0", "给 io-edge-hub 发版 0.1.0"). 改写 app 的 VERSION 文件、提交、打 tag，然后用指定的 Python 虚拟环境编译并归档产物。需要用户提供三项输入：app 的相对路径、venv 目录路径、目标版本号（MAJOR.MINOR.PATCH）。仅用于正式发版，不要在普通编译/调试场景加载本 skill。
 ---
 
 # 发布固件版本
 
-本 skill 为本 Zephyr west manifest 仓库里的某个 app（`applications/angle-handler`
-或 `applications/n2e-gw`）切出一个正式版本：改写 app 的 `VERSION` 文件、提交、
+本 skill 为本 Zephyr west manifest 仓库里的某个 app（`applications/angle-handler`、
+`applications/n2e-gw` 或 `applications/io-edge-hub`）切出一个正式版本：改写 app 的 `VERSION` 文件、提交、
 **先打 tag 再编译**、用用户指定的 Python 虚拟环境编译、最后归档镜像。必须严格按
 顺序执行每一步；任何一步失败都要立即停下，并报告已经成功的步骤，方便用户回滚。
 
@@ -20,14 +20,19 @@ description: Use when the user asks to release/publish a firmware version for an
   路径，如 `.venv`。
 - **`<version>`**（必填）— 目标版本号，`MAJOR.MINOR.PATCH` 格式，如 `0.1.5`。不匹配
   `^\d+\.\d+\.\d+$` 的要拒绝并重新询问。
-- **`--board <board>`**（可选）— 覆盖目标板子，默认 `nrf24_f103rct6`。
+- **`--board <board>`**（可选）— 覆盖目标板子。默认按 app 取：
+  `io-edge-hub` → `io_edge_f407vet6`，`angle-handler` / `n2e-gw` → `nrf24_f103rct6`。
 - **`--no-sysbuild`**（可选）— 不使用 sysbuild。默认启用 sysbuild（`--sysbuild`），
   因为要打包 MCUboot。
 
 派生量：
-- **`<app_name>`** = `<app_path>` 的 basename（如 `angle-handler`）。
+- **`<app_name>`** = `<app_path>` 的 basename（如 `io-edge-hub`）。
 - **`<display_name>`** = app 的中文显示名（用于 changelog 标题、发布 zip 命名、汇报）。
-  固定映射：`angle-handler` → `手柄`，`n2e-gw` → `手柄接收器`。其他 app 报错并询问用户。
+  固定映射：`angle-handler` → `手柄`，`n2e-gw` → `手柄接收器`，`io-edge-hub` → `数据采集卡`。
+  其他 app 报错并询问用户。
+- **`<mcuboot_can>`** = 追加给 `west build` 的 MCUboot CAN 固件升级参数片段。
+  **仅 `io-edge-hub` 需要**（让 bootloader 编译进 `can_fw_boot.c`，支持 CAN 升级等待）；
+  `angle-handler` / `n2e-gw` 目前为空。具体写法见步骤 5。
 - **`<tag>`** = `v<version>-<app_name>`（如 `v1.0.1-angle-handler`，**tag 用英文 app_name，
   不用中文**，避免中文在 git tag 里出问题）。
 - **`<release_zip>`** = `<display_name>-v<version>.zip`（如 `手柄-v1.0.1.zip`）。
@@ -87,11 +92,28 @@ EXTRAVERSION = release
 仓库根目录下执行。
 
 - Windows：
-  `<venv_path>/Scripts/python.exe -m west build -b <board> <app_path> --sysbuild`
+  `<venv_path>/Scripts/python.exe -m west build -b <board> <app_path> --sysbuild <mcuboot_can>`
 - POSIX：
-  `<venv_path>/bin/python -m west build -b <board> <app_path> --sysbuild`
+  `<venv_path>/bin/python -m west build -b <board> <app_path> --sysbuild <mcuboot_can>`
 
-若指定了 `--no-sysbuild` 则去掉 `--sysbuild`。使用默认的 build 目录 `build`（与现有
+若指定了 `--no-sysbuild` 则去掉 `--sysbuild`。`<mcuboot_can>` 为空时省略。
+
+**io-edge-hub 必须追加 MCUboot CAN 固件升级参数**（`mcuboot_EXTRA_CONF_FILE` 会把
+`libs/can_fw_upgrade/mcuboot_can.conf` 注入 bootloader，编译进 `can_fw_boot.c`
+启动等待钩子，bootloader 即可在 CAN 上探测主机并完成升级）：
+
+- POSIX：
+  `"-Dmcuboot_EXTRA_CONF_FILE=$PWD/applications/io-edge-hub/sysbuild/mcuboot.conf;$PWD/libs/can_fw_upgrade/mcuboot_can.conf"`
+- Windows：
+  `"-Dmcuboot_EXTRA_CONF_FILE=%CD%\applications\io-edge-hub\sysbuild\mcuboot.conf;%CD%\libs\can_fw_upgrade\mcuboot_can.conf"`
+
+（注意：`mcuboot_EXTRA_CONF_FILE` 会**顶替** sysbuild 自动注入的
+`<app_path>/sysbuild/mcuboot.conf`，因此两个片段必须一起列出，分号分隔、引号包裹防
+shell 展开。）`angle-handler` / `n2e-gw` 目前不需要该参数。
+
+三个 app 都用默认 `prj.conf`，不加 `-DCONF_FILE=...`——默认配置已带
+`CONFIG_BOOTLOADER_MCUBOOT=y` 与 `CONFIG_CAN_FW_UPGRADE=y` / `CONFIG_UDP_FW_UPGRADE=y`，
+配合 `--sysbuild` 打包 MCUboot bootloader。使用默认的 build 目录 `build`（与现有
 `west archive` 命令一致）。编译失败则停下并报告——此时 tag 已经存在，要把 tag 名
 告诉用户，方便其修复后重跑编译，或删除 tag。
 
@@ -259,7 +281,7 @@ tag `<tag>`；编译失败"）、具体错误，以及建议的回滚命令
 
 ## 注意事项
 
-- 本仓库两个 app 各自的 MCUboot 签名密钥独立（`<app_path>/boards/nrf24_f103rct6.pem`），
+- 本仓库各 app 各自的 MCUboot 签名密钥独立（`<app_path>/boards/${BOARD}.pem`），
   镜像互不通用。
 - 固件运行时通过 Zephyr 的 `<zephyr/app_version.h>`（`APP_VERSION_MAJOR/MINOR`、
   `APP_PATCHLEVEL`）读取版本号，该头文件在 configure 期由这个 `VERSION` 文件生成——
