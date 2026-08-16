@@ -20,7 +20,7 @@
 - `drivers/` — 自定义驱动（`nrf24l01p`）。
 - `scripts/west_commands/` — 自定义 west 命令（`west archive`，由 `archive.py` 实现）。
 - `tools/` — 辅助脚本（如 `sh1106_font_generator.py`）+ `tools/firmware_upgrade/` 固件升级 CLI（Python/C 双实现, UDP+CAN, 含 MCUboot bootloader 模式）。
-- `.github/workflows/` — CI（`build.yml`，覆盖 angle-handler / n2e-gw 的 tag 触发构建与发布）。
+- `.github/workflows/` — CI（`build.yml`，覆盖 angle-handler / n2e-gw / io-edge-hub 的 tag 触发构建与发布）。
 
 ## 构建命令
 

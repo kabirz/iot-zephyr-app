@@ -6,6 +6,7 @@ on:
     tags:
       - "v*-angle-handler"
       - "v*-n2e-gw"
+      - "v*-io-edge-hub"
     paths:
       - applications/**
       - boards/**
@@ -53,13 +54,20 @@ jobs:
           REF="${GITHUB_REF}"
           build_ah=true
           build_gw=true
+          build_ieh=true
           if [[ "$REF" == refs/tags/*-angle-handler ]]; then
             build_gw=false
+            build_ieh=false
           elif [[ "$REF" == refs/tags/*-n2e-gw ]]; then
             build_ah=false
+            build_ieh=false
+          elif [[ "$REF" == refs/tags/*-io-edge-hub ]]; then
+            build_ah=false
+            build_gw=false
           fi
           echo "build_ah=$build_ah" >> "$GITHUB_OUTPUT"
           echo "build_gw=$build_gw" >> "$GITHUB_OUTPUT"
+          echo "build_ieh=$build_ieh" >> "$GITHUB_OUTPUT"
 
       # ── angle-handler ──
 
@@ -148,3 +156,48 @@ jobs:
           to: ${{ vars.TOLISTS }}
           from: ${{ vars.MAIL_USERNAME }}
           attachments: workspace/build/n2e-gw/n2e-gw.zip
+
+      # ── io-edge-hub ──
+
+      - name: Build io-edge-hub
+        if: steps.apps.outputs.build_ieh == 'true'
+        working-directory: workspace
+        shell: bash
+        run: |
+          set -e
+          west build -b io_edge_f407vet6 apps/applications/io-edge-hub --sysbuild -d build/io-edge-hub \
+            "-Dmcuboot_EXTRA_CONF_FILE=$PWD/apps/applications/io-edge-hub/sysbuild/mcuboot.conf;$PWD/apps/libs/can_fw_upgrade/mcuboot_can.conf"
+          west archive --no-rebuild -o io-edge-hub -d build/io-edge-hub
+
+      - name: Upload io-edge-hub
+        if: steps.apps.outputs.build_ieh == 'true'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: io-edge-hub
+          path: workspace/build/io-edge-hub/output
+
+      - name: Release io-edge-hub
+        if: steps.apps.outputs.build_ieh == 'true' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3.0.0
+        id: release_ieh
+        with:
+          name: io-edge-hub ${{ github.ref_name }}
+          files: workspace/build/io-edge-hub/io-edge-hub.zip
+
+      - name: Email io-edge-hub release
+        if: steps.apps.outputs.build_ieh == 'true' && startsWith(github.ref, 'refs/tags/')
+        uses: dawidd6/action-send-mail@v17
+        with:
+          server_address: smtp.126.com
+          server_port: 465
+          username: ${{ vars.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: Github Release zephyr APP ${{ github.ref_name }}
+          body: |
+            zephyr app Release: ${{ steps.release_ieh.outputs.url }}
+
+            - Repository: ${{ github.repository }}
+            - Workflow: ${{ github.workflow }}
+          to: ${{ vars.TOLISTS }}
+          from: ${{ vars.MAIL_USERNAME }}
+          attachments: workspace/build/io-edge-hub/io-edge-hub.zip
