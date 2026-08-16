@@ -63,6 +63,20 @@ uint16_t get_holding_reg(uint16_t addr)
 	return holding_reg[addr];
 }
 
+/* 读 holding 寄存器 (与 Modbus FC03 读回调同语义): 时间戳寄存器
+ * (0x0E/0x0F) 返回实时系统时间, 其余返回数组值。供 Web /api/regs
+ * 使用, 保证与 Modbus 主站读到的值一致 */
+uint16_t io_read_holding(uint16_t addr)
+{
+	if (addr == HOLDING_TIMESTAMP_HI_IDX) {
+		return (uint16_t)((uint32_t)time(NULL) >> 16);
+	}
+	if (addr == HOLDING_TIMESTAMP_LO_IDX) {
+		return (uint16_t)(uint32_t)time(NULL);
+	}
+	return get_holding_reg(addr);
+}
+
 /* 内部设值 (无副作用), 供采样/UDP handler 使用 */
 int update_holding_reg(uint16_t addr, uint16_t reg)
 {
@@ -123,7 +137,9 @@ static int holding_reg_rd_cb(uint16_t addr, uint16_t *reg)
 	return 0;
 }
 
-static int holding_reg_wr_cb(uint16_t addr, uint16_t reg)
+/* 写 holding 寄存器 (带副作用, 与 Modbus FC06/FC16 语义一致)。
+ * 供 Modbus 写回调与 Web (HTTP/WS) 共用, 保证所有写入路径行为一致。 */
+int io_write_holding(uint16_t addr, uint16_t reg)
 {
 	if (addr >= ARRAY_SIZE(holding_reg)) {
 		return -ENOTSUP;
@@ -164,6 +180,11 @@ static int holding_reg_wr_cb(uint16_t addr, uint16_t reg)
 	return 0;
 }
 
+static int holding_reg_wr_cb(uint16_t addr, uint16_t reg)
+{
+	return io_write_holding(addr, reg);
+}
+
 static int input_reg_rd_cb(uint16_t addr, uint16_t *reg)
 {
 	if (addr >= ARRAY_SIZE(input_reg)) {
@@ -183,21 +204,26 @@ static int coil_rd_cb(uint16_t addr, bool *state)
 	return 0;
 }
 
-static int coil_wr_cb(uint16_t addr, bool state)
+/* 单 DO 位写 (加锁读-改-写, 与 Modbus FC05 语义一致), 供 Web (HTTP/WS) 共用 */
+int io_write_do_bit(uint16_t bit, bool state)
 {
 	uint16_t val;
 
-	if (addr >= DO_NUM) {
+	if (bit >= DO_NUM) {
 		return -ENOTSUP;
 	}
-	/* 读-改-写加锁: 防止并发 coil 写 / holding_reg_save 期间丢失位更新 */
 	k_mutex_lock(&reg_lock, K_FOREVER);
 	val = holding_reg[HOLDING_DO_IDX];
-	WRITE_BIT(val, addr, state);
+	WRITE_BIT(val, bit, state);
 	mb_set_do(val & 0xFF);
 	holding_reg[HOLDING_DO_IDX] = val & 0xFF;
 	k_mutex_unlock(&reg_lock);
 	return 0;
+}
+
+static int coil_wr_cb(uint16_t addr, bool state)
+{
+	return io_write_do_bit(addr, state);
 }
 
 /* Discrete Input (FC02) 映射到 input_reg[DI_IDX] 的位 */

@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(io_edge_hub)
 
-target_include_directories(app PRIVATE include src/sys src/storage src/ftp_server)
+target_include_directories(app PRIVATE include src/sys src/storage src/ftp_server src/web)
 
 target_sources(app PRIVATE
   src/main.c
@@ -27,3 +27,21 @@ target_sources(app PRIVATE
 # 临时带宽测试端点: 仅在 CONFIG_IO_BW_TEST 启用时编译
 zephyr_sources_ifdef(CONFIG_IO_BW_TEST src/bwtest.c)
 
+# Web 服务 (HTTP 页面 + REST + WebSocket), CONFIG_IO_WEB 总开关
+if(CONFIG_IO_WEB)
+  target_sources(app PRIVATE
+    src/web/httpd.c
+    src/web/ws_io.c
+  )
+
+  # Web UI: index.html → gzip → C 数组 (编译进固件, HTTP 静态资源)
+  set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated)
+  generate_inc_file_for_target(app
+    src/web/index.html
+    ${gen_dir}/web_index_html_gz.inc
+    --gzip
+  )
+
+  # HTTP 资源描述 iterable section (服务 io_web 对应的链接段)
+  zephyr_linker_sources(SECTIONS src/web/sections-rom.ld)
+endif()

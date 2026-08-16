@@ -315,8 +315,10 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 		LOG_INF("reboot requested");
 		udp_fw_reply(cmd, NULL, 0);
 		/* 排空 deferred 日志缓冲, 给 shell 线程打印窗口, 避免随重启丢失 */
+#ifdef CONFIG_LOG
 		while (log_process()) {
 		}
+#endif
 		k_msleep(100);
 		sys_reboot(SYS_REBOOT_COLD);
 		return true;

@@ -85,6 +85,17 @@ int update_holding_reg(uint16_t addr, uint16_t reg);
 uint16_t get_input_reg(uint16_t addr);
 int update_input_reg(uint16_t addr, uint16_t reg);
 
+/* 读 holding 寄存器 (与 Modbus FC03 同语义): 时间戳 0x0E/0x0F 返回
+ * 实时系统时间, 供 Web /api/regs 与主站读到一致值 */
+uint16_t io_read_holding(uint16_t addr);
+
+/* 写 holding 寄存器 (带副作用: DO 输出/历史开关/设时间/保存参数/重启),
+ * 与 Modbus FC06/FC16 同语义, 供 Web (HTTP/WS) 共用 */
+int io_write_holding(uint16_t addr, uint16_t reg);
+
+/* 单 DO 位写 (加锁读-改-写, 与 Modbus FC05 同语义), bit 0-7 对应 DO1-DO8 */
+int io_write_do_bit(uint16_t bit, bool state);
+
 /* 触发参数全量保存到 FCB (供 UDP handler 改参数后持久化) */
 void holding_reg_save(void);
 
@@ -121,6 +132,12 @@ bool net_link_is_up(void);
 /* 设置延迟重启标志 (主循环刷新日志后重启), 供 UDP 改 IP 等调用 */
 void set_reboot_status(bool en);
 bool get_reboot_status(void);
+
+/* ==================== Web 服务 (web/httpd.c) ==================== */
+#ifdef CONFIG_IO_WEB
+/* 启动 HTTP + WebSocket 服务 (main 在网络链路就绪后调用) */
+int io_web_start(void);
+#endif
 
 #ifdef __cplusplus
 }

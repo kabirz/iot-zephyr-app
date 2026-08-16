@@ -95,8 +95,10 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
 		udp_fw_reply(cmd, &ok, sizeof(ok));
 		if (ok) {
 			/* 排空 deferred 日志缓冲再重启 */
+#ifdef CONFIG_LOG
 			while (log_process()) {
 			}
+#endif
 			k_msleep(100);
 			sys_reboot(SYS_REBOOT_COLD);
 		}

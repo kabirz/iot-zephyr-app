@@ -207,6 +207,11 @@ int main(void)
 
 	LOG_INF("io-edge-hub ready");
 
+#ifdef CONFIG_IO_WEB
+	/* Web 服务在链路就绪后启动 (SYS_INIT 阶段 iface 未 up) */
+	io_web_start();
+#endif
+
 	/* 状态 LED 心跳: 300ms on / 2700ms off */
 	static const struct gpio_dt_spec status_led =
 		GPIO_DT_SPEC_GET(DT_ALIAS(mcuboot_led0), gpios);

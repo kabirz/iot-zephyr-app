@@ -41,6 +41,74 @@ config IO_FTP_PRIORITY
 	int "FTP server thread priority"
 	default 13
 
+# ==================== Web 服务 (HTTP + WebSocket) ====================
+menuconfig IO_WEB
+	bool "Enable web UI (HTTP server + REST API + WebSocket)"
+	default y
+	select HTTP_SERVER
+	select HTTP_SERVER_WEBSOCKET
+	help
+	  Web management interface: embedded SPA page, REST API
+	  (/api/*), WebSocket realtime push (/ws) and HTTP firmware
+	  upgrade. Disable to shrink image/RAM (~100KB flash, ~30KB RAM).
+
+if IO_WEB
+
+config IO_WEB_PORT
+	int "Web server HTTP port"
+	default 80
+	help
+	  HTTP server listen port for the web UI and REST API.
+
+config IO_WEB_WS_HANDLERS
+	int "Number of concurrent WebSocket connections"
+	default 1
+	range 1 2
+	help
+	  Note the HTTP server websocket resource uses one shared parsing
+	  buffer, so concurrent connections must be limited to 1.
+
+config IO_WEB_WS_STACK_SIZE
+	int "WebSocket handler thread stack size"
+	default 2048
+	help
+	  websocket_send_msg/recv_msg call chain is deep (PSA SHA-1,
+	  TCP retry). 1152 causes stack canary fault -> warm reboot.
+
+# ---- Zephyr HTTP 服务器参数覆盖 (默认值偏大, 按本应用裁剪省 RAM) ----
+
+config HTTP_SERVER_VERSION_1
+	default y
+
+config HTTP_SERVER_VERSION_2
+	default n
+
+config HTTP_SERVER_MAX_CLIENTS
+	default 4
+
+config HTTP_SERVER_MAX_STREAMS
+	default 1
+
+config HTTP_SERVER_HUFFMAN_DECODE_BUFFER_SIZE
+	default 64
+
+config HTTP_SERVER_CLIENT_BUFFER_SIZE
+	default 512
+
+config HTTP_SERVER_CLIENT_INACTIVITY_TIMEOUT
+	default 120
+
+config HTTP_SERVER_STACK_SIZE
+	default 4096
+
+config HTTP_SERVER_MAX_URL_LENGTH
+	default 96
+
+config HTTP_SERVER_MAX_CONTENT_TYPE_LENGTH
+	default 48
+
+endif # IO_WEB
+
 # ==================== 带宽测试 (临时, 测完移除) ====================
 config IO_BW_TEST
 	bool "Enable temporary TCP echo bandwidth test endpoint"
