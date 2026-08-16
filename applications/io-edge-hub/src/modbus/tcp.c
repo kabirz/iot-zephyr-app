@@ -156,13 +156,15 @@ static int handle_client(int client)
 		}
 	}
 
-	/* unit_id 不匹配时 server 会丢帧不回复, 提前回异常避免等超时
-	 * (用 server 启动时固定的 srv_unit_id 判定, 与库内部一致) */
-	if (req.unit_id != 0 && req.unit_id != srv_unit_id) {
-		LOG_WRN("unit id mismatch: %u", req.unit_id);
-		resp = req;
-		modbus_raw_set_server_failure(&resp);
-		return reply_adu(client, &resp);
+	/* Modbus TCP 直连场景 unit_id 无寻址意义 (仅网关桥接串行总线时使用),
+	 * 规范允许主站填 0x00/0xFF 等任意值, 服务器应正常响应。
+	 * 因此不校验 unit_id, 而是改写为 server 的 unit_id 后提交, 绕过
+	 * Zephyr server 内部的严格匹配 (modbus_server.c 对不匹配帧丢帧不回复)。
+	 * 保留广播 (unit_id=0) 语义: 执行副作用但不回复。 */
+	uint8_t orig_unit_id = req.unit_id;
+
+	if (orig_unit_id != 0) {
+		req.unit_id = srv_unit_id;
 	}
 
 	k_sem_reset(&g_resp_sem);
@@ -174,7 +176,7 @@ static int handle_client(int client)
 	/* 广播 (unit_id=0): Modbus 协议规定不回复任何响应。库执行完副作用
 	 * (FC05/06/15/16 写 DO/参数) 后不会回调 raw_tx_cb, 故不等待响应,
 	 * 直接返回保持连接, 避免等满超时后误回 SERVER_DEVICE_FAILURE 致主站重发。 */
-	if (req.unit_id == 0) {
+	if (orig_unit_id == 0) {
 		return 0;
 	}
 
@@ -191,9 +193,11 @@ static int handle_client(int client)
 		LOG_ERR("MODBUS RAW wait timeout");
 		resp = req;
 		modbus_raw_set_server_failure(&resp);
+		resp.unit_id = orig_unit_id;  /* 回显客户端原始 unit_id */
 		return reply_adu(client, &resp);
 	}
 
+	g_resp.unit_id = orig_unit_id;  /* 回显客户端原始 unit_id, 不暴露内部改写 */
 	return reply_adu(client, &g_resp);
 }
 
