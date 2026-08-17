@@ -12,7 +12,7 @@
  *   - SPI1 + W25Q128 外部 Flash 分区 (slot1/scratch/storage/littlefs)
  *     ※ slot1/scratch 必须在板 DTS: bootloader 独立编译, 不含应用 overlay,
  *       分区放此才能被 MCUboot 找到 (参考 n2e-gw/nrf24_f103rct6 实践)。
- * 应用专属外设 (W5500/ADC/CAN/DI/DO/LED/RS485/RTC/IWDG) 见应用 overlay。
+ * 应用专属外设 (W5500/ADC/CAN/DI/DO/LED/RS485/IWDG) 见应用 overlay。
  */
 
 /dts-v1/;
@@ -35,6 +35,17 @@
 };
 
 &clk_lsi {
+	status = "okay";
+};
+
+&clk_lse {
+	status = "okay";
+};
+
+/* LSE 外部 32.768kHz 晶振 (PC14/PC15) */
+&rtc {
+	clocks = <&rcc STM32_CLOCK(APB1, 28)>,
+		 <&rcc STM32_SRC_LSE RTC_SEL(1)>;
 	status = "okay";
 };
 

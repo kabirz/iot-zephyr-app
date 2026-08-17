@@ -95,12 +95,6 @@
 	cs-gpios = <&gpiob 12 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 	status = "okay";
 
-	/* W5500 以太网 SPI2 用 DMA (F407: SPI2_RX=DMA1 Stream3 Ch0,
-	 * SPI2_TX=DMA1 Stream4 Ch0), 提升收发吞吐 */
-	dmas = <&dma1 4 0 STM32_DMA_PERIPH_TX 0>,
-	       <&dma1 3 0 STM32_DMA_PERIPH_RX 0>;
-	dma-names = "tx", "rx";
-
 	eth0: w5500@0 {
 		compatible = "wiznet,w5500";
 		reg = <0>;
@@ -110,11 +104,6 @@
 		local-mac-address = [00 08 DC 01 02 03];
 		status = "okay";
 	};
-};
-
-/* W5500 SPI2 DMA 需要 DMA1 控制器 */
-&dma1 {
-	status = "okay";
 };
 
 /* ============================================================
@@ -177,17 +166,6 @@
 		status = "okay";
 		de-gpios = <&gpioa 1 GPIO_ACTIVE_HIGH>;
 	};
-};
-
-/* ============================================================
- * RTC: HSE/16 驱动 (板载无 LSE 晶振)
- *   HSE 13MHz -> RTCPRE /16 = 812500Hz, async 125 x sync 6500 = 1Hz 精确
- *   LSI 无校准精度差 (实测快 9%), HSE 为外部晶振温度稳定
- * ============================================================ */
-&rtc {
-	clocks = <&rcc STM32_CLOCK(APB1, 28)>,
-		 <&rcc STM32_SRC_HSE RTC_SEL(3)>;
-	status = "okay";
 };
 
 /* ============================================================

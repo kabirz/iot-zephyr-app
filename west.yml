@@ -3,7 +3,7 @@
 
 manifest:
   defaults:
-    remote: zephyr_site
+    remote: kabirz
 
   remotes:
     - name: zephyr_site
@@ -13,7 +13,7 @@ manifest:
 
   projects:
     - name: zephyr
-      revision: v4.4.0
+      revision: v4.4.0-dtcm
       path: zephyr
       import:
         name-allowlist:
@@ -24,8 +24,7 @@ manifest:
           - mcuboot
           - tf-psa-crypto
 
-    - name: canopen-zephyr
-      remote: kabirz
+    - name: canopen
       revision: main
       path: modules/canopen-zephyr
       submodules:
