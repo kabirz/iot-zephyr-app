@@ -42,6 +42,7 @@
 #include "web_json.h"
 #include "ws_io.h"
 #include "watchdog.h"
+#include "dtcm_stack.h"
 
 #ifdef CONFIG_MCUBOOT_SIGNATURE_KEY_FILE
 #include <fw_keyhash.h>
@@ -88,7 +89,7 @@ static void respond_json_ok(struct http_response_ctx *rsp)
 
 static void respond_json_err(struct http_response_ctx *rsp, const char *err)
 {
-	static char err_buf[96];
+	static char DTCM_BSS err_buf[96];
 
 	snprintf(err_buf, sizeof(err_buf), "{\"ok\":false,\"err\":\"%s\"}", err);
 	rsp->status = HTTP_400_BAD_REQUEST;
@@ -101,7 +102,7 @@ static void respond_json_err(struct http_response_ctx *rsp, const char *err)
  * holder 保证单客户端串行访问) */
 #define BODY_MAX 128
 
-static char body_buf[BODY_MAX];
+static char DTCM_BSS body_buf[BODY_MAX];
 static size_t body_len;
 static bool body_done;	/* 上一事务已处理完, 新事务首块先清缓冲 */
 
@@ -205,7 +206,7 @@ static int info_handler(struct http_client_ctx *client,
 			const struct http_request_ctx *req,
 			struct http_response_ctx *rsp, void *user_data)
 {
-	static char json[640];
+	static char DTCM_BSS json[640];
 
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
 		return 0;
@@ -263,7 +264,7 @@ static int regs_handler(struct http_client_ctx *client,
 			const struct http_request_ctx *req,
 			struct http_response_ctx *rsp, void *user_data)
 {
-	static char json[256];
+	static char DTCM_BSS json[256];
 
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
 		return 0;
@@ -519,7 +520,7 @@ static int history_handler(struct http_client_ctx *client,
 			   const struct http_request_ctx *req,
 			   struct http_response_ctx *rsp, void *user_data)
 {
-	static char json[640];
+	static char DTCM_BSS json[640];
 	struct fs_dir_t dir;
 	struct fs_dirent ent;
 	int n = 0;
@@ -575,9 +576,9 @@ static int download_handler(struct http_client_ctx *client,
 			    const struct http_request_ctx *req,
 			    struct http_response_ctx *rsp, void *user_data)
 {
-	static char chunk[DL_CHUNK];
-	static struct http_header hdrs[2];
-	static char disp[64];
+	static char DTCM_BSS chunk[DL_CHUNK];
+	static struct http_header DTCM_BSS hdrs[2];
+	static char DTCM_BSS disp[64];
 
 	if (status == HTTP_SERVER_TRANSACTION_ABORTED ||
 	    status == HTTP_SERVER_TRANSACTION_COMPLETE) {

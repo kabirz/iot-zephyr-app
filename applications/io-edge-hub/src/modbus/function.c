@@ -20,6 +20,7 @@
 #include <zephyr/modbus/modbus.h>
 #include <zephyr/logging/log.h>
 #include <init.h>
+#include "dtcm_stack.h"
 
 LOG_MODULE_REGISTER(io_function, LOG_LEVEL_INF);
 
@@ -32,8 +33,9 @@ LOG_MODULE_REGISTER(io_function, LOG_LEVEL_INF);
  * 用一把互斥锁覆盖这两类临界区 (单字 update/read 本身原子, 不加锁)。 */
 static K_MUTEX_DEFINE(reg_lock);
 
-/* ==================== 寄存器数组 (唯一数据源) ==================== */
-static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS] = {
+/* ==================== 寄存器数组 (唯一数据源) ====================
+ * 放 DTCM: 纯 CPU 读写, 高频访问还能吃 D-Bus 带宽 (与 SRAM 的代码取指并行)。 */
+static uint16_t DTCM_BSS holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS] = {
 	[HOLDING_DI_ENABLE_IDX]	= 0xFFFF,	/* DI 全使能 */
 	[HOLDING_AI_ENABLE_IDX]	= 0x000F,	/* AI 全使能 */
 	[HOLDING_DI_SAMPLE_MS_IDX]	= 200,		/* DI 采样间隔 ms */
@@ -48,7 +50,7 @@ static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS] = {
 	[HOLDING_IP_OCTET4_IDX]	= 101,
 };
 
-static uint16_t input_reg[CONFIG_MODBUS_INPUT_REGISTER_NUMBERS] = {
+static uint16_t DTCM_BSS input_reg[CONFIG_MODBUS_INPUT_REGISTER_NUMBERS] = {
 	/* 主/次版本 <16, 三段塞进 16 位: MAJOR<<12 | MINOR<<8 | PATCH */
 	[INPUT_VER_IDX] = ((APP_VERSION_MAJOR << 12) | (APP_VERSION_MINOR << 8) |
 			   APP_PATCHLEVEL),

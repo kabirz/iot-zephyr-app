@@ -27,6 +27,7 @@
 #include <zephyr/posix/unistd.h>
 #include <zephyr/logging/log.h>
 #include <init.h>
+#include "dtcm_stack.h"
 
 LOG_MODULE_REGISTER(io_tcp, LOG_LEVEL_INF);
 
@@ -347,5 +348,5 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(mb_tcp, CONFIG_IO_MODBUS_TCP_STACK, mb_tcp_thread,
+K_THREAD_DTCM_DEFINE(mb_tcp, CONFIG_IO_MODBUS_TCP_STACK, mb_tcp_thread,
 		NULL, NULL, NULL, CONFIG_IO_MODBUS_TCP_PRIORITY, 0, 0);

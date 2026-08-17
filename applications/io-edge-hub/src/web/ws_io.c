@@ -30,6 +30,7 @@
 #include "web_json.h"
 #include "ws_io.h"
 #include "web_cmds.h"
+#include "dtcm_stack.h"
 #include <init.h>
 
 LOG_MODULE_REGISTER(io_ws, LOG_LEVEL_INF);
@@ -80,9 +81,9 @@ struct ws_slot {
 	char tx_buf[WS_TX_BUF_SIZE];
 };
 
-static K_THREAD_STACK_ARRAY_DEFINE(ws_stacks, CONFIG_IO_WEB_WS_HANDLERS,
-				   CONFIG_IO_WEB_WS_STACK_SIZE);
-static struct ws_slot ws_slots[CONFIG_IO_WEB_WS_HANDLERS];
+static DTCM_STACK_ARRAY_DEFINE(ws_stacks, CONFIG_IO_WEB_WS_HANDLERS,
+			       CONFIG_IO_WEB_WS_STACK_SIZE);
+static struct ws_slot DTCM_BSS ws_slots[CONFIG_IO_WEB_WS_HANDLERS];
 
 static int ws_get_free_slot(void)
 {
@@ -256,7 +257,7 @@ int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx,
 
 /* ==================== /ws 资源 (httpd.c 注册) ==================== */
 
-static uint8_t ws_data_buffer[WS_RX_BUF_SIZE];
+static uint8_t DTCM_BSS ws_data_buffer[WS_RX_BUF_SIZE];
 
 struct http_resource_detail_websocket ws_io_detail = {
 	.common = {

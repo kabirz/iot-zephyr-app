@@ -24,6 +24,7 @@
 #include <zephyr/logging/log.h>
 #include <init.h>
 #include "fs_littlefs.h"
+#include "dtcm_stack.h"
 
 LOG_MODULE_REGISTER(io_history, LOG_LEVEL_INF);
 
@@ -35,8 +36,8 @@ K_MSGQ_DEFINE(his_msgq, sizeof(struct his_data), 16, 4);
 
 /* 专用工作队列: 历史落盘与 Modbus server (系统工作队列) 隔离.
  * 4096: cleanup_old_files 的文件名数组 + LittleFS 目录遍历/写入调用链较深,
- * 2048 会栈溢出 (深度溢出 → double fault → LOCKUP 静默复位) */
-K_KERNEL_STACK_DEFINE(hist_q_stack, 4096);
+ * 2048 会栈溢出 (深度溢出 → double fault → LOCKUP 静默复位). */
+DTCM_STACK_DEFINE(hist_q_stack, 4096);
 static struct k_work_q hist_work_q;
 
 static volatile bool history_enabled;

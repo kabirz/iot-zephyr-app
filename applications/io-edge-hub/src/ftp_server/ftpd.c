@@ -28,6 +28,7 @@
 #include <zephyr/logging/log.h>
 #include "fs_littlefs.h"
 #include "ftp.h"
+#include "dtcm_stack.h"
 
 LOG_MODULE_REGISTER(io_ftp, LOG_LEVEL_INF);
 
@@ -55,7 +56,7 @@ struct ftp_session {
 	char buf[FTP_BUF_SIZE];
 };
 
-static struct ftp_session sessions[FTP_MAX_CLIENTS];
+static struct ftp_session DTCM_BSS sessions[FTP_MAX_CLIENTS];
 
 static void ftp_send(int s, const char *msg)
 {
@@ -971,5 +972,5 @@ static void ftp_thread(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(ftp, CONFIG_IO_FTP_STACK_SIZE, ftp_thread,
+K_THREAD_DTCM_DEFINE(ftp, CONFIG_IO_FTP_STACK_SIZE, ftp_thread,
 		NULL, NULL, NULL, CONFIG_IO_FTP_PRIORITY, 0, 0);
