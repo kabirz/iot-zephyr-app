@@ -52,7 +52,11 @@ UDP_FW_PORT_DEFAULT = 8600
 UDP_FW_TIMEOUT_DEFAULT = 2.0       # 单帧默认超时
 UDP_FW_START_TIMEOUT = 5.0         # FW_START 等擦 slot1
 UDP_FW_END_TIMEOUT = 10.0          # FW_END 等 flush + 读回 CRC
-UDP_CHUNK_SIZE = 511               # 固件 RX 缓冲 512B - 1B cmd
+UDP_CHUNK_SIZE = 511               # legacy FW_DATA (固件 RX 缓冲 512B - 1B cmd)
+UDP_CHUNK_SIZE_V2_MAX = 1400       # DATA_V2 上位机上限 (实际取设备协商值)
+UDP_FW_WINDOW = 8                  # DATA_V2 go-back-N 窗口帧数
+UDP_FW_V2_ACK_TIMEOUT = 1.0        # DATA_V2 窗口级 ACK 超时 (覆盖渐进擦除的扇区擦停顿 ~400ms)
+UDP_FW_V2_MAX_RETRIES = 8          # 单窗口停滞重试上限
 
 CAN_DEFAULT_CHANNEL = "can0"
 CAN_DEFAULT_BUSINESS_ID = 0x0111
@@ -260,14 +264,16 @@ class UdpUpgrade:
         except UpgradeError:
             pass  # 重启过程中常失联, 忽略
 
-    def fw_start(self, img_size: int, keyhash: bytes) -> int:
+    def fw_start(self, img_size: int, keyhash: bytes):
         """FW_START (0x01): 擦 slot1 + 初始化 flash_img.
-        返回 status: 0=失败 1=成功 2=keyhash 不匹配."""
+        返回 (status, v2_chunk): status 0=失败 1=成功 2=keyhash 不匹配;
+        v2_chunk 为设备 DATA_V2 单帧最大数据量 (老固件回复无此字段 → 0)."""
         payload = struct.pack("<I", img_size)
         if keyhash:
             payload += keyhash
         reply = self._send_recv(0x01, payload, UDP_FW_START_TIMEOUT, 1)
-        return reply[0]
+        v2_chunk = struct.unpack("<H", reply[1:3])[0] if len(reply) >= 3 else 0
+        return reply[0], v2_chunk
 
     def fw_data(self, chunk: bytes) -> int:
         """FW_DATA (0x02): 写入 ≤511B 数据. 返回当前 offset."""
@@ -275,6 +281,52 @@ class UdpUpgrade:
             raise ValueError(f"chunk 超过 {UDP_CHUNK_SIZE}B")
         reply = self._send_recv(0x02, chunk, UDP_FW_TIMEOUT_DEFAULT, 4)
         return struct.unpack("<I", reply[:4])[0]
+
+    def fw_data_v2_stream(self, data: bytes, chunk: int, progress_cb) -> None:
+        """FW_DATA_V2 (0x06) 窗口 go-back-N 流式发送.
+        连发 UDP_FW_WINDOW 帧不等回复, 按回复中的期望 offset 推进;
+        超时/丢帧从最后确认处重传, 设备端按 offset 去重."""
+        total = len(data)
+        off = 0
+        retries = 0
+        while off < total:
+            # 发送一个窗口: [off, win_end)
+            win_end = min(off + UDP_FW_WINDOW * chunk, total)
+            w = off
+            while w < win_end:
+                n = min(chunk, total - w)
+                req = bytes([0x06]) + struct.pack("<I", w) + data[w:w + n]
+                self._sock.sendto(req, (self.ip, self.port))
+                w += n
+
+            # 收窗口内 ACK, 追踪最大确认 offset (回复始终是设备期望 offset)
+            deadline = time.monotonic() + UDP_FW_V2_ACK_TIMEOUT
+            confirmed = off
+            while confirmed < win_end:
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    break
+                try:
+                    self._sock.settimeout(remain)
+                    r, _ = self._sock.recvfrom(64)
+                except socket.timeout:
+                    break
+                if len(r) >= 5 and r[0] == 0x06:
+                    roff = struct.unpack("<I", r[1:5])[0]
+                    if roff > confirmed:
+                        confirmed = min(roff, total)
+                        retries = 0   # 有推进即重置停滞计数
+            progress_cb(confirmed)
+
+            if confirmed >= win_end:
+                off = confirmed
+                continue
+            # 窗口未完全确认: 从确认处 go-back-N 重传 (重复帧设备自动丢弃)
+            retries += 1
+            if retries > UDP_FW_V2_MAX_RETRIES:
+                raise UpgradeError(f"FW_DATA_V2 窗口重试超限 (offset={confirmed}, "
+                                   f"设备停滞或链路中断)")
+            off = confirmed
 
     def fw_end(self, test: bool, crc16: int) -> int:
         """FW_END (0x03): flush + 校验 CRC. 返回 result (0=失败 1=成功)."""
@@ -295,26 +347,33 @@ def upgrade_udp(ip: str, port: int, image_path: str, test: bool,
     try:
         # 1. FW_START
         progress.message("[1/4] FW_START (擦写 slot1, 请稍候 ~5s)...")
-        status = up.fw_start(img.size, img.keyhash)
+        status, v2_chunk = up.fw_start(img.size, img.keyhash)
         if status == 2:
             raise UpgradeError("设备拒绝: keyhash 不匹配 (镜像签名密钥与设备 fw_keyhash.h 不一致)")
         if status != 1:
             raise UpgradeError(f"设备拒绝 FW_START (status={status}, 设备忙或存储不足)")
         progress.message("[1/4] FW_START OK")
 
-        # 2. FW_DATA 流式
-        progress.message(f"[2/4] FW_DATA 发送 {img.size:,}B 数据...")
-        sub = Progress(img.size, "      数据")
-        off = 0
-        while off < img.size:
-            n = min(UDP_CHUNK_SIZE, img.size - off)
-            chunk = img.data[off:off + n]
-            roff = up.fw_data(chunk)
-            # 部分固件实现可能聚合回复, roff 与本地 off 可能不完全同步, 仅校验非回退
-            if roff < off:
-                raise UpgradeError(f"FW_DATA offset 回退: 设备={roff}, 本地={off}")
-            off += n
-            sub.update(off)
+        # 2. FW_DATA 流式 (设备支持 V2 走窗口流水线, 否则回退停等)
+        if v2_chunk >= 512:
+            chunk = min(v2_chunk, UDP_CHUNK_SIZE_V2_MAX)
+            progress.message(f"[2/4] FW_DATA_V2 发送 {img.size:,}B "
+                             f"(窗口 {UDP_FW_WINDOW}×{chunk}B)...")
+            sub = Progress(img.size, "      数据")
+            up.fw_data_v2_stream(img.data, chunk, sub.update)
+        else:
+            progress.message(f"[2/4] FW_DATA 发送 {img.size:,}B (停等 511B)...")
+            sub = Progress(img.size, "      数据")
+            off = 0
+            while off < img.size:
+                n = min(UDP_CHUNK_SIZE, img.size - off)
+                chunk = img.data[off:off + n]
+                roff = up.fw_data(chunk)
+                # 部分固件实现可能聚合回复, roff 与本地 off 可能不完全同步, 仅校验非回退
+                if roff < off:
+                    raise UpgradeError(f"FW_DATA offset 回退: 设备={roff}, 本地={off}")
+                off += n
+                sub.update(off)
         progress.message("[2/4] FW_DATA 完成")
 
         # 3. FW_END

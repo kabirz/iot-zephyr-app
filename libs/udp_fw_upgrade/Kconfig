@@ -22,6 +22,20 @@ config UDP_FW_CONFIG_PORT
 	  UDP port the library binds to for receiving config commands
 	  and firmware upgrade requests.
 
+config UDP_FW_DATA_V2_CHUNK
+	int "FW_DATA_V2 max chunk size"
+	range 512 1400
+	default 1024
+	depends on UDP_FW_UPGRADE
+	help
+	  Maximum data payload of one FW_DATA_V2 (0x06) frame. The value
+	  is announced to the host in the extended FW_START reply so both
+	  sides agree on the frame size (old hosts ignore the extra
+	  bytes and keep using legacy 511B FW_DATA frames). Upper bound
+	  1400 keeps the frame inside one Ethernet MTU; boards with
+	  small CONFIG_NET_BUF_DATA_SIZE (many small fragments per
+	  frame) should keep this modest.
+
 config UDP_FW_RX_STACK_SIZE
 	int "UDP FW upgrade RX thread stack size"
 	default 1024

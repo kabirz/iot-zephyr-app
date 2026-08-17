@@ -52,6 +52,10 @@
 #define UDP_FW_START_TIMEOUT_MS    5000
 #define UDP_FW_END_TIMEOUT_MS      10000
 #define UDP_CHUNK_SIZE             511
+#define UDP_CHUNK_SIZE_V2_MAX      1400  /* DATA_V2 上位机上限 (实际取设备协商值) */
+#define UDP_FW_WINDOW              8     /* DATA_V2 go-back-N 窗口帧数 */
+#define UDP_FW_V2_ACK_TIMEOUT_MS   1000  /* 窗口级 ACK 超时 (覆盖渐进擦除的扇区擦停顿 ~400ms) */
+#define UDP_FW_V2_MAX_RETRIES      8     /* 单窗口停滞重试上限 */
 
 /* UDP 固件命令码 (与 libs/udp_fw_upgrade 对齐) */
 #define UDP_FW_CMD_START           0x01
@@ -59,6 +63,7 @@
 #define UDP_FW_CMD_END             0x03
 #define UDP_FW_CMD_GET_VERSION     0x04
 #define UDP_FW_CMD_REBOOT          0x05
+#define UDP_FW_CMD_DATA_V2         0x06
 
 #define CAN_ID_FW_CMD              0x101
 #define CAN_ID_FW_REPLY            0x102
@@ -331,6 +336,14 @@ static void free_image(struct fw_image *img)
 
 /* ==================== UDP 升级通道 ==================== */
 
+static long now_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
 struct udp_ctx {
 	int sock;
 	struct sockaddr_in dst;
@@ -402,6 +415,95 @@ static int udp_send_recv(struct udp_ctx *u, u8 cmd, const u8 *payload, int paylo
 	return n;
 }
 
+/* FW_DATA_V2 窗口 go-back-N 流式发送: 连发 UDP_FW_WINDOW 帧不等回复,
+ * 按回复中的期望 offset 推进; 超时/丢帧从最后确认处重传 (设备按 offset 去重). */
+static int udp_fw_data_v2_stream(struct udp_ctx *u, const u8 *data, size_t total,
+				 int chunk, struct progress *prog)
+{
+	u8 frame[1 + 4 + UDP_CHUNK_SIZE_V2_MAX];
+	u8 reply[64];
+	struct timeval tv;
+	size_t off = 0;
+	int retries = 0;
+
+	while (off < total) {
+		size_t win_end = off + (size_t)UDP_FW_WINDOW * chunk;
+		size_t w, confirmed;
+		long deadline;
+
+		if (win_end > total) {
+			win_end = total;
+		}
+
+		/* 发送一个窗口 [off, win_end) */
+		w = off;
+		while (w < win_end) {
+			size_t n = (win_end - w > (size_t)chunk) ? (size_t)chunk : win_end - w;
+
+			frame[0] = UDP_FW_CMD_DATA_V2;
+			wr_le32(frame + 1, (u32)w);
+			memcpy(frame + 5, data + w, n);
+			if (sendto(u->sock, frame, 5 + n, 0,
+				   (struct sockaddr *)&u->dst, sizeof(u->dst)) < 0) {
+				return -errno;
+			}
+			w += n;
+		}
+
+		/* 收窗口内 ACK, 追踪最大确认 offset (回复始终是设备期望 offset) */
+		deadline = now_ms() + UDP_FW_V2_ACK_TIMEOUT_MS;
+		confirmed = off;
+		while (confirmed < win_end) {
+			long remain = deadline - now_ms();
+			socklen_t fl = sizeof(u->dst);
+			u32 roff;
+			int n;
+
+			if (remain <= 0) {
+				break;
+			}
+			tv.tv_sec = remain / 1000;
+			tv.tv_usec = (remain % 1000) * 1000;
+			if (setsockopt(u->sock, SOL_SOCKET, SO_RCVTIMEO,
+				       &tv, sizeof(tv)) < 0) {
+				return -errno;
+			}
+			n = recvfrom(u->sock, reply, sizeof(reply), 0,
+				     (struct sockaddr *)&u->dst, &fl);
+			if (n < 0) {
+				if (errno == EAGAIN || errno == EWOULDBLOCK ||
+				    errno == EINTR) {
+					break;
+				}
+				return -errno;
+			}
+			if (n >= 5 && reply[0] == UDP_FW_CMD_DATA_V2) {
+				roff = (u32)reply[1] | ((u32)reply[2] << 8) |
+				       ((u32)reply[3] << 16) | ((u32)reply[4] << 24);
+				if (roff > confirmed) {
+					confirmed = roff > total ? total : roff;
+					retries = 0;  /* 有推进即重置停滞计数 */
+				}
+			}
+		}
+		progress_update(prog, confirmed);
+
+		if (confirmed >= win_end) {
+			off = confirmed;
+			continue;
+		}
+		/* 窗口未完全确认: 从确认处 go-back-N 重传 (重复帧设备自动丢弃) */
+		retries++;
+		if (retries > UDP_FW_V2_MAX_RETRIES) {
+			fprintf(stderr, "\nFW_DATA_V2 窗口重试超限 (offset=%zu, "
+				"设备停滞或链路中断)\n", confirmed);
+			return -ETIMEDOUT;
+		}
+		off = confirmed;
+	}
+	return 0;
+}
+
 static int udp_get_version(const char *ip, int port, char *out, int out_cap)
 {
 	struct udp_ctx u;
@@ -444,6 +546,7 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 	u8 reply[64];
 	int n;
 	u32 off;
+	u32 v2_chunk = 0;
 	u16 crc;
 
 	rc = parse_image(file, &img, !no_keyhash);
@@ -496,10 +599,27 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 		rc = EXIT_DEVICE_REJECT;
 		goto out_close;
 	}
+	/* 新固件回复带 [v2_chunk 2B]: 协商 DATA_V2 单帧大小 (老固件 → 0, 停等模式) */
+	v2_chunk = (n >= 4) ? ((u32)reply[2] | ((u32)reply[3] << 8)) : 0;
+	if (v2_chunk > UDP_CHUNK_SIZE_V2_MAX) {
+		v2_chunk = UDP_CHUNK_SIZE_V2_MAX;
+	}
 	progress_message(&prog, "[1/4] FW_START OK");
 
-	/* [2/4] FW_DATA */
-	printf("[2/4] FW_DATA 发送 %zuB 数据...\n", img.size);
+	/* [2/4] FW_DATA (设备支持 V2 走窗口流水线, 否则回退停等) */
+	if (v2_chunk >= 512) {
+		printf("[2/4] FW_DATA_V2 发送 %zuB (窗口 %d x %uB)...\n",
+		       img.size, UDP_FW_WINDOW, v2_chunk);
+		progress_init(&prog, img.size, "      数据");
+		rc = udp_fw_data_v2_stream(&u, img.data, img.size, (int)v2_chunk, &prog);
+		if (rc < 0) {
+			fprintf(stderr, "\nFW_DATA_V2 失败: %s\n", strerror(-rc));
+			rc = EXIT_COMM_ERR;
+			goto out_close;
+		}
+		goto data_done;
+	}
+	printf("[2/4] FW_DATA 发送 %zuB (停等 511B)...\n", img.size);
 	progress_init(&prog, img.size, "      数据");
 	off = 0;
 	while (off < img.size) {
@@ -526,6 +646,7 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 		off += chunk;
 		progress_update(&prog, off);
 	}
+data_done:
 	progress_message(&prog, "[2/4] FW_DATA 完成");
 
 	/* [3/4] FW_END */
@@ -788,14 +909,6 @@ static int can_get_version(const char *ifname, char *out, int out_cap)
 	memcpy(out, ver, ver_len);
 	out[ver_len] = 0;
 	return EXIT_OK;
-}
-
-static long now_ms(void)
-{
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
 }
 
 /* bootloader 升级模式 (-b):

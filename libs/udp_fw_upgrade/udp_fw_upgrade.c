@@ -40,10 +40,11 @@ LOG_MODULE_REGISTER(udp_fw_upgrade, LOG_LEVEL_INF);
  * 应用业务命令从 0x10 起, 不会与此区间冲突. */
 enum fw_cmd {
 	FW_CMD_START       = 1,   /* 开始升级 (擦 slot1 + init) */
-	FW_CMD_DATA        = 2,   /* 固件数据写入 */
+	FW_CMD_DATA        = 2,   /* 固件数据写入 (停等, 兼容旧上位机) */
 	FW_CMD_END         = 3,   /* 结束升级 (flush + CRC 校验 + boot_request_upgrade) */
 	FW_CMD_GET_VERSION = 4,   /* 查询固件版本 */
 	FW_CMD_REBOOT      = 5,   /* 重启设备 */
+	FW_CMD_DATA_V2     = 6,   /* 带偏移数据帧 [offset 4B][data]: 窗口流水线 + go-back-N */
 };
 
 #define SLOT1_PARTITION_ID PARTITION_ID(slot1_partition)
@@ -238,8 +239,14 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 			if (len == 4 + FW_KEYHASH_KEY_LEN &&
 			    memcmp(data + 4, fw_keyhash, FW_KEYHASH_KEY_LEN) != 0) {
 				LOG_WRN("FW_START rejected: keyhash mismatch");
-				status = FW_START_ERR_KEYHASH;
-				udp_fw_reply(cmd, &status, 1);
+				/* 回 [status][v2_chunk 2B]: 新上位机协商 V2, 老上位机只读 status */
+				uint8_t rep[3] = {
+					FW_START_ERR_KEYHASH,
+					CONFIG_UDP_FW_DATA_V2_CHUNK & 0xff,
+					(CONFIG_UDP_FW_DATA_V2_CHUNK >> 8) & 0xff,
+				};
+
+				udp_fw_reply(cmd, rep, 3);
 				return true;
 			}
 #endif
@@ -261,7 +268,17 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 				}
 			}
 		}
-		udp_fw_reply(cmd, &status, 1);
+		/* 回 [status][v2_chunk 2B]: 新上位机读 chunk 走 DATA_V2 窗口流水线,
+		 * 老上位机只读 status 字节, 回复变长不影响兼容 */
+		{
+			uint8_t rep[3] = {
+				status,
+				CONFIG_UDP_FW_DATA_V2_CHUNK & 0xff,
+				(CONFIG_UDP_FW_DATA_V2_CHUNK >> 8) & 0xff,
+			};
+
+			udp_fw_reply(cmd, rep, 3);
+		}
 		return true;
 	}
 
@@ -276,6 +293,32 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 				LOG_ERR("FW_DATA: flash write failed");
 				fw_started = false;
 			}
+		} else {
+			LOG_WRN("FW data before start");
+		}
+		udp_fw_reply(cmd, off, 4);
+		return true;
+	}
+
+	case FW_CMD_DATA_V2: {
+		/* [offset 4B][data ≤ CONFIG_UDP_FW_DATA_V2_CHUNK]: offset 与已收
+		 * 字节数一致才写入; 乱序/重复帧丢弃不写. 无论接受与否统一回当前
+		 * 期望 offset, 上位机据此 go-back-N 重传. */
+		uint8_t off[4] = { 0 };
+
+		if (fw_started && len > 4) {
+			uint32_t expect = sys_get_le32(data);
+
+			if (expect == fw_received) {
+				if (flash_img_buffered_write(&flash_img_ctx, data + 4,
+							     len - 4, false) == 0) {
+					fw_received += len - 4;
+				} else {
+					LOG_ERR("FW_DATA_V2: flash write failed");
+					fw_started = false;
+				}
+			}
+			sys_put_le32(fw_received, off);
 		} else {
 			LOG_WRN("FW data before start");
 		}
@@ -349,7 +392,8 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
  * ================================================================ */
 static void udp_fw_rx_thread(void *p1, void *p2, void *p3)
 {
-	static uint8_t buf[512];
+	/* 覆盖最大帧: [cmd 1B][offset 4B][data ≤ UDP_FW_DATA_V2_CHUNK] */
+	static uint8_t buf[1 + 4 + CONFIG_UDP_FW_DATA_V2_CHUNK];
 
 	while (1) {
 		struct sockaddr_in src_addr;

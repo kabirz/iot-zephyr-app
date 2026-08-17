@@ -230,6 +230,12 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 		if (fw_upg.received == 0) {
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"no data\"}");
+		} else if (fw_upg.received != fw_upg.total) {
+			/* 尺寸不符 = 传输缺帧, 残缺镜像不能交给 MCUboot */
+			LOG_ERR("fw size mismatch: recv=%u expect=%u",
+				fw_upg.received, fw_upg.total);
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+				     "{\"ok\":false,\"err\":\"size mismatch\"}");
 		} else if (!fw_upg_verify_crc()) {
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"crc mismatch\"}");

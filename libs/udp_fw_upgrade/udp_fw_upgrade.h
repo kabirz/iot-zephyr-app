@@ -9,13 +9,18 @@
  * 其他配置命令通过应用注册的回调分发, 应用无需调用任何 init。
  *
  * 固件升级协议 (配置端口, 帧 [cmd 1B][data...]):
- *   FW_START 0x1 [size 4B LE][keyhash 32B opt]  → 回 [0x1][status]
+ *   FW_START   0x1 [size 4B LE][keyhash 32B opt]  → 回 [0x1][status 1B][v2_chunk 2B LE]
  *                      [keyhash 32B] 可选: 仅在签名 key 已配置 (默认开启) 时校验
  *                      时, 且上位机携带该字段 (len==4+32) 才校验; 不一致 →
- *                      回 [0x1][2], 拒绝升级. 老上位机发 4B 帧 (不带 keyhash)
+ *                      回 status=2, 拒绝升级. 老上位机发 4B 帧 (不带 keyhash)
  *                      仍放行 (兼容旧协议).
  *                      status: 0=启动失败, 1=已开始, 2=keyhash 不一致
- *   FW_DATA  0x2 [data ≤511B]  → 回 [0x2][offset 4B LE]
+ *                      [v2_chunk 2B] 为本固件 DATA_V2 单帧最大数据量 (协商用);
+ *                      老固件回复只有 [status 1B], 上位机据此回退停等模式
+ *   FW_DATA    0x2 [data ≤511B]  → 回 [0x2][offset 4B LE] (停等, 兼容保留)
+ *   FW_DATA_V2 0x6 [offset 4B LE][data ≤v2_chunk]  → 回 [0x6][offset 4B LE]
+ *                      offset 与设备已收字节数一致才写入; 乱序/重复帧丢弃.
+ *                      回复始终为当前期望 offset, 上位机窗口连发 + go-back-N.
  *   FW_END   0x3 [test 1B][crc 2B LE] → 回 [0x3][1/0]
  */
 

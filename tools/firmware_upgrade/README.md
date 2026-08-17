@@ -10,6 +10,9 @@
 
 支持两条升级通道:
 - **UDP** (端口 8600, `FW_START/DATA/END`) — 跨子网, 常规运维 (io-edge-hub)
+  - 新固件支持 `FW_DATA_V2 (0x06)` 窗口流水线: 每帧带 4B offset,
+    上位机连发 8 帧 (chunk 由 `FW_START` 回复协商, 最大 1400B) 不等回复,
+    按回复中的期望 offset go-back-N 重传; 老固件自动回退停等 511B 模式
 - **CAN** (帧 `0x101-0x107`, Linux SocketCAN) — UDP 不可达时备用;
   `-b` bootloader 模式 (`0x106/0x107` 握手): 升级全程在 MCUboot 内完成,
   应用损坏 (掉底牌) 也能升级
