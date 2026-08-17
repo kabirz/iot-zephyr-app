@@ -24,6 +24,13 @@ manifest:
           - mcuboot
           - tf-psa-crypto
 
+    - name: canopen-zephyr
+      remote: kabirz
+      revision: main
+      path: modules/canopen-zephyr
+      submodules:
+        - path: CANopenNode
+
   self:
     path: apps
     west-commands: scripts/west-commands.yml
