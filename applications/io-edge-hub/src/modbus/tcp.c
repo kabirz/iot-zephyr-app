@@ -6,7 +6,8 @@
  *
  *   - 使用 Zephyr modbus RAW ADU iface "RAW_0", user_cb = io_modbus_cbs
  *     (function.c 定义的 holding/input/coil 回调)
- *   - TCP socket 端口 502, select() 多路复用, 最多 3 客户端, 30s 会话超时
+ *   - TCP socket 端口 502, select() 多路复用, 最多 3 客户端
+ *   - 会话超时 (IO_MODBUS_TCP_SESSION_TIMEOUT, 默认关闭)
  *   - 网络链路断开 (net_link_is_up=false) 时拒绝新连接
  *   - TCP Keepalive (SO_KEEPALIVE) 检测主站连接存活
  *
@@ -32,7 +33,8 @@ LOG_MODULE_REGISTER(io_tcp, LOG_LEVEL_INF);
 #define MODBUS_TCP_PORT		502
 #define MB_TCP_MAX_CLIENTS	3
 /* 会话超时须 > TCP Keepalive 总探测时间 (KEEPIDLE+KEEPCNT*KEEPINTVL = 30+3*5 = 45s),
- * 否则正常空闲主站会被应用层误踢而 keepalive 尚未生效。 */
+ * 否则正常空闲主站会被应用层误踢而 keepalive 尚未生效。
+ * 由 CONFIG_IO_MODBUS_TCP_SESSION_TIMEOUT 使能 (默认 n, 不踢空闲连接)。 */
 #define MB_TCP_SESSION_TIMEOUT	60000	/* ms */
 /* recv/send 超时压到亚秒级, 避免单慢/恶意客户端长时间阻塞 select 主循环
  * (本线程为单线程 select 多路复用, 阻塞会拖死全部 3 个客户端)。 */
@@ -329,7 +331,8 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 			}
 		}
 
-		/* 会话超时检查 */
+		/* 会话超时检查 (可选, 默认关闭: 空闲主站连接由 TCP Keepalive 负责检测) */
+#ifdef CONFIG_IO_MODBUS_TCP_SESSION_TIMEOUT
 		int64_t now = k_uptime_get();
 
 		for (int i = 0; i < MB_TCP_MAX_CLIENTS; i++) {
@@ -340,6 +343,7 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 				clients[i] = -1;
 			}
 		}
+#endif
 	}
 }
 

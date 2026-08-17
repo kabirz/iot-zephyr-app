@@ -33,6 +33,17 @@ config IO_MODBUS_TCP_PRIORITY
 	int "Modbus TCP server thread priority"
 	default 13
 
+config IO_MODBUS_TCP_SESSION_TIMEOUT
+	bool "Close idle Modbus TCP client sessions"
+	default n
+	help
+	  Enable application-level session timeout: client connections
+	  idle for more than 60s are closed by the server. Disabled by
+	  default; idle connections are then only handled by TCP
+	  keepalive (SO_KEEPALIVE, ~45s probe cycle). Enable only if a
+	  master misbehaves and holds connections without keepalive
+	  support.
+
 config IO_FTP_STACK_SIZE
 	int "FTP server thread stack size"
 	default 4096
