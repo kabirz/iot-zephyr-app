@@ -93,11 +93,13 @@ static void cleanup_old_files(void)
 
 static void make_hist_name(char *buf, size_t len)
 {
-	time_t t = time(NULL);
-	struct tm *lt = gmtime(&t);
+	/* UTC+8: picolibc 的 localtime_r 不做时区偏移, 手动加 8 小时 */
+	time_t t = time(NULL) + 8 * 3600;
+	struct tm tmp;
+	struct tm *lt = gmtime_r(&t, &tmp);
 	int mon, mday, hour, min, sec;
 
-	/* RTC 未同步时 gmtime 可能返回 NULL, 用全零填充文件名兜底 */
+	/* RTC 未同步时 localtime_r 可能返回 NULL, 用全零填充文件名兜底 */
 	if (lt == NULL) {
 		snprintf(buf, len, "data_0101_000000.raw");
 		return;

@@ -11,6 +11,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/logging/log.h>
+#include <time.h>
 #include <init.h>
 #ifdef CONFIG_UDP_FW_UPGRADE
 #include <udp_fw_upgrade.h>
@@ -36,6 +37,11 @@ static int modbus_settings_init(void)
 		LOG_ERR("settings_load failed: %d", rc);
 		return rc;
 	}
+
+	/* 用当前 RTC 时间覆盖 timestamp 寄存器, 保证 Modbus 主站读到正确值 */
+	time_t now = time(NULL);
+	update_holding_reg(HOLDING_TIMESTAMP_HI_IDX, (uint16_t)((uint32_t)now >> 16));
+	update_holding_reg(HOLDING_TIMESTAMP_LO_IDX, (uint16_t)(uint32_t)now);
 
 	/* settings 恢复后同步历史开关, 否则重启后 history_enabled 仍为 false,
 	 * 已使能的历史记录实际不会写入 (function.c 写回调/UDP 才会触发该函数) */

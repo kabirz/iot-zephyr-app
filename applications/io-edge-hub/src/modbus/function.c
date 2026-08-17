@@ -145,6 +145,10 @@ int io_write_holding(uint16_t addr, uint16_t reg)
 		return -ENOTSUP;
 	}
 
+	if (holding_reg[addr] == reg) {
+		return 0;
+	}
+
 	holding_reg[addr] = reg;
 
 	switch (addr) {
@@ -170,6 +174,7 @@ int io_write_holding(uint16_t addr, uint16_t reg)
 		settings_save();
 		break;
 	case HOLDING_REBOOT_IDX:
+		holding_reg[addr] = 0;
 		if (reg) {
 			history_sync();
 			sys_reboot(SYS_REBOOT_COLD);

@@ -37,10 +37,21 @@ if(CONFIG_IO_WEB)
     src/web/ws_io.c
   )
 
-  # Web UI: index.html → gzip → C 数组 (编译进固件, HTTP 静态资源)
+  # Web UI: index.html → minify → gzip → .inc (编译进固件, HTTP 静态资源)
   set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated)
+  set(min_html ${CMAKE_CURRENT_BINARY_DIR}/web_index_min.html)
+
+  add_custom_command(OUTPUT ${min_html}
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/minify_html.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/web/index.html > ${min_html}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/web/index.html
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/minify_html.py
+    COMMENT "Minifying index.html"
+  )
+  add_custom_target(web_index_min DEPENDS ${min_html})
+
   generate_inc_file_for_target(app
-    src/web/index.html
+    ${min_html}
     ${gen_dir}/web_index_html_gz.inc
     --gzip
   )

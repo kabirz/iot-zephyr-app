@@ -16,6 +16,9 @@
  *   {"cmd":"time","ts":unix}
  *   {"cmd":"cfg","ip":"a.b.c.d","rs485":n,"sid":n,"can_bps":n,"can_id":n}
  *   {"cmd":"save"}	参数持久化到 FCB
+ *   {"cmd":"fw_start","size":n}	开始固件升级 (擦 slot1)
+ *   <binary frame>		固件数据 (bin 帧)
+ *   {"cmd":"fw_end"}		结束升级 (CRC 校验 + boot_request_upgrade)
  */
 
 #include <stdio.h>
@@ -26,10 +29,16 @@
 #include <zephyr/net/http/service.h>
 #include <zephyr/net/websocket.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/dfu/mcuboot.h>
+#include <zephyr/dfu/flash_img.h>
+#include <zephyr/storage/flash_map.h>
+#include <zephyr/sys/crc.h>
+#include <fw_keyhash.h>
 
 #include "web_json.h"
 #include "ws_io.h"
 #include "web_cmds.h"
+#include "watchdog.h"
 #include <init.h>
 
 LOG_MODULE_REGISTER(io_ws, LOG_LEVEL_INF);
@@ -38,6 +47,21 @@ LOG_MODULE_REGISTER(io_ws, LOG_LEVEL_INF);
 #define WS_TX_BUF_SIZE	640	/* info 帧最大 (~500B) */
 #define WS_PUSH_MS	1000	/* io / regs 推送周期 */
 #define WS_INFO_MS	10000	/* info 推送周期 */
+
+/* ==================== 固件升级状态 ==================== */
+
+#define SLOT1_PARTITION_ID PARTITION_ID(slot1_partition)
+#define IMG_MAGIC		0x96F3B83D
+#define FW_CRC_CHUNK		64
+
+static struct {
+	bool active;
+	bool failed;
+	uint32_t total;
+	uint32_t received;
+	uint16_t crc;
+	struct flash_img_context fic;
+} fw_upg;
 
 /* ==================== IO 快照 JSON (推送帧 / GET /api/io 共用) ==================== */
 
@@ -94,6 +118,43 @@ static int ws_get_free_slot(void)
 	return -1;
 }
 
+static void fw_upg_reset(void)
+{
+	fw_upg.active = false;
+	fw_upg.failed = false;
+	fw_upg.total = 0;
+	fw_upg.received = 0;
+	fw_upg.crc = 0;
+}
+
+static bool fw_upg_verify_crc(void)
+{
+	const struct flash_area *fa;
+	uint8_t buf[FW_CRC_CHUNK];
+	uint16_t calc = 0;
+	size_t written = flash_img_bytes_written(&fw_upg.fic);
+
+	if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
+		return false;
+	}
+	for (size_t off = 0; off < written; off += FW_CRC_CHUNK) {
+		size_t len = MIN(written - off, FW_CRC_CHUNK);
+
+		if (flash_area_read(fa, off, buf, len) != 0) {
+			flash_area_close(fa);
+			return false;
+		}
+		calc = crc16_ccitt(calc, buf, len);
+	}
+	flash_area_close(fa);
+	if (calc != fw_upg.crc) {
+		LOG_ERR("fw CRC mismatch: calc=0x%04x recv=0x%04x",
+			calc, fw_upg.crc);
+		return false;
+	}
+	return true;
+}
+
 /* 处理一条客户端 JSON 命令, 回 ack (do 命令回改变后的完整快照) */
 static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 {
@@ -133,6 +194,55 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 	} else if (strncmp(cmd, "\"save\"", 6) == 0) {
 		holding_reg_save();
 		n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":true}");
+	} else if (strncmp(cmd, "\"fw_start\"", 10) == 0 && !fw_upg.active) {
+		int32_t fw_size = 0;
+
+		json_get_i32(cmd, len, "size", &fw_size);
+		if (fw_size <= 0) {
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+				     "{\"ok\":false,\"err\":\"bad size\"}");
+		} else {
+			const struct flash_area *fa;
+
+			if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
+				n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+					     "{\"ok\":false,\"err\":\"flash open\"}");
+			} else {
+				watchdog_feed();
+				int rc = flash_area_erase(fa, 0, fa->fa_size);
+
+				watchdog_feed();
+				flash_area_close(fa);
+				if (rc != 0 || flash_img_init(&fw_upg.fic) != 0) {
+					n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+						     "{\"ok\":false,\"err\":\"erase/init\"}");
+				} else {
+					fw_upg.active = true;
+					fw_upg.total = (uint32_t)fw_size;
+					LOG_INF("fw upgrade started (size=%d)", fw_size);
+					n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+						     "{\"ok\":true}");
+				}
+			}
+		}
+	} else if (strncmp(cmd, "\"fw_end\"", 8) == 0 && fw_upg.active) {
+		flash_img_buffered_write(&fw_upg.fic, NULL, 0, true);
+		if (fw_upg.received == 0) {
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+				     "{\"ok\":false,\"err\":\"no data\"}");
+		} else if (!fw_upg_verify_crc()) {
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+				     "{\"ok\":false,\"err\":\"crc mismatch\"}");
+		} else if (boot_request_upgrade(1) != 0) {
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+				     "{\"ok\":false,\"err\":\"boot_request\"}");
+		} else {
+			LOG_INF("fw upgrade verified, rebooting for swap");
+			fw_upg_reset();
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":true}");
+			set_reboot_status(true);
+		}
+		fw_upg_reset();
 	} else {
 		n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 			     "{\"ok\":false,\"err\":\"unknown cmd\"}");
@@ -173,11 +283,24 @@ static void ws_thread(void *p1, void *p2, void *p3)
 			break;
 		} else if (len > 0) {
 			s->rx_buf[len] = '\0';
-			if (type == WEBSOCKET_OPCODE_DATA_TEXT) {
+			if (type & WEBSOCKET_FLAG_TEXT) {
 				const char *cmd = json_find_value(s->rx_buf, len, "cmd");
 
 				if (cmd != NULL) {
 					ws_handle_cmd(s, cmd, len - (cmd - s->rx_buf));
+				}
+			} else if ((type & WEBSOCKET_FLAG_BINARY) &&
+				   fw_upg.active && !fw_upg.failed) {
+				if (flash_img_buffered_write(&fw_upg.fic,
+							     (const uint8_t *)s->rx_buf,
+							     len, false) == 0) {
+					fw_upg.crc = crc16_ccitt(fw_upg.crc,
+								  (const uint8_t *)s->rx_buf,
+								  len);
+					fw_upg.received += len;
+				} else {
+					LOG_ERR("fw: flash write failed @%u", fw_upg.received);
+					fw_upg.failed = true;
 				}
 			}
 		}

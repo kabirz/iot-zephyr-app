@@ -11,9 +11,7 @@
  *   - 控制: /api/do /api/reg /api/time /api/save /api/reboot
  *           /api/history/delete (写路径与 Modbus 回调共用 io_write_*,
  *           副作用与 FC05/FC06 完全一致)
- *   - 升级: /api/upgrade  POST 原始 MCUboot 签名镜像 → 流式写 slot1
- *           (首块校验 magic, 结束读回 CRC + keyhash TLV 双校验,
- *            boot_request_upgrade 后延迟重启, 流程对齐 UDP 升级库)
+ *   - 升级: 走 WebSocket (ws_io.c) fw_start/fw_data/fw_end 命令
  *   - 实时: /ws  WebSocket (ws_io.c), 1s 推送 DI/DO/AI 快照
  *
  * HTTP/1.1 only (HTTP/2 关闭省 RAM); 动态资源 holder 机制保证
@@ -26,7 +24,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/sys/crc.h>
 #include <zephyr/app_version.h>
 #include <zephyr/net/http/server.h>
 #include <zephyr/net/http/service.h>
@@ -42,10 +39,6 @@
 #include "web_json.h"
 #include "ws_io.h"
 #include "watchdog.h"
-
-#ifdef CONFIG_MCUBOOT_SIGNATURE_KEY_FILE
-#include <fw_keyhash.h>
-#endif
 
 LOG_MODULE_REGISTER(io_web, LOG_LEVEL_INF);
 
@@ -704,227 +697,6 @@ static int hist_del_handler(struct http_client_ctx *client,
 	return 0;
 }
 
-/* ==================== POST /api/upgrade (固件升级) ==================== */
-
-#define SLOT1_PARTITION_ID PARTITION_ID(slot1_partition)
-#define IMG_MAGIC		0x96F3B83D
-#define IMG_TLV_INFO_MAGIC	0x6907
-#define IMG_TLV_KEYHASH		0x01
-#define FW_CRC_CHUNK		64
-
-static struct {
-	bool active;	/* 已通过首块校验并初始化 slot1 写入 */
-	bool failed;
-	uint32_t total;	/* Content-Length (0=未知) */
-	uint32_t received;
-	uint16_t crc;	/* 接收数据在线 CRC (读回比对) */
-	struct flash_img_context fic;
-} upg;
-
-/* slot1 读回重算 CRC16-CCITT, 与接收侧在线 CRC 比对 (对齐 UDP 升级库) */
-static bool upg_verify_crc(void)
-{
-	const struct flash_area *fa;
-	uint8_t buf[FW_CRC_CHUNK];
-	uint16_t calc = 0;
-	size_t written = flash_img_bytes_written(&upg.fic);
-
-	if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
-		return false;
-	}
-	for (size_t off = 0; off < written; off += FW_CRC_CHUNK) {
-		size_t len = MIN(written - off, FW_CRC_CHUNK);
-
-		if (flash_area_read(fa, off, buf, len) != 0) {
-			flash_area_close(fa);
-			return false;
-		}
-		calc = crc16_ccitt(calc, buf, len);
-	}
-	flash_area_close(fa);
-	if (calc != upg.crc) {
-		LOG_ERR("web upgrade CRC mismatch: calc=0x%04x recv=0x%04x",
-			calc, upg.crc);
-		return false;
-	}
-	return true;
-}
-
-/* 从 slot1 镜像 TLV 区提取 KEYHASH (0x0001) 并与固件签名 key 比对,
- * 不一致直接拒绝 (MCUboot 之前先挡一道, 避免误刷错 key 镜像) */
-static bool upg_verify_keyhash(void)
-{
-#ifdef CONFIG_MCUBOOT_SIGNATURE_KEY_FILE
-	const struct flash_area *fa;
-	uint8_t hdr[32], tlv[4 + 32];
-	bool ok = false;
-
-	if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
-		return false;
-	}
-	do {
-		uint32_t magic;
-		uint16_t hdr_size;
-		uint32_t img_size, tlv_off, tlv_info;
-
-		if (flash_area_read(fa, 0, hdr, sizeof(hdr)) != 0) {
-			break;
-		}
-		magic = sys_get_le32(&hdr[0]);
-		hdr_size = sys_get_le16(&hdr[8]);
-		img_size = sys_get_le32(&hdr[12]);
-		if (magic != IMG_MAGIC || hdr_size < 32) {
-			break;
-		}
-		tlv_off = hdr_size + img_size;
-		if (flash_area_read(fa, tlv_off, tlv, 4) != 0) {
-			break;
-		}
-		tlv_info = sys_get_le16(&tlv[0]);
-		if (tlv_info != IMG_TLV_INFO_MAGIC) {
-			break;
-		}
-		/* 遍历 TLV 找 KEYHASH */
-		uint32_t off = tlv_off + 4;
-
-		while (flash_area_read(fa, off, tlv, 4) == 0) {
-			uint16_t type = sys_get_le16(&tlv[0]);
-			uint16_t len = sys_get_le16(&tlv[2]);
-
-			if (type == 0 || len == 0) {
-				break;
-			}
-			if (type == IMG_TLV_KEYHASH && len == FW_KEYHASH_KEY_LEN) {
-				if (flash_area_read(fa, off + 4, tlv, len) == 0) {
-					ok = memcmp(tlv, fw_keyhash, len) == 0;
-				}
-				break;
-			}
-			off += 4 + len;
-		}
-	} while (false);
-	flash_area_close(fa);
-
-	if (!ok) {
-		LOG_WRN("web upgrade rejected: keyhash mismatch/absent");
-	}
-	return ok;
-#else
-	return true;
-#endif
-}
-
-static void upg_reset(void)
-{
-	upg.active = false;
-	upg.failed = false;
-	upg.total = 0;
-	upg.received = 0;
-	upg.crc = 0;
-}
-
-static int upgrade_handler(struct http_client_ctx *client,
-			   enum http_transaction_status status,
-			   const struct http_request_ctx *req,
-			   struct http_response_ctx *rsp, void *user_data)
-{
-	if (status == HTTP_SERVER_TRANSACTION_ABORTED ||
-	    status == HTTP_SERVER_TRANSACTION_COMPLETE) {
-		if (status == HTTP_SERVER_TRANSACTION_ABORTED && upg.active) {
-			LOG_WRN("web upgrade aborted at %u/%u bytes",
-				upg.received, upg.total);
-		}
-		upg_reset();
-		return 0;
-	}
-
-	/* 首块: 校验 magic, 擦 slot1, 初始化流式写。
-	 * 注意: HTTP/1 路径 client->content_len 恒为 0 (只有 HTTP/2 赋值),
-	 * 不能用它做前置大小校验; 完整性由结束时的读回 CRC + keyhash
-	 * TLV 结构校验保证 (截断的镜像 TLV magic 校验必然失败) */
-	if (!upg.active && !upg.failed && upg.received == 0) {
-		uint32_t magic = req->data_len >= 4 ?
-				 sys_get_le32(req->data) : 0;
-		const struct flash_area *fa;
-		size_t slot1_size = 0;
-
-		if (flash_area_open(SLOT1_PARTITION_ID, &fa) == 0) {
-			slot1_size = fa->fa_size;
-			flash_area_close(fa);
-		}
-		if (magic != IMG_MAGIC) {
-			LOG_WRN("web upgrade rejected: bad image magic 0x%08x", magic);
-			upg.failed = true;
-		} else if (slot1_size == 0) {
-			LOG_WRN("web upgrade: slot1 not found");
-			upg.failed = true;
-		} else if (flash_area_open(SLOT1_PARTITION_ID, &fa) == 0) {
-			watchdog_feed();
-			int rc = flash_area_erase(fa, 0, fa->fa_size);
-
-			watchdog_feed();
-			flash_area_close(fa);
-			if (rc == 0 && flash_img_init(&upg.fic) == 0) {
-				upg.active = true;
-				upg.total = (uint32_t)slot1_size;
-				LOG_INF("web upgrade started (slot1 %zuB)",
-					slot1_size);
-			} else {
-				LOG_ERR("web upgrade: erase/init failed (%d)", rc);
-				upg.failed = true;
-			}
-		} else {
-			upg.failed = true;
-		}
-	}
-
-	if (upg.active && !upg.failed && req->data_len > 0) {
-		if (flash_img_buffered_write(&upg.fic, req->data,
-					     req->data_len, false) == 0) {
-			upg.crc = crc16_ccitt(upg.crc, req->data, req->data_len);
-			upg.received += req->data_len;
-			if (upg.received > upg.total) {
-				LOG_ERR("web upgrade: exceeds slot1 (%uB)",
-					upg.received);
-				upg.failed = true;
-			}
-		} else {
-			LOG_ERR("web upgrade: flash write failed @%u", upg.received);
-			upg.failed = true;
-		}
-	}
-
-	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
-		return 0;
-	}
-
-	/* 结束: flush + 双校验 + 请求升级 + 延迟重启 */
-	if (upg.active && !upg.failed) {
-		flash_img_buffered_write(&upg.fic, NULL, 0, true);
-		if (upg.received == 0) {
-			LOG_ERR("web upgrade: no data received");
-			upg.failed = true;
-		} else if (!upg_verify_crc()) {
-			upg.failed = true;
-		} else if (!upg_verify_keyhash()) {
-			upg.failed = true;
-		} else if (boot_request_upgrade(1) != 0) {
-			LOG_ERR("web upgrade: boot_request_upgrade failed");
-			upg.failed = true;
-		} else {
-			LOG_INF("web upgrade verified, rebooting for swap");
-			upg_reset();
-			respond_json_ok(rsp);
-			set_reboot_status(true);
-			return 0;
-		}
-	}
-
-	upg_reset();
-	respond_json_err(rsp, upg.failed ? "verify failed" : "upload failed");
-	return 0;
-}
-
 /* ==================== 资源注册 ==================== */
 
 #define DYNAMIC_DETAIL(_name, _methods)				\
@@ -949,7 +721,6 @@ DYNAMIC_DETAIL(reboot, BIT(HTTP_POST));
 DYNAMIC_DETAIL(history, BIT(HTTP_GET));
 DYNAMIC_DETAIL(download, BIT(HTTP_GET));
 DYNAMIC_DETAIL(hist_del, BIT(HTTP_POST));
-DYNAMIC_DETAIL(upgrade, BIT(HTTP_POST));
 
 static uint16_t io_web_port = CONFIG_IO_WEB_PORT;
 
@@ -968,7 +739,6 @@ HTTP_RESOURCE_DEFINE(res_reboot, io_web, "/api/reboot", &reboot);
 HTTP_RESOURCE_DEFINE(res_history, io_web, "/api/history", &history);
 HTTP_RESOURCE_DEFINE(res_download, io_web, "/api/history/download", &download);
 HTTP_RESOURCE_DEFINE(res_hist_del, io_web, "/api/history/delete", &hist_del);
-HTTP_RESOURCE_DEFINE(res_upgrade, io_web, "/api/upgrade", &upgrade);
 HTTP_RESOURCE_DEFINE(res_ws, io_web, "/ws", &ws_io_detail);
 
 /* ==================== 启动 ==================== */
