@@ -18,7 +18,8 @@
  *   POST /api/login {"user","pass"} → {"ok":true,"token":"<32hex>"}
  *   HTTP 带 Authorization: Bearer <token>; WS/下载走 ?token= 查询串
  *   凭据存 FCB (web/user web/pass), 默认 admin/admin, WS cfg 命令可改
- *   token 仅存 RAM, 最多 4 并发会话, 重启失效
+ *   token 集持久化 FCB (web/tk, 最多 4 并发会话), 设备重启不掉线;
+ *   修改凭据或出厂恢复后全部作废
  *
  * HTTP/1.1 only (HTTP/2 关闭省 RAM); 动态资源 holder 机制保证
  * 同一资源同时只有一个客户端 (升级/下载状态机依赖此约束)。

@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Web 认证实现 — 见 web_auth.h
+ *
+ * token 集持久化到 FCB ("web/tk"): 设备重启后浏览器免重登;
+ * 修改凭据时全部 token 作废; 出厂恢复回到初始状态.
  */
 
 #include <string.h>
@@ -24,18 +27,46 @@ HTTP_SERVER_REGISTER_HEADER_CAPTURE(auth_hdr, "Authorization");
 #define WEB_USER_MAX	16	/* 含 '\0' */
 #define WEB_PASS_MAX	16
 
-/* token 槽位: 环形覆盖, 最多 4 个并发会话 (多标签页/多主机) */
+/* token 槽位: 环形覆盖, 最多 4 个并发会话 (多标签页/多主机).
+ * 槽位整体持久化到 FCB (web/tk), 设备重启不掉线; 修改凭据时全部作废. */
 #define TOKEN_SLOTS	4
+#define TOKEN_BIN_LEN	(WEB_AUTH_TOKEN_HEX_LEN / 2)
 
 static char web_user[WEB_USER_MAX] = "admin";
 static char web_pass[WEB_PASS_MAX] = "admin";
 
 struct token_slot {
-	uint8_t bin[WEB_AUTH_TOKEN_HEX_LEN / 2];
+	uint8_t bin[TOKEN_BIN_LEN];
 	bool used;
 };
 static struct token_slot tokens[TOKEN_SLOTS];
 static int token_next;
+
+/* FCB 持久化布局 (定长, 整体读写) */
+struct tk_store {
+	uint8_t next;
+	uint8_t used[TOKEN_SLOTS];
+	uint8_t bin[TOKEN_SLOTS][TOKEN_BIN_LEN];
+};
+
+static void tokens_save(void)
+{
+	struct tk_store st;
+
+	st.next = (uint8_t)token_next;
+	for (int i = 0; i < TOKEN_SLOTS; i++) {
+		st.used[i] = tokens[i].used;
+		memcpy(st.bin[i], tokens[i].bin, TOKEN_BIN_LEN);
+	}
+	(void)settings_save_one("web/tk", &st, sizeof(st));
+}
+
+static void tokens_invalidate(void)
+{
+	memset(tokens, 0, sizeof(tokens));
+	token_next = 0;
+	tokens_save();
+}
 
 /* ==================== token 签发 / 校验 ==================== */
 
@@ -66,6 +97,7 @@ int web_auth_login(const char *user, const char *pass, char *token_out)
 	}
 	t->used = true;
 	token_next = (token_next + 1) % TOKEN_SLOTS;
+	tokens_save();
 
 	bin_to_hex(t->bin, sizeof(t->bin), token_out);
 	return 0;
@@ -159,6 +191,19 @@ static int web_handle_set(const char *name, size_t len,
 		}
 		return 0;
 	}
+	if (settings_name_steq(name, "tk", &next) && !next) {
+		/* 持久化 token 集: 开机恢复, 设备重启不掉线 */
+		struct tk_store st;
+
+		if (read_cb(cb_arg, &st, sizeof(st)) == sizeof(st)) {
+			for (int i = 0; i < TOKEN_SLOTS; i++) {
+				tokens[i].used = st.used[i] != 0;
+				memcpy(tokens[i].bin, st.bin[i], TOKEN_BIN_LEN);
+			}
+			token_next = st.next < TOKEN_SLOTS ? st.next : 0;
+		}
+		return 0;
+	}
 	return -ENOENT;
 }
 
@@ -197,6 +242,8 @@ int web_auth_set_cred(const char *user, const char *pass)
 
 	strcpy(web_user, user);
 	strcpy(web_pass, pass);
+	/* 凭据变更: 旧凭据签发的所有会话一并作废 (含本会话, 需重新登录) */
+	tokens_invalidate();
 	LOG_INF("web credentials updated");
 	return 0;
 }

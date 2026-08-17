@@ -8,7 +8,9 @@
  *   ?token=<token> 查询串 (浏览器 <a>/WebSocket 无法自定义请求头).
  *
  * 凭据存 FCB settings ("web/user" "web/pass"), 默认 admin/admin,
- * 可经 WS "cfg" 命令 (需已认证) 修改. token 仅存 RAM, 重启即失效.
+ * 可经 WS "cfg" 命令 (需已认证) 修改; 修改时全部 token 作废.
+ * token 集持久化到 FCB ("web/tk"), 设备重启后浏览器免重登;
+ * 出厂恢复 (擦 settings 分区) 后凭据与 token 全部回到初始状态.
  */
 
 #ifndef __WEB_AUTH_H__

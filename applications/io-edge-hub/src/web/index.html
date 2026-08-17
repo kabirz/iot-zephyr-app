@@ -708,8 +708,8 @@ function applyCred(){
 async function rebootDev(){
 	if(!await showConfirm("确认重启设备？"))return;
 	try{await api("/api/reboot",{method:"POST",body:"{}"})}catch(e){}
-	toast("设备正在重启，约 15 秒后自动刷新","info");
-	setTimeout(()=>location.reload(),15000);
+	toast("设备正在重启，约 5 秒后自动刷新","info");
+	setTimeout(()=>location.reload(),5000);
 }
 
 /* ---------------- 历史记录 ---------------- */
