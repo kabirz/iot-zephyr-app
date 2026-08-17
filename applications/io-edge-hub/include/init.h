@@ -121,6 +121,8 @@ bool set_timestamp(time_t t);
 /* ==================== 历史记录 (history.c) ==================== */
 /* 开关历史写入 (holding_reg[0x05] 回调调用) */
 void history_enable_write(bool en);
+/* 刷出缓存: FTP/HTTP 读文件前调用, 确保数据落盘 */
+void history_sync(void);
 /* 异步提交一条历史记录 (DI/AI 采样线程调用) */
 void send_history_data(const struct his_data *data);
 

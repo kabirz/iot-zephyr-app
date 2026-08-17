@@ -12,6 +12,12 @@
 #include <zephyr/settings/settings.h>
 #include <zephyr/logging/log.h>
 #include <init.h>
+#ifdef CONFIG_UDP_FW_UPGRADE
+#include <udp_fw_upgrade.h>
+#endif
+#ifdef CONFIG_CAN_FW_UPGRADE
+#include <can_fw_upgrade.h>
+#endif
 
 LOG_MODULE_REGISTER(io_init, LOG_LEVEL_INF);
 
@@ -34,6 +40,14 @@ static int modbus_settings_init(void)
 	/* settings 恢复后同步历史开关, 否则重启后 history_enabled 仍为 false,
 	 * 已使能的历史记录实际不会写入 (function.c 写回调/UDP 才会触发该函数) */
 	history_enable_write(get_holding_reg(HOLDING_HISTORY_ENABLE_IDX) != 0);
+
+	/* 固件升级重启前刷出文件系统缓存 (history 等异步写入) */
+#ifdef CONFIG_UDP_FW_UPGRADE
+	udp_fw_add_pre_reboot_hook(history_sync);
+#endif
+#ifdef CONFIG_CAN_FW_UPGRADE
+	can_fw_add_pre_reboot_hook(history_sync);
+#endif
 
 	LOG_INF("settings loaded (slave_id=%u ip=%u.%u.%u.%u)",
 		get_holding_reg(HOLDING_SLAVE_ID_IDX),

@@ -234,6 +234,7 @@ int main(void)
 
 		if (get_reboot_status()) {
 			LOG_INF("delayed reboot");
+			history_sync();
 #ifdef CONFIG_LOG
 			while (log_process()) {
 			}

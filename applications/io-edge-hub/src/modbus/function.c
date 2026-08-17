@@ -171,6 +171,7 @@ int io_write_holding(uint16_t addr, uint16_t reg)
 		break;
 	case HOLDING_REBOOT_IDX:
 		if (reg) {
+			history_sync();
 			sys_reboot(SYS_REBOOT_COLD);
 		}
 		break;

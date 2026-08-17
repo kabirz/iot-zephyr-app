@@ -78,6 +78,19 @@ struct can_fw_handler {
 };
 static struct can_fw_handler handlers[CONFIG_CAN_FW_UPGRADE_MAX_HANDLERS];
 
+/* 重启前钩子列表 (RX 线程按序遍历) */
+#define CAN_FW_MAX_PRE_REBOOT_HOOKS 4
+static can_fw_pre_reboot_hook_t pre_reboot_hooks[CAN_FW_MAX_PRE_REBOOT_HOOKS];
+static int pre_reboot_hook_cnt;
+
+void can_fw_add_pre_reboot_hook(can_fw_pre_reboot_hook_t hook)
+{
+	if (hook == NULL || pre_reboot_hook_cnt >= CAN_FW_MAX_PRE_REBOOT_HOOKS) {
+		return;
+	}
+	pre_reboot_hooks[pre_reboot_hook_cnt++] = hook;
+}
+
 static struct flash_img_context flash_img_ctx;
 static bool fw_img_initialized;
 static size_t fw_written;
@@ -269,7 +282,10 @@ static void handle_platform_rx(struct can_frame *frame)
 		while (log_process()) {
 		}
 #endif
-		k_msleep(50);
+		for (int i = 0; i < pre_reboot_hook_cnt; i++) {
+			pre_reboot_hooks[i]();
+		}
+		k_msleep(100);
 		sys_reboot(SYS_REBOOT_WARM);
 #endif
 #ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT

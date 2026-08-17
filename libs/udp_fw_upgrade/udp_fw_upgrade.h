@@ -84,4 +84,15 @@ void udp_fw_reply(uint8_t cmd, const uint8_t *data, uint8_t len);
  */
 void udp_fw_allow_broadcast_cmd(uint8_t cmd);
 
+/**
+ * @brief 注册重启前钩子
+ *
+ * 库在执行 sys_reboot() 前按注册顺序依次调用所有已注册的钩子.
+ * 适用于刷新文件系统缓存 (history) 等需要在重启前完成的操作.
+ *
+ * @param hook 回调函数 (NULL 无操作)
+ */
+typedef void (*udp_fw_pre_reboot_hook_t)(void);
+void udp_fw_add_pre_reboot_hook(udp_fw_pre_reboot_hook_t hook);
+
 #endif /* __UDP_FW_UPGRADE_H__ */

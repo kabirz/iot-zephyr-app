@@ -66,6 +66,19 @@ struct udp_fw_handler {
 };
 static struct udp_fw_handler handlers[CONFIG_UDP_FW_UPGRADE_MAX_HANDLERS];
 
+/* 重启前钩子列表 (RX 线程按序遍历) */
+#define UDP_FW_MAX_PRE_REBOOT_HOOKS 4
+static udp_fw_pre_reboot_hook_t pre_reboot_hooks[UDP_FW_MAX_PRE_REBOOT_HOOKS];
+static int pre_reboot_hook_cnt;
+
+void udp_fw_add_pre_reboot_hook(udp_fw_pre_reboot_hook_t hook)
+{
+	if (hook == NULL || pre_reboot_hook_cnt >= UDP_FW_MAX_PRE_REBOOT_HOOKS) {
+		return;
+	}
+	pre_reboot_hooks[pre_reboot_hook_cnt++] = hook;
+}
+
 /* 配置端口 socket + 发送方地址 (回复路由用) */
 static int config_sock = -1;
 static struct sockaddr_in config_remote_addr;
@@ -319,6 +332,9 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 		while (log_process()) {
 		}
 #endif
+		for (int i = 0; i < pre_reboot_hook_cnt; i++) {
+			pre_reboot_hooks[i]();
+		}
 		k_msleep(100);
 		sys_reboot(SYS_REBOOT_COLD);
 		return true;

@@ -8,6 +8,7 @@
  *   - 专用工作队列 (hist_work_q) handler 批量取 msgq, 写当前文件
  *     (保持打开, fs_sync 批量 flush), 多条记录一次同步, 减少 Flash 写次数
  *   - 单文件 1MB 上限: 超过则关闭 + 新建 data_MMDD_HHMMSS.raw
+ *   - 首次写入复用最近文件: 开机找最新的 data_*.raw, < 1MB 则追加
  *   - 保留至多 10 个文件, 超限删最旧 (按名序 = 时间序)
  *   - DI 10B / AI 16B, 与 RT-Thread / PC 解析工具兼容
  *
@@ -43,6 +44,7 @@ static volatile bool history_enabled;
 static struct fs_file_t his_fp;
 static bool his_fp_open;
 static uint32_t his_cur_size;
+static bool hist_first_open = true;
 
 /* 删除最旧历史文件, 维持 <= HIST_MAX_FILES 个 */
 static void cleanup_old_files(void)
@@ -125,6 +127,44 @@ static int ensure_file(void)
 	char name[24];
 	char path[48];
 
+	/* 首次写入时尝试复用最近的文件 (< 1MB 直接追加) */
+	if (hist_first_open) {
+		hist_first_open = false;
+
+		struct fs_dir_t dir;
+		struct fs_dirent ent;
+		char latest[24] = {0};
+
+		fs_dir_t_init(&dir);
+		if (fs_opendir(&dir, HIST_DIR) == 0) {
+			while (fs_readdir(&dir, &ent) == 0 && ent.name[0] != '\0') {
+				if (ent.type == FS_DIR_ENTRY_FILE &&
+				    strncmp(ent.name, "data_", 5) == 0 &&
+				    strcmp(ent.name, latest) > 0) {
+					strncpy(latest, ent.name, sizeof(latest) - 1);
+				}
+			}
+			fs_closedir(&dir);
+		}
+		if (latest[0] != '\0') {
+			snprintf(path, sizeof(path), "%s/%s", HIST_DIR, latest);
+			fs_file_t_init(&his_fp);
+			if (fs_open(&his_fp, path, FS_O_CREATE | FS_O_WRITE | FS_O_APPEND) == 0) {
+				fs_seek(&his_fp, 0, FS_SEEK_END);
+				off_t tell = fs_tell(&his_fp);
+
+				if (tell >= 0 && (uint32_t)tell < HIST_FILE_MAX) {
+					his_cur_size = (uint32_t)tell;
+					his_fp_open = true;
+					LOG_INF("history file: %s (%u bytes, appending)", path, his_cur_size);
+					return 0;
+				}
+				fs_close(&his_fp);
+			}
+		}
+		/* 没找到可用文件, 走下面新建逻辑 */
+	}
+
 	make_hist_name(name, sizeof(name));
 	/* fs_open 需要绝对路径 (以 '/' 开头的挂载点前缀 + 文件名) */
 	snprintf(path, sizeof(path), "%s/%s", HIST_DIR, name);
@@ -180,7 +220,8 @@ static void his_flush(bool close_after)
 	}
 
 	if (wrote && his_fp_open) {
-		fs_sync(&his_fp);
+		/* 不主动 fs_sync: 让 LittleFS 缓存自然合并, 减少 flash 擦写次数.
+		 * 数据最多在缓存 (64B) 中停留, 文件关闭/轮转时自动刷盘. */
 	}
 	if (close_after && his_fp_open) {
 		fs_close(&his_fp);
@@ -215,6 +256,13 @@ void history_enable_write(bool en)
 	}
 }
 
+void history_sync(void)
+{
+	if (his_fp_open) {
+		fs_sync(&his_fp);
+	}
+}
+
 void send_history_data(const struct his_data *data)
 {
 	static atomic_t drop_cnt;
@@ -226,7 +274,7 @@ void send_history_data(const struct his_data *data)
 		/* 提交到专用工作队列 (k_work 合并: 执行前重复提交只跑一次)。
 		 * handler 批量取 msgq + 保持文件打开 + fs_sync, 减少 Flash 写 */
 		k_work_submit_to_queue(&hist_work_q, &his_work);
-	} else if ((atomic_inc(&drop_cnt) % 100) == 0) {
+	} else if ((atomic_inc(&drop_cnt) % 4) == 0) {
 		/* 后台落盘慢时 msgq 会满, 节流告警 (已丢弃 %u 条) */
 		LOG_WRN("history msgq full, %u samples dropped", (uint32_t)drop_cnt);
 	}

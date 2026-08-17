@@ -528,6 +528,8 @@ static int history_handler(struct http_client_ctx *client,
 		return 0;
 	}
 
+	history_sync();
+
 	n += snprintf(json + n, sizeof(json) - n, "{\"files\":[");
 
 	fs_dir_t_init(&dir);
@@ -593,6 +595,7 @@ static int download_handler(struct http_client_ctx *client,
 		char name[32];
 
 		dl.started = true;
+		history_sync();
 		if (req->data == NULL ||
 		    !url_query_get((const char *)req->data, "name", name, sizeof(name)) ||
 		    !hist_name_valid(name)) {

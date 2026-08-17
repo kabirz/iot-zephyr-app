@@ -26,6 +26,7 @@
 #include <zephyr/posix/sys/select.h>
 #include <zephyr/posix/unistd.h>
 #include <zephyr/logging/log.h>
+#include <init.h>
 #include "fs_littlefs.h"
 #include "ftp.h"
 
@@ -55,7 +56,7 @@ struct ftp_session {
 	char buf[FTP_BUF_SIZE];
 };
 
-static struct ftp_session sessions[FTP_MAX_CLIENTS];
+static __dtcm_bss_section struct ftp_session sessions[FTP_MAX_CLIENTS];
 
 static void ftp_send(int s, const char *msg)
 {
@@ -733,8 +734,10 @@ static void handle_command(struct ftp_session *s, char *line)
 	} else if (!strcmp(cmd, "EPRT")) {
 		cmd_eprt(s, arg);
 	} else if (!strcmp(cmd, "LIST") || !strcmp(cmd, "NLST")) {
+		history_sync();
 		cmd_list(s, arg, !strcmp(cmd, "LIST"));
 	} else if (!strcmp(cmd, "RETR")) {
+		history_sync();
 		cmd_retr(s, arg);
 	} else if (!strcmp(cmd, "STOR") || !strcmp(cmd, "APPE")) {
 		cmd_stor(s, arg, !strcmp(cmd, "APPE"));

@@ -71,4 +71,15 @@ const struct device *can_fw_set_app_handler(can_fw_app_rx_cb_t cb, void *user_da
  */
 int can_fw_remove_handler(can_fw_app_rx_cb_t cb);
 
+/**
+ * @brief 注册重启前钩子
+ *
+ * 库在执行 sys_reboot() 前按注册顺序依次调用所有已注册的钩子.
+ * 适用于刷新文件系统缓存 (history) 等需要在重启前完成的操作.
+ *
+ * @param hook 回调函数 (NULL 无操作)
+ */
+typedef void (*can_fw_pre_reboot_hook_t)(void);
+void can_fw_add_pre_reboot_hook(can_fw_pre_reboot_hook_t hook);
+
 #endif /* __CAN_FW_UPGRADE_H__ */
