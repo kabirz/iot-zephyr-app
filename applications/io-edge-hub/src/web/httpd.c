@@ -14,6 +14,12 @@
  *   - 升级: 走 WebSocket (ws_io.c) fw_start/fw_data/fw_end 命令
  *   - 实时: /ws  WebSocket (ws_io.c), 1s 推送 DI/DO/AI 快照
  *
+ * 认证 (web_auth.c): 除 / 与 /api/login 外所有端点需 token —
+ *   POST /api/login {"user","pass"} → {"ok":true,"token":"<32hex>"}
+ *   HTTP 带 Authorization: Bearer <token>; WS/下载走 ?token= 查询串
+ *   凭据存 FCB (web/user web/pass), 默认 admin/admin, WS cfg 命令可改
+ *   token 仅存 RAM, 最多 4 并发会话, 重启失效
+ *
  * HTTP/1.1 only (HTTP/2 关闭省 RAM); 动态资源 holder 机制保证
  * 同一资源同时只有一个客户端 (升级/下载状态机依赖此约束)。
  */
@@ -37,6 +43,7 @@
 #include <init.h>
 
 #include "web_json.h"
+#include "web_auth.h"
 #include "ws_io.h"
 #include "watchdog.h"
 
@@ -88,6 +95,26 @@ static void respond_json_err(struct http_response_ctx *rsp, const char *err)
 	rsp->body = err_buf;
 	rsp->body_len = strlen(err_buf);
 	rsp->final_chunk = true;
+}
+
+static void respond_unauthorized(struct http_response_ctx *rsp)
+{
+	rsp->status = HTTP_401_UNAUTHORIZED;
+	rsp->body = "{\"ok\":false,\"err\":\"unauthorized\"}";
+	rsp->body_len = strlen("{\"ok\":false,\"err\":\"unauthorized\"}");
+	rsp->final_chunk = true;
+}
+
+/* 认证守卫: 所有动态 API (除 /api/login) 首行调用; 未认证直接回 401 */
+static bool auth_guard(const struct http_client_ctx *client,
+		       const struct http_request_ctx *req,
+		       struct http_response_ctx *rsp)
+{
+	if (web_auth_check_request(client, req) == 0) {
+		return true;
+	}
+	respond_unauthorized(rsp);
+	return false;
 }
 
 /* POST body 累积器 (JSON 控制命令都很小, 单缓冲足够;
@@ -200,6 +227,9 @@ static int info_handler(struct http_client_ctx *client,
 {
 	static char json[640];
 
+	if (!auth_guard(client, req, rsp)) {
+		return 0;
+	}
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
 		return 0;
 	}
@@ -219,6 +249,9 @@ static int io_handler(struct http_client_ctx *client,
 {
 	static char json[256];
 
+	if (!auth_guard(client, req, rsp)) {
+		return 0;
+	}
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
 		return 0;
 	}
@@ -258,6 +291,9 @@ static int regs_handler(struct http_client_ctx *client,
 {
 	static char json[256];
 
+	if (!auth_guard(client, req, rsp)) {
+		return 0;
+	}
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
 		return 0;
 	}
@@ -365,6 +401,25 @@ int web_cmd_exec_cfg(const char *json, size_t len, const char **err)
 		io_write_holding(HOLDING_CAN_ID_IDX, (uint16_t)v);
 	}
 
+	/* Web 登录凭据: user/pass 必须成对提供 (WS 通道本身已认证) */
+	{
+		char user[16], pass[16];
+
+		if (json_get_str(json, len, "user", user, sizeof(user)) &&
+		    json_get_str(json, len, "pass", pass, sizeof(pass))) {
+			int rc = web_auth_set_cred(user, pass);
+
+			if (rc == -EINVAL) {
+				*err = "invalid user/pass (1-15 chars)";
+				return -EINVAL;
+			}
+			if (rc != 0) {
+				*err = "settings write failed";
+				return rc;
+			}
+		}
+	}
+
 	return 0;
 }
 
@@ -378,6 +433,9 @@ static int api_do_handler(struct http_client_ctx *client,
 	if (status == HTTP_SERVER_TRANSACTION_ABORTED ||
 	    status == HTTP_SERVER_TRANSACTION_COMPLETE) {
 		body_reset();
+		return 0;
+	}
+	if (!auth_guard(client, req, rsp)) {
 		return 0;
 	}
 	if (!body_append(req->data, req->data_len)) {
@@ -410,6 +468,9 @@ static int reg_handler(struct http_client_ctx *client,
 		body_reset();
 		return 0;
 	}
+	if (!auth_guard(client, req, rsp)) {
+		return 0;
+	}
 	if (!body_append(req->data, req->data_len)) {
 		respond_json_err(rsp, "body too large");
 		return 0;
@@ -440,6 +501,9 @@ static int api_time_handler(struct http_client_ctx *client,
 		body_reset();
 		return 0;
 	}
+	if (!auth_guard(client, req, rsp)) {
+		return 0;
+	}
 	if (!body_append(req->data, req->data_len)) {
 		respond_json_err(rsp, "body too large");
 		return 0;
@@ -463,6 +527,9 @@ static int save_handler(struct http_client_ctx *client,
 			struct http_response_ctx *rsp, void *user_data)
 {
 	if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+		if (!auth_guard(client, req, rsp)) {
+			return 0;
+		}
 		body_finalize();
 		holding_reg_save();
 		respond_json_ok(rsp);
@@ -476,10 +543,55 @@ static int reboot_handler(struct http_client_ctx *client,
 			  struct http_response_ctx *rsp, void *user_data)
 {
 	if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+		if (!auth_guard(client, req, rsp)) {
+			return 0;
+		}
 		set_reboot_status(true);
 		LOG_INF("web reboot requested");
 		respond_json_ok(rsp);
 	}
+	return 0;
+}
+
+/* ==================== POST /api/login (认证入口, 唯一无守卫端点) ==================== */
+
+static int login_handler(struct http_client_ctx *client,
+			 enum http_transaction_status status,
+			 const struct http_request_ctx *req,
+			 struct http_response_ctx *rsp, void *user_data)
+{
+	static char ok_buf[sizeof("{\"ok\":true,\"token\":\"" "") +
+			    WEB_AUTH_TOKEN_HEX_LEN + 2];
+
+	if (status == HTTP_SERVER_TRANSACTION_ABORTED ||
+	    status == HTTP_SERVER_TRANSACTION_COMPLETE) {
+		body_reset();
+		return 0;
+	}
+	if (!body_append(req->data, req->data_len)) {
+		respond_json_err(rsp, "body too large");
+		return 0;
+	}
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+
+	char user[16], pass[16], token[WEB_AUTH_TOKEN_HEX_LEN + 1];
+
+	if (!json_get_str(body_buf, body_len, "user", user, sizeof(user)) ||
+	    !json_get_str(body_buf, body_len, "pass", pass, sizeof(pass))) {
+		respond_json_err(rsp, "user/pass required");
+	} else if (web_auth_login(user, pass, token) == 0) {
+		snprintf(ok_buf, sizeof(ok_buf),
+			 "{\"ok\":true,\"token\":\"%s\"}", token);
+		rsp->status = HTTP_200_OK;
+		rsp->body = ok_buf;
+		rsp->body_len = strlen(ok_buf);
+		rsp->final_chunk = true;
+	} else {
+		respond_unauthorized(rsp);
+	}
+	body_finalize();
 	return 0;
 }
 
@@ -518,6 +630,9 @@ static int history_handler(struct http_client_ctx *client,
 	int n = 0;
 
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+	if (!auth_guard(client, req, rsp)) {
 		return 0;
 	}
 
@@ -581,6 +696,10 @@ static int download_handler(struct http_client_ctx *client,
 			dl.open = false;
 		}
 		dl.started = false;
+		return 0;
+	}
+
+	if (!auth_guard(client, req, rsp)) {
 		return 0;
 	}
 
@@ -672,6 +791,9 @@ static int hist_del_handler(struct http_client_ctx *client,
 		body_reset();
 		return 0;
 	}
+	if (!auth_guard(client, req, rsp)) {
+		return 0;
+	}
 	if (!body_append(req->data, req->data_len)) {
 		respond_json_err(rsp, "body too large");
 		return 0;
@@ -721,6 +843,7 @@ DYNAMIC_DETAIL(reboot, BIT(HTTP_POST));
 DYNAMIC_DETAIL(history, BIT(HTTP_GET));
 DYNAMIC_DETAIL(download, BIT(HTTP_GET));
 DYNAMIC_DETAIL(hist_del, BIT(HTTP_POST));
+DYNAMIC_DETAIL(login, BIT(HTTP_POST));
 
 static uint16_t io_web_port = CONFIG_IO_WEB_PORT;
 
@@ -739,6 +862,7 @@ HTTP_RESOURCE_DEFINE(res_reboot, io_web, "/api/reboot", &reboot);
 HTTP_RESOURCE_DEFINE(res_history, io_web, "/api/history", &history);
 HTTP_RESOURCE_DEFINE(res_download, io_web, "/api/history/download", &download);
 HTTP_RESOURCE_DEFINE(res_hist_del, io_web, "/api/history/delete", &hist_del);
+HTTP_RESOURCE_DEFINE(res_login, io_web, "/api/login", &login);
 HTTP_RESOURCE_DEFINE(res_ws, io_web, "/ws", &ws_io_detail);
 
 /* ==================== 启动 ==================== */

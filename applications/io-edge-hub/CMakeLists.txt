@@ -35,6 +35,7 @@ if(CONFIG_IO_WEB)
   target_sources(app PRIVATE
     src/web/httpd.c
     src/web/ws_io.c
+    src/web/web_auth.c
   )
 
   # Web UI: index.html → minify → gzip → .inc (编译进固件, HTTP 静态资源)

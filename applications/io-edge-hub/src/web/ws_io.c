@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 #include <zephyr/kernel.h>
 #include <zephyr/net/http/server.h>
 #include <zephyr/net/http/service.h>
@@ -38,6 +39,7 @@
 #include "web_json.h"
 #include "ws_io.h"
 #include "web_cmds.h"
+#include "web_auth.h"
 #include "watchdog.h"
 #include <init.h>
 
@@ -356,11 +358,17 @@ static void ws_thread(void *p1, void *p2, void *p3)
 int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx,
 		void *user_data)
 {
-	ARG_UNUSED(request_ctx);
+	int slot;
+
 	ARG_UNUSED(user_data);
 
-	int slot = ws_get_free_slot();
+	/* 认证: 查询串 token= (浏览器 WebSocket 无法带 Authorization 头) */
+	if (web_auth_check_request(NULL, request_ctx) != 0) {
+		LOG_WRN("ws rejected: unauthorized");
+		return -EACCES;
+	}
 
+	slot = ws_get_free_slot();
 	if (slot < 0) {
 		LOG_WRN("ws busy, rejecting (single connection limit)");
 		return -ENOENT;

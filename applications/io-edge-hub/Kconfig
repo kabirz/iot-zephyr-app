@@ -58,6 +58,7 @@ menuconfig IO_WEB
 	default y
 	select HTTP_SERVER
 	select HTTP_SERVER_WEBSOCKET
+	select HTTP_SERVER_CAPTURE_HEADERS
 	help
 	  Web management interface: embedded SPA page, REST API
 	  (/api/*), WebSocket realtime push (/ws) and HTTP firmware

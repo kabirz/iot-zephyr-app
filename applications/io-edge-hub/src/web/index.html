@@ -167,6 +167,13 @@ footer{text-align:center;color:#b6bcc9;font-size:12px;padding-top:8px}
 /* ---------- 确认弹窗 ---------- */
 .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9998;display:flex;
 	align-items:center;justify-content:center;animation:fadeIn .15s ease}
+/* 登录页: 不透明全屏遮盖, 未认证时不露出应用界面 */
+#loginMask{background:var(--bg);z-index:10000}
+#loginMask .modal-box{width:320px;text-align:center}
+#loginMask h3{font-size:16px;margin-bottom:4px}
+#loginMask .modal-box p{margin:0 0 16px;font-size:13px;color:var(--sub)}
+#loginMask .cfg-form{grid-template-columns:70px 1fr;text-align:left}
+#loginMask .cfg-form input{max-width:100%}
 .modal-box{background:var(--card);border-radius:var(--rad);padding:24px 28px;min-width:300px;max-width:400px;
 	box-shadow:0 8px 30px rgba(0,0,0,.18);animation:modalIn .2s ease}
 .modal-box p{margin:0 0 20px;font-size:14px;line-height:1.6}
@@ -355,7 +362,19 @@ footer{text-align:center;color:#b6bcc9;font-size:12px;padding-top:8px}
 			<button class="btn danger" onclick="rebootDev()">重启设备</button>
 		</div>
 	</div>
-</section>
+	<div class="card">
+		<h2>Web 登录凭据</h2>
+		<div class="tip">修改网页登录用户名/密码（默认 admin/admin），写入后立即生效并持久化；已登录会话不受影响</div>
+		<div class="cfg-form">
+			<label>用户名</label><input id="cfUser" maxlength="15" placeholder="1-15 字符">
+			<label>密码</label><input id="cfPass" type="password" maxlength="15" placeholder="1-15 字符">
+		</div>
+		<div class="row" style="margin-top:12px">
+			<button class="btn pri" id="cfCredBtn" onclick="applyCred()">修改凭据</button>
+			<button class="btn" onclick="logout()">退出登录</button>
+		</div>
+	</div>
+	</section>
 
 <!-- ================= 固件升级 ================= -->
 <section id="t-fw" class="hide">
@@ -416,9 +435,54 @@ function showConfirm(msg){
 function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
 let WS=null,wsTimer=null,pollTimer=null,upFileBuf=null;
 
+/* ---------------- 认证 ---------------- */
+let TOKEN=localStorage.getItem("tk")||"";
+function tkQ(){return TOKEN?"?token="+TOKEN:""}
+function saveTk(t){TOKEN=t;t?localStorage.setItem("tk",t):localStorage.removeItem("tk")}
+function showLogin(msg){
+	if($("#loginMask"))return;
+	const mask=document.createElement("div");
+	mask.id="loginMask";mask.className="modal-mask";
+	mask.innerHTML='<div class="modal-box"><h3>IO 采集卡</h3>'+
+		'<p>'+(msg||"请登录")+'</p>'+
+		'<div class="cfg-form" style="margin-bottom:16px">'+
+		'<label>用户名</label><input id="lgUser" autocomplete="username" value="admin">'+
+		'<label>密码</label><input id="lgPass" type="password" autocomplete="current-password"></div>'+
+		'<div class="modal-btns" style="justify-content:center"><button class="btn pri" id="lgOk">登录</button></div></div>';
+	document.body.appendChild(mask);
+	const go=async()=>{
+		const btn=mask.querySelector("#lgOk");btn.disabled=true;btn.textContent="登录中…";
+		try{
+			const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},
+				body:JSON.stringify({user:mask.querySelector("#lgUser").value,
+					pass:mask.querySelector("#lgPass").value})});
+			const d=await r.json();
+			if(d.ok){saveTk(d.token);mask.remove();boot()}
+			else{btn.disabled=false;btn.textContent="登录";
+				mask.querySelector("p").textContent="用户名或密码错误";}
+		}catch(e){btn.disabled=false;btn.textContent="登录";
+			mask.querySelector("p").textContent="网络错误，请重试";}
+	};
+	mask.querySelector("#lgOk").onclick=go;
+	mask.querySelector("#lgPass").onkeydown=e=>{if(e.key==="Enter")go()};
+	mask.querySelector("#lgUser").onkeydown=e=>{if(e.key==="Enter")
+		mask.querySelector("#lgPass").focus()};
+	mask.querySelector("#lgPass").focus();
+}
+function logout(){saveTk("");location.reload()}
+
 /* ---------------- 通用 ---------------- */
 async function api(path,opt){
-	const r=await fetch(path,Object.assign({headers:{"Content-Type":"application/json"}},opt));
+	/* token 同时走 URL 查询串与 Bearer 头: 查询串不依赖头捕获, 更可靠 */
+	const sep=path.includes("?")?"&":"?";
+	const url=TOKEN?path+sep+"token="+TOKEN:path;
+	const r=await fetch(url,Object.assign({headers:{
+		"Content-Type":"application/json",
+		"Authorization":"Bearer "+TOKEN}},opt));
+	if(r.status===401){
+		/* token 失效: 清掉并整页重置回登录页 (清干净所有定时器/WS/缓存) */
+		saveTk("");location.reload();throw new Error(401);
+	}
 	const t=await r.text();
 	try{return JSON.parse(t)}catch(e){throw new Error(t||r.status)}
 }
@@ -630,6 +694,17 @@ function wsSave(){
 		toast(r.ok===true?"参数已保存到 Flash":"保存失败: "+(r.err||""),r.ok?"ok":"err")};
 	if(!wsSendCmd({cmd:"save"},done)){btn.disabled=false;saveCfg()}
 }
+function applyCred(){
+	const u=$("#cfUser").value.trim(),p=$("#cfPass").value;
+	if(!u||!p){toast("用户名和密码都要填写","err");return}
+	if(u.length>15||p.length>15){toast("长度 1-15 字符","err");return}
+	const btn=$("#cfCredBtn");btn.disabled=true;
+	if(!wsSendCmd({cmd:"cfg",user:u,pass:p},r=>{
+		btn.disabled=false;
+		if(r.ok===true){toast("凭据已更新，下次登录生效","ok");$("#cfUser").value="";$("#cfPass").value=""}
+		else toast("修改失败: "+(r.err||""),"err");
+	})){btn.disabled=false;toast("WebSocket 未连接","err")}
+}
 async function rebootDev(){
 	if(!await showConfirm("确认重启设备？"))return;
 	try{await api("/api/reboot",{method:"POST",body:"{}"})}catch(e){}
@@ -648,7 +723,8 @@ async function loadHist(){
 		fmtBytes(d.files.reduce((s,f)=>s+f.size,0));
 	t.innerHTML="<tr><th>文件名</th><th>大小</th><th style='width:160px'>操作</th></tr>"+
 		d.files.map(f=>"<tr><td class='mono'>"+esc(f.name)+"</td><td>"+fmtBytes(f.size)+"</td><td>"+
-		"<a class='btn sm' href='/api/history/download?name="+encodeURIComponent(f.name)+"' download>下载</a> "+
+		"<a class='btn sm' href='/api/history/download?name="+encodeURIComponent(f.name)+
+		(TOKEN?"&token="+TOKEN:"")+"' download>下载</a> "+
 		"<button class='btn sm danger' onclick=\"delHist('"+esc(f.name)+"')\">删除</button></td></tr>").join("");
 }
 async function delHist(n){
@@ -721,7 +797,7 @@ let wsRetries=0;
 const wsCache={info:null,regs:null};
 function wsConnect(){
 	try{WS&&WS.close()}catch(e){}
-	WS=new WebSocket("ws://"+location.host+"/ws");
+	WS=new WebSocket("ws://"+location.host+"/ws"+tkQ());
 	WS.onopen=()=>{
 		wsRetries=0;
 		$("#wsDot").classList.add("ok");$("#wsTxt").textContent="实时";
@@ -753,6 +829,8 @@ function wsConnect(){
 	WS.onclose=WS.onerror=()=>{
 		$("#wsDot").classList.remove("ok");$("#wsTxt").textContent="离线";
 		WS=null;
+		/* 未认证 / 登录页显示中: 不轮询不重连 (认证后 boot() 重启一切) */
+		if(!TOKEN||$("#loginMask"))return;
 		/* WS 断开时才降级 HTTP 轮询 (WS 正常时页面零轮询请求) */
 		if(!pollTimer){pollTimer=setInterval(wsFallbackPoll,2000);wsFallbackPoll();}
 		/* 指数退避: 1s→2s→4s→…→10s, 避免疯狂重连 */
@@ -776,9 +854,14 @@ setInterval(()=>{const d=new Date();
 /* ---------------- 启动 ---------------- */
 buildIo();
 initCfgListeners();
-loadInfoHTTP();	/* 首屏 (WS 连上后由 info 帧接管) */
-loadIo();	/* 首屏 (WS 连上后由 io 帧接管) */
-wsConnect();
+/* 认证后才加载应用数据; 无 token 时只显示全屏登录页 (空白遮盖) */
+function boot(){
+	loadInfoHTTP();	/* 首屏 (WS 连上后由 info 帧接管) */
+	loadIo();	/* 首屏 (WS 连上后由 io 帧接管) */
+	if(curTab==="hi")loadHist();
+	wsConnect();
+}
+if(TOKEN){boot()}else{showLogin("请登录")}
 </script>
 </body>
 </html>
