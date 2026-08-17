@@ -25,7 +25,10 @@ target_sources(app PRIVATE
 )
 
 # 临时带宽测试端点: 仅在 CONFIG_IO_BW_TEST 启用时编译
-zephyr_sources_ifdef(CONFIG_IO_BW_TEST src/bwtest.c)
+target_sources_ifdef(CONFIG_IO_BW_TEST app PRIVATE src/bwtest.c)
+
+# 应用调试 shell (io 命令), 依赖 SHELL (release 下自动裁剪)
+target_sources_ifdef(CONFIG_IO_SHELL app PRIVATE src/shell.c)
 
 # Web 服务 (HTTP 页面 + REST + WebSocket), CONFIG_IO_WEB 总开关
 if(CONFIG_IO_WEB)

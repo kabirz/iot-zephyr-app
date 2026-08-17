@@ -109,6 +109,18 @@ config HTTP_SERVER_MAX_CONTENT_TYPE_LENGTH
 
 endif # IO_WEB
 
+# ==================== 应用调试 shell ====================
+config IO_SHELL
+	bool "Enable 'io' application shell commands"
+	depends on SHELL
+	default y
+	help
+	  Debug shell (root command 'io') for DI/DO/AI inspection,
+	  DO control, RS485/CAN/IP configuration, register access and
+	  basic device info. Writes share the same code path as
+	  Modbus/Web/UDP. Automatically disabled in release builds
+	  (CONFIG_SHELL=n).
+
 # ==================== 带宽测试 (临时, 测完移除) ====================
 config IO_BW_TEST
 	bool "Enable temporary TCP echo bandwidth test endpoint"
