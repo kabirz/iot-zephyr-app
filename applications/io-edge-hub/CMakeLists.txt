@@ -9,13 +9,13 @@ target_include_directories(app PRIVATE include src/sys src/storage src/ftp_serve
 
 target_sources(app PRIVATE
   src/main.c
+  src/io/dio.c
+  src/io/adc.c
+  src/history/history.c
+  src/settings/init.c
   src/modbus/function.c
-  src/modbus/init.c
   src/modbus/tcp.c
   src/modbus/rtu.c
-  src/modbus/adc.c
-  src/modbus/dio.c
-  src/modbus/history.c
   src/udp.c
   src/can.c
   src/storage/fs_littlefs.c

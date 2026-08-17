@@ -9,8 +9,8 @@
 > **代码仓库**: `~/code/app/apps/` (iot-zephyr-app west manifest + Zephyr module)
 > **共享库**: `~/code/app/apps/libs/` (`udp_fw_upgrade`, `can_fw_upgrade`)
 > **已有 Zephyr 实现**: 已验证实现 (Modbus/FTP/RTC/栈保护/状态 LED 等已验证)
-> **文档版本**: v3.4 (v3.3 基础上: UDP 协议精简, 看门狗策略调整, 寄存器重命名, IP 校验统一)
-> **日期**: 2026-08-11
+> **文档版本**: v3.5 (v3.4 基础上: Web 管理界面, 应用调试 shell, RTC 时钟 HSE/16, 目录重组)
+> **日期**: 2026-08-17
 
 ---
 
@@ -71,6 +71,8 @@
 | F19 | **网络断连安全** | link down 时清零 DO + 拒绝新连接 | 无 | **复用已验证实现 `tcp.c` NET_EVENT_IF_DOWN** |
 | F20 | **栈溢出保护** | 栈溢出时自动重启 | 无 | **复用已验证实现 `main.c` k_sys_fatal_error_handler** |
 | F21 | **状态 LED** | MCUboot LED + 主循环闪烁指示 | 无 | **复用已验证实现 `main.c` status LED** |
+| F22 | **Web 管理界面** | 内嵌 SPA 页面 + REST API + WebSocket 实时推送 + HTTP 固件升级 | 无 | **`src/web/` (Zephyr HTTP server + WS, CONFIG_IO_WEB)** |
+| F23 | **应用调试 shell** | DI/DO/AI 查看、DO 控制、RS485/CAN/IP 配置、寄存器访问 | 无 | **`src/shell.c` (根命令 io, CONFIG_IO_SHELL)** |
 
 ### 1.3 技术选型依据
 
@@ -566,15 +568,20 @@ SYS_INIT(main_settings_init, APPLICATION, 10);
 |                        应用层 (Application Layer)                            |
 |  +----------+ +----------+ +----------+ +----------+ +----------+          |
 |  | IO 采集   | | Modbus   | | FTP 服务  | | UDP App  | | CAN App  |          |
-|  | dio.c     | | modbus/  | |ftp_server| | udp.c    | | can.c    |          |
-|  | adc.c     | | tcp/rtu  | |          | |(0x10+cmd)| |(业务帧)  |          |
+|  | io/dio.c  | | modbus/  | |ftp_server| | udp.c    | | can.c    |          |
+|  | io/adc.c  | | tcp/rtu  | |          | |(0x10+cmd)| |(业务帧)  |          |
 |  +-----+----+ +-----+----+ +-----+----+ +-----+----+ +-----+----+          |
-+-------+-----------+-----------+-----------+-----------+--------------------+
+|  +----------+ +----------+ +----------+                                    |
+|  | Web 服务  | | 调试shell | | 历史记录 |                                    |
+|  | web/httpd | | shell.c  | | history/ |                                    |
+|  | + ws_io   | | (io cmd) | | history  |                                    |
+|  +-----+----+ +----------+ +----+-----+                                    |
++-------+-----------+-----------+-----------+--------------------+-------------+
 |       |   服务层 (Service Layer)  |            |            |                |
 |  +----v------------v-----------v-----------v-----------v------+            |
-|  |  历史存储 (history.c)      |  DO 控制 (dio.c mb_set_do)   |            |
-|  |  时间同步 (time.c)         |  看门狗 (watchdog.c)          |            |
-|  |  Settings (function.c)     |  系统初始化 (main.c)          |            |
+|  |  DO 控制 (io/dio.c mb_set_do)  |  时间同步 (sys/time.c)     |            |
+|  |  看门狗 (sys/watchdog.c)       |  Settings (settings/init.c |            |
+|  |  寄存器数据源 (modbus/function.c) |  + 系统初始化 (main.c)  |            |
 |  +----+----------------------+-----------------+------------+              |
 +-------+----------------------------------------+----------------------------+
 |       |     共享库层 (Shared Libraries, libs/)  |                          |
@@ -584,7 +591,7 @@ SYS_INIT(main_settings_init, APPLICATION, 10);
 |  | 端口 8600, RX 线程         |  | 帧ID 0x101-0x105, RX 线程 |             |
 |  | FW_START/DATA/END/VERSION  |  | START_UPDATE/CONFIRM/...  |             |
 |  | app handler (0x10+)        |  | app handler (业务帧)      |             |
-|  +----+----------------------+  +--------------+-----------+              |
+|  +----+----------------------+  +--------------v-----------+              |
 +-------+----------------------------------------+----------------------------+
 |       |        存储层 (Storage Layer)            |                          |
 |  +----v----+  +--------------+  +-------------+  +-----v-----------+      |
@@ -603,7 +610,7 @@ SYS_INIT(main_settings_init, APPLICATION, 10);
 +----------------------------------------------------------------------------+
 ```
 
-> **v3.1 架构变化**: 大量模块从 已验证实现 直接复用 (Modbus RAW ADU TCP/RTU, FTP, DI/DO/AI, 心跳, RTC, 栈溢出保护, 状态 LED, 历史记录)。Settings 直接映射 `holding_reg[]`，消除独立参数结构体。应用层仅需实现 UDP/CAN app handler 和网络初始化适配。
+> **v3.5 架构变化**: 应用层新增 Web 服务 (`src/web/`，HTTP + REST + WebSocket) 与调试 shell (`src/shell.c`)。历史记录移入 `src/history/`，Settings 加载移入 `src/settings/`，IO 采集移入 `src/io/`，`src/modbus/` 只保留 Modbus 协议实现 (function/tcp/rtu)。
 
 ### 4.2 线程模型
 
@@ -617,12 +624,16 @@ SYS_INIT(main_settings_init, APPLICATION, 10);
 | modbus_rtu | 13 | 1024B | Modbus RTU Slave (复用已验证实现 `rtu.c`) | rtu.c (SYS_INIT) |
 | **mb_tcp** | 13 | 2048B | **Modbus TCP RAW ADU Server** — select() 多路复用，3 客户端 (复用已验证实现 `tcp.c`) | tcp.c (K_THREAD_DEFINE) |
 | **ftp** | 13 | 2048B | **FTP 服务器** — 控制连接 + 数据连接 (复用已验证实现 `ftp_server/`) | ftpd.c (K_THREAD_DEFINE) |
-| history_writer | 6 | 2048B | 从 k_work + k_fifo 取数据写入 LittleFS (复用已验证实现 `history.c`) | history.c (K_WORK) |
+| history_writer | 6 | 4096B | 从 msgq 批量取数据写入 LittleFS (**专用工作队列** `hist_work_q`, 独立于系统工作队列) | history/history.c (k_work) |
 | **udp_tx** | 7 | 1024B | **UDP 异步发送** (msgq + 低优先级线程) | udp.c |
+| **http_srv** | 14 | 4096B | **HTTP/WebSocket 服务器** (Zephyr http server, IO_WEB 开启时) | web/httpd.c |
+| **ws_N** | 8 | 2048B | **WebSocket 连接处理** (每连接一线程, 1s 周期推送 + 命令应答, IO_WEB 开启时) | web/ws_io.c (k_thread_create) |
 
 > **v3.1 线程变化**: 从 已验证实现 复用的线程使用其原始优先级和栈大小。DI/AI 采样线程栈仅 512B (已验证实现足够)。Modbus TCP 栈 2048B (select() 需要较大栈)。总栈消耗约 15KB。
 >
 > **v3.3 变更**: 移除 `heart` 心跳线程（应用层心跳废除，改由 Modbus TCP socket 的 `SO_KEEPALIVE` 检测主站连接存活，无独立线程开销）。
+>
+> **v3.5 变更**: 新增 Web 服务线程 (`http_srv` + `ws_N`, 仅 `CONFIG_IO_WEB=y`); 历史记录改用**专用工作队列** (`hist_work_q`, 4096 栈 — cleanup 目录遍历 + LittleFS 写调用链深, 2048 会深度溢出导致 double fault 静默复位), 不再复用系统工作队列 (避免 LittleFS 写盘阻塞 Modbus RAW ADU 异步处理)。调试 shell 命令运行在 shell 子系统自身线程, 无新增线程。
 >
 > **固件升级库线程优先级**: `udp_fw_rx`/`can_fw_rx` 优先级为库 Kconfig 默认 `CONFIG_UDP_FW_RX_PRIORITY` / `CONFIG_CAN_FW_UPGRADE_RX_PRIORITY`（均为 8），并在 §8.1 prj.conf 显式固定为 8。如需更高优先级，改这两个 Kconfig 即可。
 
@@ -664,10 +675,11 @@ main()
        |   # NET_MGMT_REGISTER_EVENT_HANDLER 监听 IF_UP/IF_DOWN
        |   # IF_DOWN: 清零 DO + 设 link_down 标志 (复用已验证实现)
        |
-       +-- 网络服务启动 (link up 后):
-           |-- Modbus TCP Server (端口 502, K_THREAD_DEFINE, 复用已验证实现 tcp.c)
-           |-- FTP Server (端口 21, K_THREAD_DEFINE, 复用已验证实现 ftp_server/)
-           +-- udp_fw_upgrade 自动绑定 socket (NET_EVENT_IF_UP 触发)
+        +-- 网络服务启动 (link up 后):
+            |-- Modbus TCP Server (端口 502, K_THREAD_DEFINE, 复用已验证实现 tcp.c)
+            |-- FTP Server (端口 21, K_THREAD_DEFINE, 复用已验证实现 ftp_server/)
+            |-- io_web_start() (v3.5, CONFIG_IO_WEB=y 时; HTTP+WS, 端口 80)
+            +-- udp_fw_upgrade 自动绑定 socket (NET_EVENT_IF_UP 触发)
 ```
 
 > **关键配置** (prj.conf):
@@ -743,9 +755,11 @@ struct his_data {
 
 ## 5. 模块详细设计
 
-### 5.1 IO 采集模块 (`src/modbus/dio.c` + `src/modbus/adc.c` — 复用已验证实现)
+### 5.1 IO 采集模块 (`src/io/dio.c` + `src/io/adc.c`)
 
 > **v3.1 变更**: IO 采集模块不再独立为 `src/io/` 目录，而是复用已验证实现 的 `dio.c` 和 `adc.c` 到 `src/modbus/` 目录，与 Modbus 寄存器管理紧密耦合。
+>
+> **v3.5 变更**: 目录重组, `dio.c`/`adc.c` 从 `src/modbus/` 移回 `src/io/` (IO 采样并非 Modbus 功能, 寄存器经 `include/init.h` 接口解耦)。
 
 #### 5.1.1 数字输入/输出 (`dio.c/h` — 复用已验证实现)
 
@@ -759,7 +773,7 @@ struct his_data {
 - **使能控制**: DI 每路独立使能 (16-bit bitmap, `holding_reg[HOLDING_DI_ENABLE_IDX]`)，仅使能的通道参与采样
 - **采样方式**: `K_THREAD_DEFINE` 独立线程，周期从 `holding_reg[HOLDING_DI_SAMPLE_MS_IDX]` 读取 (默认 200ms)
 - **DO 控制**: `mb_set_do(uint16_t val)` — 写 `holding_reg[HOLDING_DO_IDX]` 时由寄存器回调调用，LED 自动跟随 DO
-- **历史记录**: 当 DI 使能且历史保存开启时，采样数据送入 `k_fifo` 异步写入
+- **历史记录**: 当 DI 使能且历史保存开启时，采样数据经 `send_history_data()` 送 msgq 异步写入
 - **初始化**: `SYS_INIT(dio_init, APPLICATION, 12)`
 
 ```c
@@ -1117,9 +1131,11 @@ SYS_INIT(main_settings_init, APPLICATION, 10);
 > settings_subsys_init();  /* 重新初始化，加载默认值 */
 > ```
 
-### 5.6 历史记录存储模块 (`src/modbus/history.c` — 复用已验证实现)
+### 5.6 历史记录存储模块 (`src/history/history.c`)
 
 > **v3.1 变更**: 历史记录模块从 `src/storage/history_store.c` 改为复用已验证实现 的 `modbus/history.c`。文件轮转策略和异步写入机制与已验证实现一致。
+>
+> **v3.5 变更**: 目录重组, `history.c` 从 `src/modbus/` 移至 `src/history/`; 落盘改用**专用工作队列** (独立于系统工作队列)。
 
 > **复用来源**: `modbus/history.c`
 
@@ -1150,15 +1166,15 @@ struct his_data {
 /* AI 记录大小: 2+4+2+8 = 16 字节 */
 ```
 
-#### 5.6.2 文件轮转策略 (复用已验证实现)
+#### 5.6.2 文件轮转策略
 
 - **最大文件数**: 10 个 (10MB / 1MB)
-- **单文件最大大小**: 1MB (1024x1024 字节)
-- **文件命名**: `data_MMDD_HHMM.raw` (如 `data_0915_1120.raw`)
-- **轮转规则**: 文件数达到 10 个时，删除最旧文件 (按 mtime)，创建新文件
-- **写入策略**: 通过 `k_fifo` + `k_work` 异步写入 (复用已验证实现 `history.c`)
-  - `send_history_data()` 将数据放入 `k_fifo`
-  - `his_process_save()` 作为 `k_work` 回调在 workqueue 中执行文件写入
+- **单文件最大大小**: 1MB (1024x1024 字节), **按大小轮转** (非按时间切换)
+- **文件命名**: `data_MMDD_HHMMSS.raw` (如 `data_0915_112030.raw`, 文件名字段按合法范围钳位防坏 RTC 数据)
+- **轮转规则**: 文件数达到 10 个时，删除最旧文件 (按文件名序 = 时间序)，创建新文件
+- **写入策略**: 通过 `K_MSGQ_DEFINE` (16 槽) + 专用工作队列 `hist_work_q` 批量异步写入
+  - `send_history_data()` 将数据放入 msgq + `k_work_submit` (k_work 合并去重 → 机会性批量)
+  - work handler 批量取 msgq 记录写当前文件 (保持打开 + `fs_sync` 批量 flush, 减少 Flash 写次数)
 - **历史保存使能**: 由 `holding_reg[HOLDING_HISTORY_ENABLE_IDX]` 控制
 
 ### 5.7 系统管理模块 (`src/sys/` + `src/main.c`)
@@ -1186,11 +1202,14 @@ int ka = 1;
 #### 5.7.2 RTC 时间管理 (`time.c` — 复用已验证实现)
 
 > **复用来源**: `time.c`
+>
+> **v3.5 变更**: RTC 时钟源由 **LSI 改为 HSE/16** (板载无 LSE 晶振)。F407 LSI 无校准精度差 (实测快 ~9.2%), RTC 走时偏快; HSE 13MHz 外部晶振经 RTCPRE /16 = 812500Hz, async 125 x sync 6500 精确分频到 1Hz, 温度稳定。
 
 - **RTC 设备**: STM32 内部 RTC (`DT_NODELABEL(rtc)`)
+- **时钟源**: `STM32_SRC_HSE RTC_SEL(3)` (overlay `&rtc` clocks 配置)
 - **启动同步**: `SYS_INIT(clock_init, POST_KERNEL, 41)` — 从 RTC 读取时间设置系统时钟
 - **日志时间戳**: `log_set_timestamp_func(sync_rtc_timestamp_get, 1)` — 日志使用 RTC 时间
-- **时间设置**: `set_timestamp(time_t t)` — 通过 Modbus 寄存器 0x0E/0x0F 或 UDP 命令设置
+- **时间设置**: `set_timestamp(time_t t)` — 通过 Modbus 寄存器 0x0E/0x0F、UDP 命令或 Web API 设置; 合法范围 [2000-01-01, 2100-01-01), 越界拒绝
 
 ```c
 /* 复用已验证实现 time.c */
@@ -1320,6 +1339,10 @@ int main(void)
     net_if_up(iface);
     k_sem_take(&net_link_sem, K_SECONDS(5));
 
+    /* 13.5 Web 服务 (v3.5, CONFIG_IO_WEB=y 时; SYS_INIT 阶段 iface 未 up, 过早
+     * bind/listen 行为未定义, 官方 sample 同样在 net up 后启动) */
+    io_web_start();
+
     /* 14. 主循环 — 状态 LED 闪烁 + 延迟重启 */
     const struct gpio_dt_spec status_gpios = GPIO_DT_SPEC_GET(DT_ALIAS(mcuboot_led0), gpios);
     gpio_pin_configure_dt(&status_gpios, GPIO_OUTPUT_INACTIVE);
@@ -1359,6 +1382,69 @@ int main(void)
 - 用途: 固件升级时校验固件是否使用正确密钥签名
 - UDP: `FW_START` 命令可选携带 32B keyhash，库校验与 `fw_keyhash.h` 一致
 - CAN: `0x104` 帧发送 5 x 7B = 35B (有效 32B)，库在 `START_UPDATE` 时校验
+
+### 5.9 Web 管理界面 (`src/web/` — v3.5 新增)
+
+> **v3.5 变更**: 新增可选 Web 管理界面 (commit `1e07225`), 基于 Zephyr HTTP 服务器 (`CONFIG_HTTP_SERVER` + `HTTP_SERVER_WEBSOCKET`), 总开关 `CONFIG_IO_WEB` (默认 y, 当前 prj.conf/prj_release.conf 显式关闭, 裁剪 ~100KB flash + ~30KB RAM)。
+
+#### 5.9.1 组成
+
+| 文件 | 职责 |
+|------|------|
+| `web/httpd.c` | HTTP 服务 (`HTTP_SERVICE_DEFINE(io_web)`): 静态页面 + REST API + HTTP 固件升级; 共享命令执行器 (`web_cmd_exec_*`) 与 JSON 构造器 (`web_build_*_json`) |
+| `web/ws_io.c` | WebSocket 实时通道 (`/ws`): 每连接独立线程, 周期推送 + 命令应答 |
+| `web/index.html` | 内嵌 SPA 页面 (构建期 gzip 压缩为 C 数组, 免文件系统) |
+| `web/web_cmds.h` | HTTP/WS 共用命令执行器接口 (写路径与 Modbus FC05/FC06 同源) |
+| `web/web_json.h` | 轻量 JSON 解析辅助 (固定键名协议, 不做完整语法校验) |
+| `web/sections-rom.ld` | HTTP 资源描述 iterable section 链接段 |
+
+#### 5.9.2 REST API (`/api/*`, 端口 `CONFIG_IO_WEB_PORT` 默认 80)
+
+| 路径 | 方法 | 功能 |
+|------|------|------|
+| `/` | GET | SPA 页面 (gzip 静态资源) |
+| `/api/info` | GET | 设备详情 (版本/MAC/IP/RS485/CAN/存储/链路) |
+| `/api/io` | GET | IO 快照 (DI/DO/AI + 使能, 与 WS io 帧同源) |
+| `/api/regs` | GET | 寄存器全量 (holding 18 + input 6) |
+| `/api/do` | POST | DO 单点控制 `{"index":n,"value":0/1}` (FC05 同路径) |
+| `/api/reg` | POST | 保持寄存器写 `{"addr":n,"value":v}` (FC06 同路径, 0x11 走延迟重启保住响应) |
+| `/api/time` | POST | 设置时间 `{"ts":unix}` |
+| `/api/save` | POST | 参数持久化到 FCB |
+| `/api/reboot` | POST | 延迟重启 |
+| `/api/history` | GET | 历史文件列表 |
+| `/api/history/download` | GET | 下载历史文件 |
+| `/api/history/delete` | POST | 删除历史文件 |
+| `/api/upgrade` | POST | HTTP 固件升级 (MCUboot 镜像直传 slot1 + 验签) |
+
+#### 5.9.3 WebSocket 实时通道 (`/ws`)
+
+- **推送帧** (JSON 文本, 按 `t` 字段分发): `{"t":"io",...}` 1s 周期, `{"t":"regs",...}` 1s 周期, `{"t":"info",...}` 10s 周期; 连接建立后立即推三类各一帧 (先 `k_msleep(300)` 避开握手竞态窗口)
+- **命令帧**: 与 HTTP POST 共用执行器 — `{"cmd":"do"/"reg"/"time"/"cfg"/"save",...}`; `cfg` 支持 ip/rs485/sid/can_bps/can_id 可选字段, 校验规则与 Modbus/UDP 一致; 回 `{"ok":bool,"err":...}` ack
+- **单连接限制**: Zephyr HTTP 服务器的 websocket 资源解析缓冲为资源级共享, 并发连接互相踩踏 → `CONFIG_IO_WEB_WS_HANDLERS=1` (range 1-2), 多余连接拒绝, 前端自动降级 2s HTTP 轮询
+- **栈配置**: `CONFIG_IO_WEB_WS_STACK_SIZE=2048` (websocket 收发调用链深: PSA SHA-1 + TCP 重传, 1152 会栈溢出触发 warm reboot)
+- **前端容错**: WS 正常时页面零轮询请求; 断开后指数退避重连 (1s→2s→…→10s) + HTTP 轮询兜底
+
+#### 5.9.4 启动时序
+
+Web 服务不进 SYS_INIT (iface 未 up 时 bind/listen 行为未定义), 由 `main()` 在网络链路就绪 (IF_UP 或 5s 超时) 后调用 `io_web_start()` → `http_server_start()`。
+
+### 5.10 应用调试 shell (`src/shell.c` — v3.5 新增)
+
+> **v3.5 变更**: 新增根命令 `io` 的应用调试 shell (commit `4afba83`), 开关 `CONFIG_IO_SHELL` (默认 y, `depends on SHELL`, release 构建随 `CONFIG_SHELL=n` 自动裁剪)。
+
+| 命令 | 功能 |
+|------|------|
+| `io info` | 版本/MAC/IP/链路/RS485/CAN/uptime; RTC 时间格式化显示 (UTC+8, 保留原始 Unix 时间戳) |
+| `io di` | DI1-16 状态 (bitmap + 逐通道, 含使能) |
+| `io do` / `io do set <ch> <0\|1>` | DO1-8 查看 / 单点控制 (`io_write_do_bit`, FC05 同路径) |
+| `io ai` | AI1-4 工程量 (0.01mA / 0.01V 展开) |
+| `io rs485` / `io rs485 baud <n>` / `io rs485 sid <n>` | RS485 查看 / 设波特率 (1200-115200) / 设 slave id (1-247), 重启生效 |
+| `io can` / `io can id <n>` / `io can bps <n>` | CAN 查看 / 设业务帧 ID (1-0x7FF) / 设波特率 (50-1000 kbit/s 档位), 重启生效 |
+| `io ip <a.b.c.d>` | 设静态 IP (复用 `ip_addr_valid` 校验 + 自动保存, 重启生效) |
+| `io reg [addr [value]]` | 寄存器全量 dump / 单读 (`io_read_holding`) / 单写 (`io_write_holding`) |
+| `io save` | 参数持久化到 FCB |
+
+写路径全部复用 `io_write_holding` / `io_write_do_bit`, 与 Modbus (FC05/FC06)、Web (HTTP/WS)、UDP 命令副作用完全一致; 校验范围与 Web `cfg` 命令一致。
 
 ---
 
@@ -1496,77 +1582,82 @@ int main(void)
 ## 7. 项目目录结构
 
 > **v3.0 变更**: 项目作为 `iot-zephyr-app` 仓库 (`~/code/app/apps/`) 下的一个应用，与 `n2e-gw` 和 `angle-handler` 并列，共享 `libs/` 下的固件升级库。
+>
+> **v3.5 变更**: `src/` 按功能域重组 — IO 采样 (`io/`)、历史记录 (`history/`)、Settings 加载 (`settings/`)、Web (`web/`) 独立成目录, `modbus/` 只留 Modbus 协议实现; 新增 `shell.c` 调试 shell。板名 `io_edge_f407vet6` (见附录 G.1), overlay 同名。
 
 ```
 ~/code/app/apps/                             # iot-zephyr-app 仓库根目录
 ├── CMakeLists.txt                           # 顶层 CMake
 ├── CLAUDE.md                                # 仓库规范
-├── west.yml                                 # West 依赖管理清单
+├── west.yml                                 # West 依赖管理清单 (含 canopen-zephyr module, v3.5)
 │
 ├── libs/                                    # 共享库 (已存在)
 │   ├── CMakeLists.txt                       # 生成 fw_gitver.h / fw_keyhash.h
 │   ├── gen_gitver.py                        # git commit hash -> fw_gitver.h
 │   ├── gen_keyhash.py                       # MCUboot 密钥 SHA-256 -> fw_keyhash.h
 │   ├── udp_fw_upgrade/                      # UDP 固件升级库
-│   │   ├── CMakeLists.txt
-│   │   ├── Kconfig
-│   │   ├── udp_fw_upgrade.h
-│   │   └── udp_fw_upgrade.c
 │   └── can_fw_upgrade/                      # CAN 固件升级库
-│       ├── CMakeLists.txt
-│       ├── Kconfig
-│       ├── can_fw_upgrade.h
-│       └── can_fw_upgrade.c
 │
 └── applications/
     ├── n2e-gw/                              # 已有: W5500 + UDP 固件升级
     ├── angle-handler/                       # 已有: CAN 固件升级
     │
     └── io-edge-hub/                         # <-- 本项目
-        ├── CMakeLists.txt                   # 应用 CMake (链接 libs/)
+        ├── CMakeLists.txt                   # 应用 CMake (链接 libs/, web/shell 条件编译)
+        ├── Kconfig                          # 应用 Kconfig (IO_*, MODBUS 寄存器数量)
         ├── prj.conf                         # 应用 Kconfig 配置 (调试模式)
         ├── prj_release.conf                 # 发布模式 Kconfig 配置覆盖
         ├── sysbuild.conf                    # Sysbuild 配置 (MCUboot SWAP_SCRATCH)
+        ├── sysbuild/mcuboot.conf            # MCUboot 镜像配置 (BOOT_MAX_IMG_SECTORS 等)
         ├── VERSION                          # 版本号文件
+        ├── README.md / USER_GUIDE.md / CLAUDE.md / CHANGELOG.md
         │
         ├── boards/
-        │   ├── io_edge_hub.overlay          # 设备树覆盖 (Flash 分区, W5500, GPIO)
-        │   └── io_edge_hub.pem              # MCUboot 签名密钥 (RSA-2048)
+        │   ├── io_edge_f407vet6.overlay     # 设备树覆盖 (W5500/ADC/RS485/DI/DO/LED/RTC)
+        │   └── io_edge_f407vet6.pem         # MCUboot 签名密钥 (RSA-2048)
         │
         ├── include/
         │   └── init.h                       # 公共头文件 (寄存器枚举, his_data, 函数声明)
         │
         └── src/
-            ├── main.c                       # 主入口: 状态LED + 延迟重启 + 栈溢出处理 (复用已验证实现)
-            ├── udp.c                        # UDP app handler (0x10+ 业务命令)
-            ├── udp.h
-            ├── can.c                        # CAN app handler (业务帧收发)
-            ├── can.h
+            ├── main.c                       # 主入口: 网络(MAC/IP/事件) + web 启动 + 状态LED + 延迟重启 + 栈溢出处理
+            ├── shell.c                      # 应用调试 shell (根命令 io, CONFIG_IO_SHELL)
+            ├── udp.c / udp.h                # UDP app handler (0x10+ 业务命令)
+            ├── can.c / can.h                # CAN app handler (业务帧收发)
             │
-            ├── modbus/                      # Modbus 通信模块 (复用已验证实现)
-            │   ├── CMakeLists.txt
-            │   ├── init.c                   # modbus_init: settings_subsys_init + load (恢复 holding_reg + 历史使能)
-            │   ├── init.h                   # 寄存器枚举, his_data, 函数声明
-            │   ├── function.c               # 寄存器读写回调 + Settings handler (modbus/ 命名空间)
+            ├── io/                          # IO 采集 (v3.5 从 modbus/ 分离)
+            │   ├── dio.c                    # 16 路 DI + 8 路 DO + 8 路 LED (GPIO + K_THREAD)
+            │   └── adc.c                    # 4 路 AI 驱动 (adc_dt_spec + 工程量转换)
+            │
+            ├── modbus/                      # Modbus 协议 (v3.5 收敛为纯协议实现)
+            │   ├── function.c               # 寄存器数组 + 读写回调 + io_read/write_holding + settings handler
             │   ├── tcp.c                    # Modbus TCP RAW ADU Server (select() 多路复用)
-            │   ├── rtu.c                    # Modbus RTU Slave (RS485)
-            │   ├── adc.c                    # 4 路 AI 驱动 (adc_dt_spec + 工程量转换)
-            │   ├── dio.c                    # 16 路 DI + 8 路 DO + LED (GPIO + K_THREAD)
-            │   └── history.c               # 历史记录 (k_work + k_fifo + 文件轮转)
+            │   └── rtu.c                    # Modbus RTU Slave (RS485)
             │
-            ├── ftp_server/                  # FTP 服务器 (复用已验证实现)
-            │   ├── CMakeLists.txt
-            │   ├── ftp.h
-            │   ├── ftpd.c                   # FTP 主线程 (select() + 会话管理)
-            │   ├── ftp_cmds.c               # FTP 命令实现 (PORT/PASV/LIST/RETR/STOR/...)
-            │   └── ftp_handler.c            # FTP 会话状态机 (USER→PASS→OK)
+            ├── history/                     # 历史记录 (v3.5 从 modbus/ 分离)
+            │   └── history.c                # msgq + 专用工作队列批量写 + 1MB 轮转
             │
-            ├── storage/                     # 存储模块
-            │   ├── fs_littlefs.c            # LittleFS 挂载 (复用已验证实现 snippet)
+            ├── settings/                    # 参数持久化 (v3.5 从 modbus/ 分离)
+            │   └── init.c                   # settings_subsys_init + load (恢复 holding_reg + 历史使能)
+            │
+            ├── web/                         # Web 管理界面 (v3.5 新增, CONFIG_IO_WEB)
+            │   ├── httpd.c                  # HTTP 服务 + REST API + 共享命令执行器
+            │   ├── ws_io.c / ws_io.h        # WebSocket 实时通道 (/ws)
+            │   ├── index.html               # 内嵌 SPA 页面 (gzip → C 数组)
+            │   ├── web_cmds.h               # HTTP/WS 共用命令执行器接口
+            │   ├── web_json.h               # 轻量 JSON 解析辅助
+            │   └── sections-rom.ld          # HTTP 资源 iterable section
+            │
+            ├── ftp_server/                  # FTP 服务器
+            │   ├── ftp.h                    # FTP 配置 (端口/用户/根目录)
+            │   └── ftpd.c                   # FTP 实现 (单线程 select, PASV/EPSV+PORT/EPRT, 3 客户端)
+            │
+            ├── storage/
+            │   ├── fs_littlefs.c            # LittleFS 挂载 (flash-area 模式) + 就绪信号量
             │   └── fs_littlefs.h
             │
             └── sys/                         # 系统管理模块
-                ├── time.c                   # RTC 时间管理 (复用已验证实现)
+                ├── time.c                   # RTC 时间管理 (HSE/16 时钟)
                 ├── watchdog.c               # IWDG 硬件看门狗
                 └── watchdog.h
 ```
@@ -1708,8 +1799,19 @@ CONFIG_RTC_SHELL=y
 CONFIG_SETTINGS_SHELL=y
 CONFIG_FAULT_DUMP=2
 
+# ==================== Web 服务 (v3.5, 总开关默认 y) ====================
+# CONFIG_IO_WEB=n              # 当前 prj.conf 显式关闭 (裁剪 ~100KB flash + ~30KB RAM);
+                               # 开启后编译 src/web/ (HTTP+REST+WS+升级), 端口 IO_WEB_PORT 默认 80
+# IO_WEB_WS_HANDLERS=1         # websocket 解析缓冲资源级共享, 并发限 1
+# IO_WEB_WS_STACK_SIZE=2048    # websocket 收发调用链深, 1152 会栈溢出
+
+# ==================== 应用调试 shell (v3.5, 默认 y) ====================
+# CONFIG_IO_SHELL=y            # depends on SHELL, 编译 src/shell.c (根命令 io);
+                               # release 随 CONFIG_SHELL=n 自动裁剪
+
 # ==================== JSON ====================
 # (v3.1 无 JSON: UDP 配置已改为 udp_fw_upgrade app handler, 不启用 CONFIG_JSON_LIBRARY)
+# (v3.5: web/ 模块自带轻量 JSON 解析辅助 web_json.h, 不依赖 CONFIG_JSON_LIBRARY)
 ```
 
 ### 8.2 发布模式 prj_release.conf
@@ -2044,15 +2146,16 @@ SB_CONFIG_MCUBOOT_INDICATION_LED=y
 cd ~/code/app/apps
 
 # 2. 构建 (sysbuild 自动构建 MCUboot + 应用)
-#    完整板定义放在仓库根 boards/io_edge_hub/ (module.yml board_root), 无需 -DBOARD_ROOT
-west build -b io_edge_hub applications/io-edge-hub --sysbuild
+#    板名 io_edge_f407vet6 (附录 G.1), 完整板定义在仓库根 boards/io_edge_f407vet6/
+west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild \
+    -Dmcuboot_EXTRA_CONF_FILE="$PWD/applications/io-edge-hub/sysbuild/mcuboot.conf;$PWD/libs/can_fw_upgrade/mcuboot_can.conf"
 
 # 发布模式
-west build -b io_edge_hub applications/io-edge-hub --sysbuild \
-    -DCONF_FILE=prj_release.conf
+west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild \
+    -Dmcuboot_EXTRA_CONF_FILE="..." -DCONF_FILE=prj_release.conf
 
 # 3. 烧录 MCUboot + 应用 (一次烧录两个镜像)
-west flash
+west flash --domain io-edge-hub
 
 # 4. 后续升级: UDP 固件升级
 python tools/udp_upgrade.py --ip 192.168.12.101 --port 8600 --file zephyr.signed.bin
@@ -2061,7 +2164,7 @@ python tools/udp_upgrade.py --ip 192.168.12.101 --port 8600 --file zephyr.signed
 python tools/can_upgrade.py --interface can0 --file zephyr.signed.bin
 ```
 
-> **sysbuild 说明**: `sysbuild.conf` 中的 `SB_CONFIG_MCUBOOT_MODE_SWAP_SCRATCH=y` 会让 sysbuild 自动配置 MCUboot 为 SWAP_SCRATCH 模式，并使用 `boards/io_edge_hub.pem` 签名密钥。构建产物包含 `mcuboot.bin` 和 `zephyr.signed.bin`。
+> **sysbuild 说明**: `sysbuild.conf` 中的 `SB_CONFIG_MCUBOOT_MODE_SWAP_SCRATCH=y` 会让 sysbuild 自动配置 MCUboot 为 SWAP_SCRATCH 模式，并使用 `boards/io_edge_f407vet6.pem` 签名密钥。`mcuboot_EXTRA_CONF_FILE` 注入 `sysbuild/mcuboot.conf` (BOOT_MAX_IMG_SECTORS=256 + 硬件 RNG) 与 `libs/can_fw_upgrade/mcuboot_can.conf` (MCUboot 侧 CAN 固件升级支持)。构建产物包含 `mcuboot.bin` 和 `zephyr.signed.bin`。
 
 ### 10.3 烧录方式
 
@@ -2187,8 +2290,8 @@ cd tools && cmake . && make
 ### Phase 9: 历史记录系统 (Week 11)
 
 - [ ] **历史记录数据结构** (his_data, DI/AI 分离) [复用已验证实现 init.h]
-- [ ] **k_fifo + k_work 异步写入** [复用已验证实现 history.c]
-- [ ] 文件轮转 (10 文件 x 1MB, data_MMDD_HHMM.raw)
+- [ ] **msgq + k_work 异步写入** (v3.5: 专用工作队列 hist_work_q)
+- [ ] 文件轮转 (10 文件 x 1MB, data_MMDD_HHMMSS.raw)
 - [ ] FTP 下载历史文件验证
 - [ ] PC 端解析工具兼容性验证 (data_parser.c)
 
@@ -2276,7 +2379,7 @@ cd tools && cmake . && make
 | Modbus TCP | `freemodbus` 包 | `modbus/tcp.c` | **直接复用已验证实现** (RAW ADU + select() 多路复用) |
 | Modbus RTU | `freemodbus` 包 | `modbus/rtu.c` | **直接复用已验证实现** (MODBUS_MODE_RTU) |
 | Modbus 寄存器 | `init.c` | `modbus/function.c` + `modbus/init.c` | **直接复用已验证实现** (21 holding + 6 input, settings 直接映射) |
-| 历史记录 | `history.c` | `modbus/history.c` | **直接复用已验证实现** (k_fifo + k_work + 文件轮转) |
+| 历史记录 | `history.c` | `history/history.c` | **直接复用已验证实现** (msgq + 专用工作队列 + 文件轮转) |
 | **参数存储** | **`flash.c` (magic+CRC16)** | **`modbus/function.c` (settings/FCB, modbus/ 命名空间)** | **直接复用已验证实现 settings handler，直接映射 holding_reg[]** |
 | FTP 服务 | `ftpd.c + ftp_cmds.c` | `ftp_server/ftpd.c + ftp_cmds.c + ftp_handler.c` | **直接复用已验证实现** (Zephyr 原生, k_mem_slab, select()) |
 | **时间管理** | **无** | **`sys/time.c`** | **直接复用已验证实现** (RTC + clock_settime + log timestamp) |
@@ -2378,7 +2481,7 @@ cd tools && cmake . && make
 
 > 与 RT-Thread 完全兼容，PC 端 `data_parser.c` 可直接解析。
 
-**文件命名**: `data_MMDD_HHMM.raw` (如 `data_0915_1120.raw` 表示 9月15日 11:20 创建)
+**文件命名**: `data_MMDD_HHMMSS.raw` (如 `data_0915_112030.raw` 表示 9月15日 11:20:30 创建)
 
 **文件内容**: 连续的 `struct his_data` 记录流
 
@@ -2563,4 +2666,21 @@ cd tools && cmake . && make
 
 ---
 
-*文档结束 - io-edge-hub 方案规划 v3.4 (已验证模块复用 + RAW ADU Modbus + Settings 直接映射 + TCP Keepalive 保活 + RTC 时间管理; 附录 G/H/I 记录实现差异)
+## 附录 J: v3.4 -> v3.5 变更摘要 (Web 管理界面 + 调试 shell + RTC HSE/16 + 目录重组)
+
+> **v3.5 变更**: 对应 v0.2.1 之后的代码更新 (commit `c926cb2` / `1e07225` / `4afba83` + 目录重组)。
+
+| 变更项 | v3.4 | v3.5 | 原因 |
+|--------|------|------|------|
+| **Web 管理界面** | 无 | 新增 `src/web/` (`CONFIG_IO_WEB`): 内嵌 SPA + REST API (`/api/*`) + WebSocket 实时推送 (`/ws`, io/regs 1s + info 10s) + HTTP 固件升级 (`/api/upgrade`) | 免上位机软件的浏览器运维入口; 页面数据全部走 WS 推送, WS 断开自动降级 HTTP 轮询; 写路径与 Modbus/UDP 同源 |
+| **应用调试 shell** | 仅 Zephyr 内置 shell (net/flash/rtc/settings) | 新增根命令 `io` (`src/shell.c`, `CONFIG_IO_SHELL` 默认 y): info (版本/MAC/IP/RS485/CAN/本地时间)/di/do/do set/ai/rs485/can/ip/reg/save | 串口现场调试; 写路径复用 `io_write_holding`/`io_write_do_bit`, 与其他通道副作用一致; release 随 `SHELL=n` 自动裁剪 |
+| **RTC 时钟源** | LSI (板载无 LSE) | **HSE/16** (`STM32_SRC_HSE RTC_SEL(3)`, 13MHz/16=812500Hz, async125 x sync6500 = 1Hz 精确) | F407 LSI 无校准, 实测快 ~9.2%, RTC 走时偏快; HSE 为外部晶振, 温度稳定 |
+| **src/ 目录重组** | `modbus/` 混装 IO 采样/历史/设置加载 | `modbus/` 只留 function/tcp/rtu; `dio.c`+`adc.c` → `io/`; `history.c` → `history/`; `init.c` → `settings/` | IO 采样/历史记录/参数加载并非 Modbus 功能, 按功能域拆分 (`git mv` 保留历史) |
+| **历史记录落盘** | §4.2 表述为 k_fifo + 系统工作队列 (2048B) | **专用工作队列** `hist_work_q` (4096B, §4.2 修正) | 独立于系统工作队列, LittleFS 写盘不阻塞 Modbus RAW ADU 异步处理; 2048 栈深度溢出 → double fault 静默复位 |
+| **HTTP 升级通道** | 仅 UDP + CAN 固件升级 | Web `/api/upgrade` 第三通道 (浏览器直传镜像 → slot1 + MCUboot 验签) | 运维便利; 与 UDP/CAN 共用 MCUboot 签名机制 |
+| **west manifest** | 无 CANopen | `west.yml` 新增 `canopen-zephyr` module (`modules/canopen-zephyr`, submodule CANopenNode v4) | 为 CANopen 业务预留 (Zephyr 4.4+ 移除内置 CANopen 集成) |
+| **寄存器写路径统一** | Modbus 回调 + UDP 直接改数组 | 新增公共入口 `io_write_holding`/`io_write_do_bit`/`io_read_holding` (init.h), Modbus/Web/Shell 全部经此 | 单一副作用路径, 多通道行为一致 (Web `web_cmd_exec_*` 与 shell `io reg` 均复用) |
+
+---
+
+*文档结束 - io-edge-hub 方案规划 v3.5 (RAW ADU Modbus + Settings 直接映射 + TCP Keepalive 保活 + RTC 时间管理 + Web 管理界面 + 调试 shell; 附录 G/H/I/J 记录实现差异)

@@ -86,12 +86,15 @@ src/
   modbus/
     function.c             -- holding_reg/input_reg 数组 + get/update + Modbus user callbacks
                               (io_modbus_cbs) + settings handler (modbus/ 命名空间) + factory reset
-    init.c                 -- settings_subsys_init + load (SYS_INIT 11)
     tcp.c                  -- Modbus TCP RAW ADU Server (select 多路复用, RAW_0 iface)
     rtu.c                  -- Modbus RTU Slave (modbus0 节点, baud/slave_id 从 holding_reg)
-    adc.c                  -- 4 路 AI (adc_channel_setup + 工程量转换 7.414x/3.7037x)
+  io/
     dio.c                  -- 16 DI + 8 DO + 8 LED (zephyr,user gpio 列表, DT_FOREACH_PROP_ELEM)
-    history.c              -- msgq + 系统工作队列批量写 + 1MB 轮转 (LittleFS /lfs1)
+    adc.c                  -- 4 路 AI (adc_channel_setup + 工程量转换 7.414x/3.7037x)
+  history/
+    history.c              -- msgq + 专用工作队列批量写 + 1MB 轮转 (LittleFS /lfs1)
+  settings/
+    init.c                 -- settings_subsys_init + load (SYS_INIT 11)
   storage/
     fs_littlefs.c/.h       -- LittleFS 挂载 (flash-area 模式, /lfs1) + 就绪信号量
   sys/

@@ -74,8 +74,10 @@ io-edge-hub/
     main.c                  -- 网络(MAC/IP/事件) + 状态LED + 栈溢出保护
     udp.c / udp.h           -- UDP app handler (0x10+ 业务命令)
     can.c / can.h           -- CAN app handler (业务帧)
-    modbus/                 -- function.c(寄存器+settings)/ init.c(settings 加载)/
-                              tcp.c(RAW ADU TCP + Keepalive)/ rtu.c / adc.c / dio.c / history.c
+    modbus/                 -- function.c(寄存器+settings)/ tcp.c(RAW ADU TCP + Keepalive)/ rtu.c
+    io/                     -- dio.c(16DI+8DO+8LED)/ adc.c(4 路 AI)
+    history/history.c       -- 历史记录 (msgq + 批量落盘)
+    settings/init.c         -- settings 加载 (FCB → holding_reg)
     storage/fs_littlefs.c   -- LittleFS 挂载
     sys/                    -- time.c(RTC) / watchdog.c(IWDG)
     ftp_server/ftpd.c       -- FTP server (PASV)
