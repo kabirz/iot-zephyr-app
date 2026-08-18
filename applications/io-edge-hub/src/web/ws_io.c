@@ -16,6 +16,7 @@
  *   {"cmd":"time","ts":unix}
  *   {"cmd":"cfg","ip":"a.b.c.d","rs485":n,"sid":n,"can_bps":n,"can_id":n}
  *   {"cmd":"save"}	参数持久化到 FCB
+ *   {"cmd":"factory_reset"}	恢复出厂设置 (擦参数区 + 延迟重启)
  *   {"cmd":"fw_start","size":n}	开始固件升级 (擦 slot1)
  *   <binary frame>		固件数据 (bin 帧)
  *   {"cmd":"fw_end"}		结束升级 (CRC 校验 + boot_request_upgrade)
@@ -33,6 +34,7 @@
 #include <zephyr/dfu/flash_img.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/crc.h>
+#include <zephyr/sys/byteorder.h>
 #include <fw_keyhash.h>
 
 #include "web_json.h"
@@ -52,6 +54,8 @@ LOG_MODULE_REGISTER(io_ws, LOG_LEVEL_INF);
 
 #define SLOT1_PARTITION_ID PARTITION_ID(slot1_partition)
 #define IMG_MAGIC		0x96F3B83D
+#define IMG_TLV_INFO_MAGIC	0x6907
+#define IMG_TLV_KEYHASH		0x0001
 #define FW_CRC_CHUNK		64
 
 static struct {
@@ -155,6 +159,79 @@ static bool fw_upg_verify_crc(void)
 	return true;
 }
 
+/* 从 slot1 已写镜像的 TLV 区提取 KEYHASH 与编译期 fw_keyhash 比对
+ * (与 CAN/UDP 升级通道的 keyhash 预校验对齐; WS 无独立 keyhash 帧,
+ * 从写入的镜像自身解析). TLV 偏移 = 头部 hdr_size + img_size —
+ * 镜像未填满分区, 不能从分区末尾定位. */
+static bool fw_upg_verify_keyhash(void)
+{
+	const struct flash_area *fa;
+	uint8_t hdr[32];
+	uint8_t tlv_hdr[4];
+	uint8_t kh[FW_KEYHASH_KEY_LEN];
+	bool ok = false;
+
+	if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
+		return false;
+	}
+
+	/* 镜像头: magic LE32 @0, hdr_size LE16 @8, img_size LE32 @12 */
+	if (flash_area_read(fa, 0, hdr, sizeof(hdr)) != 0 ||
+	    sys_get_le32(hdr) != IMG_MAGIC) {
+		LOG_ERR("fw keyhash: no image magic");
+		goto out;
+	}
+	uint32_t hdr_size = sys_get_le16(hdr + 8);
+	uint32_t img_size = sys_get_le32(hdr + 12);
+	uint32_t tlv_off = hdr_size + img_size;
+
+	if (hdr_size < 32 || (hdr_size & 0x3) || tlv_off % 4 ||
+	    tlv_off + 4 > fw_upg.received) {
+		LOG_ERR("fw keyhash: bad image header (hdr=%u img=%u)",
+			hdr_size, img_size);
+		goto out;
+	}
+	if (flash_area_read(fa, tlv_off, tlv_hdr, sizeof(tlv_hdr)) != 0 ||
+	    sys_get_le16(tlv_hdr) != IMG_TLV_INFO_MAGIC) {
+		LOG_ERR("fw keyhash: no TLV info magic");
+		goto out;
+	}
+
+	/* 遍历 TLV 找 KEYHASH (type=0x0001, len=32). MCUboot 镜像头与 TLV
+	 * 字段均为小端 */
+	uint32_t off = tlv_off + 4;
+	uint16_t type = 0, len = 0;
+
+	for (; off + 4 <= fw_upg.received; off += 4 + len) {
+		if (flash_area_read(fa, off, tlv_hdr, sizeof(tlv_hdr)) != 0) {
+			goto out;
+		}
+		type = sys_get_le16(tlv_hdr);
+		len = sys_get_le16(tlv_hdr + 2);
+		if (type == 0 || len == 0 || off + 4 + len > fw_upg.received) {
+			break;
+		}
+		if (type == IMG_TLV_KEYHASH && len == FW_KEYHASH_KEY_LEN) {
+			if (flash_area_read(fa, off + 4, kh, sizeof(kh)) != 0) {
+				goto out;
+			}
+			if (memcmp(kh, fw_keyhash, FW_KEYHASH_KEY_LEN) != 0) {
+				LOG_ERR("fw keyhash mismatch");
+				goto out;
+			}
+			ok = true;
+			break;
+		}
+	}
+	if (!ok) {
+		LOG_ERR("fw keyhash: KEYHASH TLV not found (unsigned image?)");
+	}
+
+out:
+	flash_area_close(fa);
+	return ok;
+}
+
 /* 处理一条客户端 JSON 命令, 回 ack (do 命令回改变后的完整快照) */
 static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 {
@@ -194,6 +271,17 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 	} else if (strncmp(cmd, "\"save\"", 6) == 0) {
 		holding_reg_save();
 		n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":true}");
+	} else if (strncmp(cmd, "\"factory_reset\"", 14) == 0) {
+		/* 恢复出厂: 擦 storage_partition (FCB 参数), 成功后置延迟重启
+		 * (main 循环 history_sync + 冷重启, 与 UDP/升级路径一致) */
+		if (settings_factory_reset() == 0) {
+			LOG_INF("factory reset via ws, rebooting");
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":true}");
+			set_reboot_status(true);
+		} else {
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+				     "{\"ok\":false,\"err\":\"erase failed\"}");
+		}
 	} else if (strncmp(cmd, "\"fw_start\"", 10) == 0 && !fw_upg.active) {
 		int32_t fw_size = 0;
 
@@ -209,7 +297,7 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 					     "{\"ok\":false,\"err\":\"flash open\"}");
 			} else {
 				watchdog_feed();
-				int rc = flash_area_erase(fa, 0, fa->fa_size);
+				int rc = flash_area_erase(fa, 0, ROUND_UP((uint32_t)fw_size, 4096));
 
 				watchdog_feed();
 				flash_area_close(fa);
@@ -239,6 +327,9 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 		} else if (!fw_upg_verify_crc()) {
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"crc mismatch\"}");
+		} else if (!fw_upg_verify_keyhash()) {
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+				     "{\"ok\":false,\"err\":\"keyhash mismatch\"}");
 		} else if (boot_request_upgrade(1) != 0) {
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"boot_request\"}");

@@ -353,6 +353,7 @@ footer{text-align:center;color:#b6bcc9;font-size:12px;padding-top:8px}
 			<button class="btn pri" id="cfWriteBtn" onclick="applyCfg()">写入配置</button>
 			<button class="btn" id="cfSaveBtn" onclick="wsSave()">保存参数</button>
 			<button class="btn danger" onclick="rebootDev()">重启设备</button>
+			<button class="btn danger" onclick="factoryReset()">恢复出厂</button>
 		</div>
 	</div>
 </section>
@@ -635,6 +636,15 @@ async function rebootDev(){
 	try{await api("/api/reboot",{method:"POST",body:"{}"})}catch(e){}
 	toast("设备正在重启，约 15 秒后自动刷新","info");
 	setTimeout(()=>location.reload(),15000);
+}
+async function factoryReset(){
+	if(!await showConfirm("恢复出厂将清除全部已保存参数并重启设备，确认？"))return;
+	let r;
+	try{r=await wsSend({cmd:"factory_reset"})}catch(e){
+		toast("WebSocket 未连接","err");return}
+	if(!r||r.ok!==true){toast("恢复出厂失败: "+((r&&r.err)||"设备忙"),"err");return}
+	toast("已恢复出厂设置，设备重启中，约 20 秒后刷新","info");
+	setTimeout(()=>location.reload(),20000);
 }
 
 /* ---------------- 历史记录 ---------------- */

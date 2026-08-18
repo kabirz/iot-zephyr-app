@@ -18,6 +18,7 @@
  *   io ip a.b.c.d          -- 设静态 IP (保存+重启生效)
  *   io reg [a [v]]         -- 寄存器全量 dump / 单读 / 单写 (FC03/FC06 同路径)
  *   io save                -- 参数持久化到 FCB
+ *   io factory             -- 恢复出厂设置 (擦参数区 + 延迟重启)
  *
  * 写路径全部复用 io_write_holding / io_write_do_bit,
  * 与 Modbus/Web (HTTP/WS)/UDP 副作用一致。
@@ -366,6 +367,24 @@ static int cmd_save(const struct shell *sh, size_t argc, char *argv[])
 	return 0;
 }
 
+/* ==================== factory reset ==================== */
+
+/* io factory: 擦 storage_partition (FCB 参数区), 置延迟重启
+ * (main 循环 history_sync + 排空日志后冷重启, 与 UDP/Web 路径一致) */
+static int cmd_factory(const struct shell *sh, size_t argc, char *argv[])
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	if (settings_factory_reset() != 0) {
+		shell_error(sh, "factory reset failed (erase)");
+		return -EIO;
+	}
+	set_reboot_status(true);
+	shell_print(sh, "factory reset done, rebooting (defaults after reboot)");
+	return 0;
+}
+
 /* ==================== 命令树 ==================== */
 
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_io_do,
@@ -398,6 +417,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_io,
 	SHELL_CMD_ARG(reg, NULL, "dump / read / write holding register: "
 		      "[addr [value]]", cmd_reg, 1, 2),
 	SHELL_CMD(save, NULL, "persist parameters to FCB", cmd_save),
+	SHELL_CMD(factory, NULL, "factory reset (erase params + reboot)", cmd_factory),
 	SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(io, &sub_io, "io-edge-hub debug commands", NULL);
