@@ -109,9 +109,13 @@ class Archive(WestCommand):
                     hex_file_lists.append(image_dir/'zephyr.hex')
                 elif image['type'] == 'MAIN':
                     app_path = build_dir/image['name']
+                    src_path = Path(image['source-dir'])
+                    history_file = src_path/'VERSION_HISTORY.txt'
+                    if history_file.exists():
+                        shutil.copyfile(history_file, images_path/'版本历史.txt')
                     image_dir = app_path/'zephyr'
-                    shutil.copyfile(image_dir/'zephyr.signed.bin', images_path/'app.bin')
-                    shutil.copyfile(image_dir/'zephyr.signed.hex', images_path/'app.hex')
+                    shutil.copyfile(image_dir/'zephyr.signed.bin', images_path/'update.bin')
+                    shutil.copyfile(image_dir/'zephyr.signed.hex', images_path/'update.hex')
                     hex_file_lists.append(image_dir/'zephyr.signed.hex')
                     app_name = image['name']
             if hex_file_lists:
@@ -135,8 +139,8 @@ class Archive(WestCommand):
             app_name = Path(app_info['source-dir']).name
             image_dir = build_dir/'zephyr'
             if (image_dir/'zephyr.bin').exists():
-                shutil.copyfile(image_dir/'zephyr.bin', images_path/'app.bin')
-                shutil.copyfile(image_dir/'zephyr.hex', images_path/'app.hex')
+                shutil.copyfile(image_dir/'zephyr.bin', images_path/'update.bin')
+                shutil.copyfile(image_dir/'zephyr.hex', images_path/'update.hex')
             elif (image_dir/'zephyr.exe').exists():
                 shutil.copyfile(image_dir/'zephyr.exe', images_path/'app.exe')
             elif (image_dir/'zephyr.elf').exists():
@@ -152,7 +156,7 @@ class Archive(WestCommand):
         self.inf(f'Files compressed into {out_zip_file}, List:')
         with zipfile.ZipFile(out_zip_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file in paths.rglob('*'):
-                if file.is_file():
+                if file.is_file() and file.name in ('update.bin', 'full_output.hex', '版本历史.txt'):
                     zipf.write(file, file.relative_to(paths))
                     self.inf(f'    {file.relative_to(paths)}')
 
