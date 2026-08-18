@@ -25,6 +25,7 @@ manifest:
           - tf-psa-crypto
 
     - name: canopen
+      repo-path: canopen-zephyr
       revision: main
       path: modules/canopen-zephyr
       submodules:
