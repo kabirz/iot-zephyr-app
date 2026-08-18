@@ -482,8 +482,8 @@ static int can_fw_init(void)
 {
 	int err;
 
-	/* bootloader 构建中 CAN 失败不致命 (SYS_INIT 失败会 k_panic
-	 * 拒绝启动), 最多损失升级功能 */
+	/* bootloader 构建中 CAN 失败不致命 (SYS_INIT 返回错误本就被内核
+	 * 忽略), 最多损失升级功能 */
 #define CAN_INIT_BAIL(rc) \
 	do { \
 		IF_ENABLED(CONFIG_CAN_FW_UPGRADE_BOOT_WAIT, (return 0;)) \
@@ -498,6 +498,21 @@ static int can_fw_init(void)
 	uint32_t bitrate = bitrate_override ? bitrate_override
 					   : CONFIG_CAN_FW_UPGRADE_BITRATE;
 
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+	/* bootloader 域 ONE_SHOT (NART=1): 波特率与上位机不一致的总线上,
+	 * bxCAN 默认 NART=0 对无 ACK 帧无限自动重传 — CAN 发送路径中唯一
+	 * 无上界的机制 (软件侧等待均带超时)。实测波特率失配时启动期首个
+	 * 发往总线的帧即引发持续重传, 后续日志全部停更; 改对波特率后
+	 * 重传得到 ACK 立即恢复。
+	 * one-shot 使单次尝试后邮箱必然释放, 不再依赖总线侧事件推进。
+	 * 代价: 救援升级中设备回复帧不重传 (健康总线上罕见丢失,
+	 * 上位机有超时重试兜底)。 */
+	err = can_set_mode(can_dev, CAN_MODE_ONE_SHOT);
+	if (err) {
+		LOG_WRN("one-shot mode failed: %d", err);
+	}
+#endif
+
 	err = can_set_bitrate(can_dev, bitrate);
 	if (err) {
 		LOG_ERR("CAN set bitrate failed: %d", err);
@@ -505,8 +520,28 @@ static int can_fw_init(void)
 	}
 	err = can_start(can_dev);
 	if (err) {
-		LOG_ERR("CAN start failed: %d", err);
-		CAN_INIT_BAIL(err);
+		/* 总线被显性电平占据 (典型: 上位机波特率与设备不一致, 其
+		 * 控制器无 ACK 连续重发) 时 leave_init_mode 超时。不视为
+		 * 致命: app 域损失 CAN 升级/业务但 Modbus/UDP/Web 照常,
+		 * 修正波特率重启设备即恢复; boot 域损失救援升级, 正常引导 */
+		LOG_ERR("CAN start failed: %d (bus busy or master baud mismatch?)",
+			err);
+		return 0;
+	}
+
+	/* bxCAN 错误中断风暴抑制 (双域): 上位机波特率与设备不一致时, 其
+	 * 无 ACK 重发流量使总线持续位错误, 驱动开的 ERRIE/BOFIE 每次错误
+	 * 事件触发并立即重置 → CAN IRQ 风暴, 可饿死 PendSV/SysTick 等
+	 * 低优先级上下文。协议不依赖错误中断 (发送均一次性异步, 无状态
+	 * 回调), 关闭错误类中断源; TMEIE (发送完成) / FMPIE0 (接收)
+	 * 保留, 收发不受影响。
+	 * CAN1->IER @ 0x40006414, bit8..12 = EWGIE/EPVIE/BOFIE/ERRIE/LECIE */
+	{
+		volatile uint32_t *can_ier =
+			(volatile uint32_t *)0x40006414UL;
+
+		*can_ier &= ~((1U << 8) | (1U << 9) | (1U << 10) |
+			      (1U << 11) | (1U << 12));
 	}
 
 	/* 全接收过滤器 (mask=0): 所有 CAN 帧进入库 msgq */

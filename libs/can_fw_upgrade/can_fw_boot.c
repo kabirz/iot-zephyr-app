@@ -4,9 +4,10 @@
  *
  * CAN 固件升级库 - MCUboot 启动等待钩子 (boot_go_hook)
  *
- * 在镜像校验/交换前: PROBE_TIMEOUT_MS 窗口内周期发 0x106 探测帧,
+ * 在镜像校验/启动前: PROBE_TIMEOUT_MS 窗口内周期发 0x106 探测帧,
  * 收到上位机 0x107 响应则进入升级等待 (IDLE_TIMEOUT_MS 内无固件帧则
- * 继续启动); CONFIRM 后结束等待, 由 boot_go 在本会话内直接完成 swap。
+ * 继续启动); 升级数据写 slot0, CONFIRM 后结束等待, MCUboot 直接
+ * 验证并启动新固件 (不置 swap 标记, 不走 SWAP_SCRATCH)。
  * 返回前 can_stop(), 应用侧 SYS_INIT 会重新初始化 CAN。
  * 协议处理与 can_fw_upgrade.c 共用 (同源编译, RX 线程复用);
  * 阶段经 0x108 trace 帧广播 (串口丢失时的黑匣子)。
@@ -127,14 +128,19 @@ fih_ret boot_go_hook(struct boot_rsp *rsp)
 				 * 上位机表现为 START 15s 超时 */
 				break;
 			}
+			if (can_fw_rx_busy && (int32_t)(now - can_fw_last_activity_ms) >= 30000) {
+				/* 防御: 擦除最多数秒, rx_busy 持续 30s 视为命令
+				 * 卡死 (如 flash 驱动异常), 放弃等待继续启动,
+				 * 保证设备永不因升级等待而变砖 */
+				LOG_ERR("rx busy >30s, give up boot wait");
+				break;
+			}
 			k_msleep(CAN_FW_BOOT_POLL_MS);
 		}
 
 		if (can_fw_confirmed) {
 			send_boot_trace(CAN_FW_TRACE_CONFIRMED);
 			LOG_INF("firmware confirmed, swap in this session");
-		} else {
-			LOG_INF("no firmware activity, boot app");
 		}
 	}
 
