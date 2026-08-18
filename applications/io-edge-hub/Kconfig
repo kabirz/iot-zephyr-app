@@ -59,6 +59,11 @@ menuconfig IO_WEB
 	select HTTP_SERVER
 	select HTTP_SERVER_WEBSOCKET
 	select HTTP_SERVER_CAPTURE_HEADERS
+	select MBEDTLS_MD_C
+	select MBEDTLS_PSA_CRYPTO_C
+	select PSA_WANT_ALG_HMAC
+	select PSA_WANT_ALG_SHA_256
+	select PSA_WANT_KEY_TYPE_HMAC
 	help
 	  Web management interface: embedded SPA page, REST API
 	  (/api/*), WebSocket realtime push (/ws) and HTTP firmware

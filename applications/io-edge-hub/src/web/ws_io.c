@@ -49,6 +49,7 @@ LOG_MODULE_REGISTER(io_ws, LOG_LEVEL_INF);
 #define WS_TX_BUF_SIZE	640	/* info 帧最大 (~500B) */
 #define WS_PUSH_MS	1000	/* io / regs 推送周期 */
 #define WS_INFO_MS	10000	/* info 推送周期 */
+#define WS_AUTH_TIMEOUT_MS	(5 * 60 * 1000)	/* 首条消息认证超时 5 分钟 */
 
 /* ==================== 固件升级状态 ==================== */
 
@@ -102,6 +103,8 @@ struct ws_slot {
 	int sock;
 	struct k_thread thread;
 	bool in_use;
+	bool authenticated;
+	int64_t last_auth_time;
 	char rx_buf[WS_RX_BUF_SIZE];
 	char tx_buf[WS_TX_BUF_SIZE];
 };
@@ -155,6 +158,26 @@ static bool fw_upg_verify_crc(void)
 		return false;
 	}
 	return true;
+}
+
+/* 处理认证命令: {"cmd":"auth","token":"<jwt>"} */
+static void ws_handle_auth(struct ws_slot *s, const char *buf, size_t len)
+{
+	char token[WEB_AUTH_TOKEN_MAX_LEN + 1];
+	int n;
+
+	if (json_get_str(buf, len, "token", token, sizeof(token)) &&
+	    web_auth_token_valid(token)) {
+		s->authenticated = true;
+		s->last_auth_time = k_uptime_get();
+		LOG_INF("ws[%p] authenticated", (void *)s);
+		n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":true}");
+	} else {
+		LOG_WRN("ws[%p] auth failed", (void *)s);
+		n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":false}");
+	}
+	websocket_send_msg(s->sock, s->tx_buf, n,
+			   WEBSOCKET_OPCODE_DATA_TEXT, false, true, 1000);
 }
 
 /* 处理一条客户端 JSON 命令, 回 ack (do 命令回改变后的完整快照) */
@@ -285,7 +308,17 @@ static void ws_thread(void *p1, void *p2, void *p3)
 					     &remaining, 200);
 
 		if (len == -EAGAIN) {
-			/* 超时: 到推送周期则发快照 */
+			/* 超时: 检查认证超时 */
+			if (!s->authenticated &&
+			    (k_uptime_get() - s->last_auth_time) >= WS_AUTH_TIMEOUT_MS) {
+				LOG_WRN("ws[%p] auth timeout", (void *)s);
+				break;
+			}
+			if (s->authenticated &&
+			    (k_uptime_get() - s->last_auth_time) >= WS_AUTH_TIMEOUT_MS) {
+				LOG_WRN("ws[%p] re-auth timeout", (void *)s);
+				break;
+			}
 		} else if (len < 0) {
 			LOG_INF("ws closed (%d)", len);
 			break;
@@ -295,9 +328,17 @@ static void ws_thread(void *p1, void *p2, void *p3)
 				const char *cmd = json_find_value(s->rx_buf, len, "cmd");
 
 				if (cmd != NULL) {
-					ws_handle_cmd(s, cmd, len - (cmd - s->rx_buf));
+					/* auth 命令不需要已认证状态 */
+					if (strncmp(cmd, "\"auth\"", 6) == 0) {
+						ws_handle_auth(s, s->rx_buf, len);
+					} else if (s->authenticated) {
+						ws_handle_cmd(s, cmd, len - (cmd - s->rx_buf));
+					} else {
+						LOG_WRN("ws[%p] rejected: not authenticated", (void *)s);
+					}
 				}
 			} else if ((type & WEBSOCKET_FLAG_BINARY) &&
+				   s->authenticated &&
 				   fw_upg.active && !fw_upg.failed) {
 				if (flash_img_buffered_write(&fw_upg.fic,
 							     (const uint8_t *)s->rx_buf,
@@ -311,6 +352,11 @@ static void ws_thread(void *p1, void *p2, void *p3)
 					fw_upg.failed = true;
 				}
 			}
+		}
+
+		/* 未认证时不推送数据 */
+		if (!s->authenticated) {
+			continue;
 		}
 
 		if (k_uptime_get() - last_push >= WS_PUSH_MS) {
@@ -354,19 +400,15 @@ static void ws_thread(void *p1, void *p2, void *p3)
 
 /* HTTP 服务器 WebSocket 升级回调.
  * 注意: websocket_register 的解析缓冲是资源级共享的, 并发连接会互相
- * 踩踏, 因此同一时刻只接受 1 条连接 (多余的被拒绝, 前端自动降级轮询). */
+ * 踩踏, 因此同一时刻只接受 1 条连接 (多余的被拒绝, 前端自动降级轮询).
+ * 认证改为首条消息机制: 连接后客户端须在5分钟内发送 auth 命令, 否则断开. */
 int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx,
 		void *user_data)
 {
 	int slot;
 
 	ARG_UNUSED(user_data);
-
-	/* 认证: 查询串 token= (浏览器 WebSocket 无法带 Authorization 头) */
-	if (web_auth_check_request(NULL, request_ctx) != 0) {
-		LOG_WRN("ws rejected: unauthorized");
-		return -EACCES;
-	}
+	ARG_UNUSED(request_ctx);
 
 	slot = ws_get_free_slot();
 	if (slot < 0) {
@@ -378,6 +420,8 @@ int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx,
 
 	s->sock = ws_socket;
 	s->in_use = true;
+	s->authenticated = false;
+	s->last_auth_time = k_uptime_get();
 
 	k_thread_create(&s->thread, ws_stacks[slot],
 			K_THREAD_STACK_SIZEOF(ws_stacks[slot]),

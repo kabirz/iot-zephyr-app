@@ -473,10 +473,7 @@ function logout(){saveTk("");location.reload()}
 
 /* ---------------- 通用 ---------------- */
 async function api(path,opt){
-	/* token 同时走 URL 查询串与 Bearer 头: 查询串不依赖头捕获, 更可靠 */
-	const sep=path.includes("?")?"&":"?";
-	const url=TOKEN?path+sep+"token="+TOKEN:path;
-	const r=await fetch(url,Object.assign({headers:{
+	const r=await fetch(path,Object.assign({headers:{
 		"Content-Type":"application/json",
 		"Authorization":"Bearer "+TOKEN}},opt));
 	if(r.status===401){
@@ -793,15 +790,25 @@ function pollOnline(){
 }
 
 /* ---------------- WebSocket (页面数据主通道) ---------------- */
-let wsRetries=0;
+let wsRetries=0,wsAuthTimer=null;
 const wsCache={info:null,regs:null};
+function wsSendAuth(){
+	if(WS&&WS.readyState===1){
+		WS.send(JSON.stringify({cmd:"auth",token:TOKEN}));
+	}
+}
 function wsConnect(){
 	try{WS&&WS.close()}catch(e){}
-	WS=new WebSocket("ws://"+location.host+"/ws"+tkQ());
+	clearInterval(wsAuthTimer);wsAuthTimer=null;
+	WS=new WebSocket("ws://"+location.host+"/ws");
 	WS.onopen=()=>{
 		wsRetries=0;
 		$("#wsDot").classList.add("ok");$("#wsTxt").textContent="实时";
 		clearInterval(pollTimer);pollTimer=null;
+		/* 首条消息认证 */
+		wsSendAuth();
+		/* 每5分钟重发认证消息 */
+		wsAuthTimer=setInterval(wsSendAuth,5*60*1000);
 	};
 	WS.onmessage=e=>{
 		let d;try{d=JSON.parse(e.data)}catch(err){return}
@@ -827,6 +834,7 @@ function wsConnect(){
 		}
 	};
 	WS.onclose=WS.onerror=()=>{
+		clearInterval(wsAuthTimer);wsAuthTimer=null;
 		$("#wsDot").classList.remove("ok");$("#wsTxt").textContent="离线";
 		WS=null;
 		/* 未认证 / 登录页显示中: 不轮询不重连 (认证后 boot() 重启一切) */

@@ -16,7 +16,7 @@
  *
  * 认证 (web_auth.c): 除 / 与 /api/login 外所有端点需 token —
  *   POST /api/login {"user","pass"} → {"ok":true,"token":"<32hex>"}
- *   HTTP 带 Authorization: Bearer <token>; WS/下载走 ?token= 查询串
+ *   HTTP 带 Authorization: Bearer <token>; WS 首条消息认证/下载走 ?token= 查询串
  *   凭据存 FCB (web/user web/pass), 默认 admin/admin, WS cfg 命令可改
  *   token 集持久化 FCB (web/tk, 最多 4 并发会话), 设备重启不掉线;
  *   修改凭据或出厂恢复后全部作废
@@ -562,7 +562,7 @@ static int login_handler(struct http_client_ctx *client,
 			 struct http_response_ctx *rsp, void *user_data)
 {
 	static char ok_buf[sizeof("{\"ok\":true,\"token\":\"" "") +
-			    WEB_AUTH_TOKEN_HEX_LEN + 2];
+			    WEB_AUTH_TOKEN_MAX_LEN + 2];
 
 	if (status == HTTP_SERVER_TRANSACTION_ABORTED ||
 	    status == HTTP_SERVER_TRANSACTION_COMPLETE) {
@@ -577,7 +577,7 @@ static int login_handler(struct http_client_ctx *client,
 		return 0;
 	}
 
-	char user[16], pass[16], token[WEB_AUTH_TOKEN_HEX_LEN + 1];
+	char user[16], pass[16], token[WEB_AUTH_TOKEN_MAX_LEN + 1];
 
 	if (!json_get_str(body_buf, body_len, "user", user, sizeof(user)) ||
 	    !json_get_str(body_buf, body_len, "pass", pass, sizeof(pass))) {
