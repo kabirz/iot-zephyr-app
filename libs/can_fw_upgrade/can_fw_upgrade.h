@@ -82,4 +82,15 @@ int can_fw_remove_handler(can_fw_app_rx_cb_t cb);
 typedef void (*can_fw_pre_reboot_hook_t)(void);
 void can_fw_add_pre_reboot_hook(can_fw_pre_reboot_hook_t hook);
 
+/**
+ * @brief 覆盖 CAN 波特率 (须在库 SYS_INIT 初始化 CAN 之前调用)
+ *
+ * 应用侧从持久化 settings 恢复用户配置的波特率后注入, 优先于
+ * CONFIG_CAN_FW_UPGRADE_BITRATE; 未调用或传 0 用 Kconfig 默认值.
+ * bootloader 构建无 settings, 始终用 Kconfig 默认值.
+ *
+ * @param bitrate 波特率 (bps, 如 250000); 0 恢复用 Kconfig 默认
+ */
+void can_fw_set_bitrate(uint32_t bitrate);
+
 #endif /* __CAN_FW_UPGRADE_H__ */

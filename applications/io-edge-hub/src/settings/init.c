@@ -53,6 +53,24 @@ static int modbus_settings_init(void)
 #endif
 #ifdef CONFIG_CAN_FW_UPGRADE
 	can_fw_add_pre_reboot_hook(history_sync);
+
+	/* CAN 波特率从持久化参数恢复 (寄存器存 x1000): 注入升级库,
+	 * 库 SYS_INIT (priority 70, 晚于本函数的 11) 初始化 CAN 时生效。
+	 * 值非法 (FCB 损坏) 则不注入, 库用 Kconfig 默认 250k */
+	{
+		uint16_t bps_k = get_holding_reg(HOLDING_CAN_BAUDRATE_IDX);
+
+		switch (bps_k) {
+		case 50: case 100: case 125: case 250:
+		case 500: case 800: case 1000:
+			can_fw_set_bitrate((uint32_t)bps_k * 1000);
+			break;
+		default:
+			LOG_WRN("invalid CAN baudrate in settings (%u), "
+				"using default", bps_k);
+			break;
+		}
+	}
 #endif
 
 	LOG_INF("settings loaded (slave_id=%u ip=%u.%u.%u.%u)",

@@ -469,6 +469,15 @@ K_THREAD_DEFINE(can_fw_rx_thread, CONFIG_CAN_FW_UPGRADE_RX_STACK_SIZE,
  * SYS_INIT: 初始化 CAN (bitrate/start + 全接收过滤器)
  * RX 线程由 K_THREAD_DEFINE 静态创建, 启动后阻塞在 msgq 等待帧。
  * ================================================================ */
+
+/* 应用注入的波特率 (can_fw_set_bitrate, 0=用 Kconfig 默认) */
+static uint32_t bitrate_override;
+
+void can_fw_set_bitrate(uint32_t bitrate)
+{
+	bitrate_override = bitrate;
+}
+
 static int can_fw_init(void)
 {
 	int err;
@@ -486,7 +495,10 @@ static int can_fw_init(void)
 		CAN_INIT_BAIL(-ENODEV);
 	}
 
-	err = can_set_bitrate(can_dev, CONFIG_CAN_FW_UPGRADE_BITRATE);
+	uint32_t bitrate = bitrate_override ? bitrate_override
+					   : CONFIG_CAN_FW_UPGRADE_BITRATE;
+
+	err = can_set_bitrate(can_dev, bitrate);
 	if (err) {
 		LOG_ERR("CAN set bitrate failed: %d", err);
 		CAN_INIT_BAIL(err);
@@ -502,8 +514,8 @@ static int can_fw_init(void)
 
 	can_add_rx_filter_msgq(can_dev, &can_fw_rx_msgq, &filter);
 
-	LOG_INF("CAN FW upgrade initialized, version=v%d.%d.%d_%s",
-		APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL, FW_GIT_VERSION);
+	LOG_INF("CAN FW upgrade initialized, bitrate=%u, version=v%d.%d.%d_%s",
+		bitrate, APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL, FW_GIT_VERSION);
 
 #ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
 	/* trace 帧: 串口日志因 USB 重枚举丢失时在 candump 上标记启动阶段 */
