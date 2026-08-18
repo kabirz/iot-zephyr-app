@@ -183,6 +183,20 @@ static u16 crc16_ccitt(const u8 *data, size_t len)
 	return seed;
 }
 
+/* ==================== 时间戳 ==================== */
+
+static void ts_printf(FILE *fp, const char *fmt, ...)
+{
+	time_t now = time(NULL);
+	struct tm *tm = localtime(&now);
+	va_list ap;
+
+	fprintf(fp, "%02d:%02d:%02d ", tm->tm_hour, tm->tm_min, tm->tm_sec);
+	va_start(ap, fmt);
+	vfprintf(fp, fmt, ap);
+	va_end(ap);
+}
+
 /* ==================== 进度条 ==================== */
 
 static void progress_init(struct progress *p, size_t total, const char *label)
@@ -228,7 +242,7 @@ static void progress_message(struct progress *p, const char *msg)
 		fputc('\n', stderr);
 	}
 	p->last_pct = -1;
-	printf("%s\n", msg);
+	ts_printf(stdout, "%s\n", msg);
 	fflush(stdout);
 }
 
@@ -245,18 +259,18 @@ static int parse_image(const char *path, struct fw_image *img, int require_keyha
 	size_t off;
 
 	if (!f) {
-		fprintf(stderr, "文件不存在或不可读: %s: %s\n", path, strerror(errno));
+		ts_printf(stderr, "文件不存在或不可读: %s: %s\n", path, strerror(errno));
 		return EXIT_IMAGE_ERR;
 	}
 	if (fseek(f, 0, SEEK_END) != 0) {
 		fclose(f);
-		fprintf(stderr, "fseek 失败\n");
+		ts_printf(stderr, "fseek 失败\n");
 		return EXIT_IMAGE_ERR;
 	}
 	sz = ftell(f);
 	if (sz < 32) {
 		fclose(f);
-		fprintf(stderr, "文件过短 (%ldB), 不像 MCUboot 镜像\n", sz);
+		ts_printf(stderr, "文件过短 (%ldB), 不像 MCUboot 镜像\n", sz);
 		return EXIT_IMAGE_ERR;
 	}
 	rewind(f);
@@ -268,32 +282,32 @@ static int parse_image(const char *path, struct fw_image *img, int require_keyha
 	if (fread(data, 1, (size_t)sz, f) != (size_t)sz) {
 		fclose(f);
 		free(data);
-		fprintf(stderr, "读取失败: %s\n", path);
+		ts_printf(stderr, "读取失败: %s\n", path);
 		return EXIT_IMAGE_ERR;
 	}
 	fclose(f);
 
 	if (rd_le32(data) != IMG_MAGIC) {
 		free(data);
-		fprintf(stderr, "magic 不匹配: 期望 0x%08X (非 MCUboot 镜像)\n", IMG_MAGIC);
+		ts_printf(stderr, "magic 不匹配: 期望 0x%08X (非 MCUboot 镜像)\n", IMG_MAGIC);
 		return EXIT_IMAGE_ERR;
 	}
 	hdr_size = rd_le16(data + 8);
 	img_size = rd_le32(data + 12);
 	if (hdr_size < 32 || (hdr_size & 0x3) || img_size > (u32)sz) {
 		free(data);
-		fprintf(stderr, "hdr_size(%u)/img_size(%u) 异常\n", hdr_size, img_size);
+		ts_printf(stderr, "hdr_size(%u)/img_size(%u) 异常\n", hdr_size, img_size);
 		return EXIT_IMAGE_ERR;
 	}
 	tlv_off = (size_t)hdr_size + (size_t)img_size;
 	if (tlv_off + 4 > (size_t)sz) {
 		free(data);
-		fprintf(stderr, "TLV 区起始越界, 镜像可能被截断\n");
+		ts_printf(stderr, "TLV 区起始越界, 镜像可能被截断\n");
 		return EXIT_IMAGE_ERR;
 	}
 	if (rd_le16(data + tlv_off) != IMG_TLV_INFO_MAGIC) {
 		free(data);
-		fprintf(stderr, "TLV info magic 不匹配: 期望 0x%04X\n", IMG_TLV_INFO_MAGIC);
+		ts_printf(stderr, "TLV info magic 不匹配: 期望 0x%04X\n", IMG_TLV_INFO_MAGIC);
 		return EXIT_IMAGE_ERR;
 	}
 
@@ -317,7 +331,7 @@ static int parse_image(const char *path, struct fw_image *img, int require_keyha
 
 	if (require_keyhash && !img->has_keyhash) {
 		free(data);
-		fprintf(stderr, "镜像无 KEYHASH TLV (用 --no-keyhash 跳过校验)\n");
+		ts_printf(stderr, "镜像无 KEYHASH TLV (用 --no-keyhash 跳过校验)\n");
 		return EXIT_IMAGE_ERR;
 	}
 
@@ -495,7 +509,7 @@ static int udp_fw_data_v2_stream(struct udp_ctx *u, const u8 *data, size_t total
 		/* 窗口未完全确认: 从确认处 go-back-N 重传 (重复帧设备自动丢弃) */
 		retries++;
 		if (retries > UDP_FW_V2_MAX_RETRIES) {
-			fprintf(stderr, "\nFW_DATA_V2 窗口重试超限 (offset=%zu, "
+			ts_printf(stderr, "\nFW_DATA_V2 窗口重试超限 (offset=%zu, "
 				"设备停滞或链路中断)\n", confirmed);
 			return -ETIMEDOUT;
 		}
@@ -514,17 +528,17 @@ static int udp_get_version(const char *ip, int port, char *out, int out_cap)
 
 	rc = udp_open(&u, ip, port);
 	if (rc < 0) {
-		fprintf(stderr, "UDP 打开失败: %s\n", strerror(-rc));
+		ts_printf(stderr, "UDP 打开失败: %s\n", strerror(-rc));
 		return EXIT_COMM_ERR;
 	}
 	n = udp_send_recv(&u, UDP_FW_CMD_GET_VERSION, NULL, 0, reply, sizeof(reply), UDP_TIMEOUT_MS);
 	udp_close(&u);
 	if (n < 0) {
-		fprintf(stderr, "GET_VERSION 失败: %s\n", strerror(-n));
+		ts_printf(stderr, "GET_VERSION 失败: %s\n", strerror(-n));
 		return EXIT_COMM_ERR;
 	}
 	if (n < 2) {
-		fprintf(stderr, "GET_VERSION 回复过短\n");
+		ts_printf(stderr, "GET_VERSION 回复过短\n");
 		return EXIT_COMM_ERR;
 	}
 	len = n - 1;
@@ -555,18 +569,18 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 	}
 	progress_init(&prog, 1, "");
 	progress_message(&prog, "");
-	printf("镜像: %s (%zuB)  keyhash=%s\n", file, img.size,
+	ts_printf(stdout, "镜像: %s (%zuB)  keyhash=%s\n", file, img.size,
 	       no_keyhash ? "跳过" : (img.has_keyhash ? "有" : "无"));
 
 	rc = udp_open(&u, ip, port);
 	if (rc < 0) {
-		fprintf(stderr, "UDP 打开失败: %s\n", strerror(-rc));
+		ts_printf(stderr, "UDP 打开失败: %s\n", strerror(-rc));
 		rc = EXIT_COMM_ERR;
 		goto out_free;
 	}
 
 	/* [1/4] FW_START */
-	progress_message(&prog, "[1/4] FW_START (擦写 slot1, 请稍候 ~5s)...");
+	progress_message(&prog, "[1/4] FW_START (擦写 flash, 请稍候 ~5s)...");
 	{
 		u8 pl[4 + IMG_KEYHASH_LEN];
 		int plen = 4;
@@ -580,22 +594,22 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 				  UDP_FW_START_TIMEOUT_MS);
 	}
 	if (n < 0) {
-		fprintf(stderr, "\nFW_START 失败: %s\n", strerror(-n));
+		ts_printf(stderr, "\nFW_START 失败: %s\n", strerror(-n));
 		rc = EXIT_COMM_ERR;
 		goto out_close;
 	}
 	if (n < 2) {
-		fprintf(stderr, "\nFW_START 回复过短\n");
+		ts_printf(stderr, "\nFW_START 回复过短\n");
 		rc = EXIT_COMM_ERR;
 		goto out_close;
 	}
 	if (reply[1] == 2) {
-		fprintf(stderr, "\n设备拒绝: keyhash 不匹配\n");
+		ts_printf(stderr, "\n设备拒绝: keyhash 不匹配\n");
 		rc = EXIT_DEVICE_REJECT;
 		goto out_close;
 	}
 	if (reply[1] != 1) {
-		fprintf(stderr, "\n设备拒绝 FW_START (status=%u)\n", reply[1]);
+		ts_printf(stderr, "\n设备拒绝 FW_START (status=%u)\n", reply[1]);
 		rc = EXIT_DEVICE_REJECT;
 		goto out_close;
 	}
@@ -608,18 +622,18 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 
 	/* [2/4] FW_DATA (设备支持 V2 走窗口流水线, 否则回退停等) */
 	if (v2_chunk >= 512) {
-		printf("[2/4] FW_DATA_V2 发送 %zuB (窗口 %d x %uB)...\n",
+		ts_printf(stdout, "[2/4] FW_DATA_V2 发送 %zuB (窗口 %d x %uB)...\n",
 		       img.size, UDP_FW_WINDOW, v2_chunk);
 		progress_init(&prog, img.size, "      数据");
 		rc = udp_fw_data_v2_stream(&u, img.data, img.size, (int)v2_chunk, &prog);
 		if (rc < 0) {
-			fprintf(stderr, "\nFW_DATA_V2 失败: %s\n", strerror(-rc));
+			ts_printf(stderr, "\nFW_DATA_V2 失败: %s\n", strerror(-rc));
 			rc = EXIT_COMM_ERR;
 			goto out_close;
 		}
 		goto data_done;
 	}
-	printf("[2/4] FW_DATA 发送 %zuB (停等 511B)...\n", img.size);
+	ts_printf(stdout, "[2/4] FW_DATA 发送 %zuB (停等 511B)...\n", img.size);
 	progress_init(&prog, img.size, "      数据");
 	off = 0;
 	while (off < img.size) {
@@ -633,13 +647,13 @@ static int upgrade_udp(const char *ip, int port, const char *file,
 		n = udp_send_recv(&u, UDP_FW_CMD_DATA, pl + 1, chunk, reply, sizeof(reply),
 				  UDP_TIMEOUT_MS);
 		if (n < 0) {
-			fprintf(stderr, "\nFW_DATA 失败 (offset=%u): %s\n",
+			ts_printf(stderr, "\nFW_DATA 失败 (offset=%u): %s\n",
 				off, strerror(-n));
 			rc = EXIT_COMM_ERR;
 			goto out_close;
 		}
 		if (n < 5) {
-			fprintf(stderr, "\nFW_DATA 回复过短\n");
+			ts_printf(stderr, "\nFW_DATA 回复过短\n");
 			rc = EXIT_COMM_ERR;
 			goto out_close;
 		}
@@ -651,7 +665,7 @@ data_done:
 
 	/* [3/4] FW_END */
 	crc = crc16_ccitt(img.data, img.size);
-	printf("[3/4] FW_END (CRC=0x%04X, flush + 读回校验 ~10s)...\n", crc);
+	ts_printf(stdout, "[3/4] FW_END (CRC=0x%04X, flush + 读回校验 ~10s)...\n", crc);
 	{
 		u8 pl[3];
 
@@ -661,12 +675,12 @@ data_done:
 				  UDP_FW_END_TIMEOUT_MS);
 	}
 	if (n < 0) {
-		fprintf(stderr, "\nFW_END 失败: %s\n", strerror(-n));
+		ts_printf(stderr, "\nFW_END 失败: %s\n", strerror(-n));
 		rc = EXIT_COMM_ERR;
 		goto out_close;
 	}
 	if (n < 2 || reply[1] != 1) {
-		fprintf(stderr, "\nFW_END 失败 (result=%u, CRC 不匹配或写 flash 失败)\n",
+		ts_printf(stderr, "\nFW_END 失败 (result=%u, CRC 不匹配或写 flash 失败)\n",
 			n >= 2 ? reply[1] : 0);
 		rc = EXIT_DEVICE_REJECT;
 		goto out_close;
@@ -674,15 +688,15 @@ data_done:
 	progress_message(&prog, "[3/4] FW_END OK");
 
 	/* [4/4] REBOOT: 设备回复后 100ms 冷重启, 无回复不视为失败 */
-	printf("[4/4] REBOOT (触发 MCUboot 交换)...\n");
+	ts_printf(stdout, "[4/4] REBOOT (触发设备重启)...\n");
 	n = udp_send_recv(&u, UDP_FW_CMD_REBOOT, NULL, 0, reply, sizeof(reply),
 			  UDP_TIMEOUT_MS);
 	if (n < 0) {
-		printf("[4/4] REBOOT 已发送 (无回复, 设备可能已重启)\n");
+		ts_printf(stdout, "[4/4] REBOOT 已发送 (无回复, 设备可能已重启)\n");
 	} else {
-		printf("[4/4] REBOOT OK\n");
+		ts_printf(stdout, "[4/4] REBOOT OK\n");
 	}
-	printf("升级完成 (%s), 等待设备重启...\n",
+	ts_printf(stdout, "升级完成 (%s), 等待设备重启...\n",
 	       test_mode ? "测试模式" : "永久模式");
 	rc = EXIT_OK;
 
@@ -852,30 +866,30 @@ static int can_get_version(const char *ifname, char *out, int out_cap)
 
 	rc = can_open(&c, ifname);
 	if (rc < 0) {
-		fprintf(stderr, "CAN 打开失败 (%s): %s\n", ifname, strerror(-rc));
+		ts_printf(stderr, "CAN 打开失败 (%s): %s\n", ifname, strerror(-rc));
 		return EXIT_COMM_ERR;
 	}
 	can_flush_rx(&c, 200);
 	rc = can_send_fw_cmd(&c, CAN_FW_CMD_VERSION, 0);
 	if (rc < 0) {
-		fprintf(stderr, "VERSION 命令发送失败: %s\n", strerror(-rc));
+		ts_printf(stderr, "VERSION 命令发送失败: %s\n", strerror(-rc));
 		can_close(&c);
 		return EXIT_COMM_ERR;
 	}
 	rc = can_wait_reply(&c, &code, &arg, CAN_FRAME_TIMEOUT_MS);
 	if (rc < 0) {
-		fprintf(stderr, "VERSION 等回复超时\n");
+		ts_printf(stderr, "VERSION 等回复超时\n");
 		can_close(&c);
 		return EXIT_COMM_ERR;
 	}
 	if (code != CAN_FW_CODE_VERSION) {
-		fprintf(stderr, "VERSION 回复 code 异常: %u\n", code);
+		ts_printf(stderr, "VERSION 回复 code 异常: %u\n", code);
 		can_close(&c);
 		return EXIT_COMM_ERR;
 	}
 	total_len = (int)arg;
 	if (total_len <= 0 || total_len > 63) {
-		fprintf(stderr, "VERSION 长度异常: %d\n", total_len);
+		ts_printf(stderr, "VERSION 长度异常: %d\n", total_len);
 		can_close(&c);
 		return EXIT_COMM_ERR;
 	}
@@ -883,7 +897,7 @@ static int can_get_version(const char *ifname, char *out, int out_cap)
 	for (i = 0; i < expected; i++) {
 		rc = can_recv(&c, CAN_ID_FW_VERSION, &fr, CAN_FRAME_TIMEOUT_MS);
 		if (rc < 0) {
-			fprintf(stderr, "VERSION 分片 %d 超时\n", i);
+			ts_printf(stderr, "VERSION 分片 %d 超时\n", i);
 			can_close(&c);
 			return EXIT_COMM_ERR;
 		}
@@ -924,7 +938,7 @@ static int can_enter_boot(struct can_ctx *c)
 	int rc;
 
 	can_flush_rx(c, 200);
-	printf("      REBOOT 已发送 (等待设备进 bootloader)...\n");
+	ts_printf(stdout, "      REBOOT 已发送 (等待设备进 bootloader)...\n");
 	can_send_fw_cmd(c, CAN_FW_CMD_REBOOT, 0);
 
 	deadline = now_ms() + CAN_BOOT_PROBE_WAIT_MS;
@@ -932,7 +946,7 @@ static int can_enter_boot(struct can_ctx *c)
 		long remain = deadline - now_ms();
 
 		if (remain <= 0) {
-			fprintf(stderr, "未收到 bootloader 探测帧 (0x106), 设备未重启或未启用 CAN bootloader\n");
+			ts_printf(stderr, "未收到 bootloader 探测帧 (0x106), 设备未重启或未启用 CAN bootloader\n");
 			return -ETIMEDOUT;
 		}
 		rc = can_recv(c, CAN_ID_FW_BOOT_PROBE, &fr, (int)remain);
@@ -942,10 +956,10 @@ static int can_enter_boot(struct can_ctx *c)
 	}
 
 	if (fr.can_dlc < 8 || rd_le32(fr.data) != CAN_FW_BOOT_PROBE_MAGIC) {
-		fprintf(stderr, "探测帧格式异常 (dlc=%u)\n", fr.can_dlc);
+		ts_printf(stderr, "探测帧格式异常 (dlc=%u)\n", fr.can_dlc);
 		return -EIO;
 	}
-	printf("      bootloader 就绪: v%u.%u.%u\n",
+	ts_printf(stdout, "      bootloader 就绪: v%u.%u.%u\n",
 	       fr.data[4], fr.data[5], fr.data[6]);
 
 	/* 立即应答 (设备探测窗口 500ms) */
@@ -984,25 +998,25 @@ static int can_start_update(struct can_ctx *c, u32 img_size)
 	if (rc < 0) {
 		return rc;
 	}
-	/* 擦 slot1 耗时, 给长超时 */
+	/* 擦 flash 耗时, 给长超时 */
 	rc = can_wait_reply(c, &code, &arg, 10000);
 	if (rc < 0) {
 		return rc;
 	}
 	if (code == CAN_FW_CODE_KEYHASH_ERROR) {
-		fprintf(stderr, "设备拒绝: keyhash 不匹配\n");
+		ts_printf(stderr, "设备拒绝: keyhash 不匹配\n");
 		return -EACCES;
 	}
 	if (code == CAN_FW_CODE_FLASH_ERROR) {
-		fprintf(stderr, "设备拒绝: flash 擦除失败 (arg=%u)\n", arg);
+		ts_printf(stderr, "设备拒绝: flash 擦除失败 (arg=%u)\n", arg);
 		return -EIO;
 	}
 	if (code != CAN_FW_CODE_OFFSET) {
-		fprintf(stderr, "START_UPDATE 意外回复: code=%u arg=%u\n", code, arg);
+		ts_printf(stderr, "START_UPDATE 意外回复: code=%u arg=%u\n", code, arg);
 		return -EIO;
 	}
 	if (arg != 0) {
-		fprintf(stderr, "START_UPDATE 初始 offset 非 0: %u\n", arg);
+		ts_printf(stderr, "START_UPDATE 初始 offset 非 0: %u\n", arg);
 		return -EIO;
 	}
 	return 0;
@@ -1036,11 +1050,11 @@ static int can_send_data(struct can_ctx *c, const u8 *data, size_t len,
 				return rc;
 			}
 			if (code == CAN_FW_CODE_FLASH_ERROR) {
-				fprintf(stderr, "\nFW_DATA flash 写失败 (arg=%u)\n", arg);
+				ts_printf(stderr, "\nFW_DATA flash 写失败 (arg=%u)\n", arg);
 				return -EIO;
 			}
 			if (code == CAN_FW_CODE_TRANSFER_ERROR) {
-				fprintf(stderr, "\nFW_DATA 传输错误 (arg=%u)\n", arg);
+				ts_printf(stderr, "\nFW_DATA 传输错误 (arg=%u)\n", arg);
 				return -EIO;
 			}
 			if (code == CAN_FW_CODE_UPDATE_SUCCESS) {
@@ -1048,7 +1062,7 @@ static int can_send_data(struct can_ctx *c, const u8 *data, size_t len,
 				return 0;
 			}
 			if (code != CAN_FW_CODE_OFFSET) {
-				fprintf(stderr, "\nFW_DATA 意外回复: code=%u arg=%u\n",
+				ts_printf(stderr, "\nFW_DATA 意外回复: code=%u arg=%u\n",
 					code, arg);
 				return -EIO;
 			}
@@ -1073,7 +1087,7 @@ static int can_send_data(struct can_ctx *c, const u8 *data, size_t len,
 			return rc;
 		}
 		if (code != CAN_FW_CODE_UPDATE_SUCCESS && code != CAN_FW_CODE_OFFSET) {
-			fprintf(stderr, "\nFW_DATA 末帧意外回复: code=%u\n", code);
+			ts_printf(stderr, "\nFW_DATA 末帧意外回复: code=%u\n", code);
 			return -EIO;
 		}
 	}
@@ -1095,15 +1109,15 @@ static int can_confirm(struct can_ctx *c, int permanent)
 		return rc;
 	}
 	if (code == CAN_FW_CODE_TRANSFER_ERROR) {
-		fprintf(stderr, "CONFIRM 传输错误 (arg=%u)\n", arg);
+		ts_printf(stderr, "CONFIRM 传输错误 (arg=%u)\n", arg);
 		return -EIO;
 	}
 	if (code != CAN_FW_CODE_CONFIRM) {
-		fprintf(stderr, "CONFIRM 意外回复: code=%u arg=%u\n", code, arg);
+		ts_printf(stderr, "CONFIRM 意外回复: code=%u arg=%u\n", code, arg);
 		return -EIO;
 	}
 	if (arg != CAN_FW_CONFIRM_MAGIC) {
-		fprintf(stderr, "CONFIRM magic 不匹配: 0x%08X\n", arg);
+		ts_printf(stderr, "CONFIRM magic 不匹配: 0x%08X\n", arg);
 		return -EIO;
 	}
 	return 0;
@@ -1121,12 +1135,12 @@ static int upgrade_can(const char *ifname, const char *file,
 	if (rc != EXIT_OK) {
 		return rc;
 	}
-	printf("镜像: %s (%zuB)  keyhash=%s\n", file, img.size,
+	ts_printf(stdout, "镜像: %s (%zuB)  keyhash=%s\n", file, img.size,
 	       no_keyhash ? "跳过" : (img.has_keyhash ? "有" : "无"));
 
 	rc = can_open(&c, ifname);
 	if (rc < 0) {
-		fprintf(stderr, "CAN 打开失败 (%s): %s\n", ifname, strerror(-rc));
+		ts_printf(stderr, "CAN 打开失败 (%s): %s\n", ifname, strerror(-rc));
 		rc = EXIT_COMM_ERR;
 		goto out_free;
 	}
@@ -1134,76 +1148,77 @@ static int upgrade_can(const char *ifname, const char *file,
 	/* [0/4] bootloader 模式: 命令设备重启 → 应答 MCUboot 探测,
 	 * 之后整个升级在 bootloader 内完成 (设备掉底牌也能升级) */
 	if (boot_mode) {
-		printf("[0/4] bootloader 模式: 等待 MCUboot 探测 (0x106)...\n");
+		ts_printf(stdout, "[0/4] bootloader 模式: 等待 MCUboot 探测 (0x106)...\n");
 		rc = can_enter_boot(&c);
 		if (rc < 0) {
-			fprintf(stderr, "进入 bootloader 失败: %s\n", strerror(-rc));
+			ts_printf(stderr, "进入 bootloader 失败: %s\n", strerror(-rc));
 			rc = EXIT_COMM_ERR;
 			goto out_close;
 		}
-		printf("[0/4] bootloader 已应答, 升级将在 bootloader 内进行\n");
+		ts_printf(stdout, "[0/4] bootloader 已应答, 升级将在 bootloader 内进行\n");
 	}
 
 	/* [1/4] keyhash */
 	if (img.has_keyhash && !no_keyhash) {
-		printf("[1/4] 发送 keyhash (5 帧 0x104)...\n");
+		ts_printf(stdout, "[1/4] 发送 keyhash (5 帧 0x104)...\n");
 		rc = can_send_keyhash(&c, img.keyhash);
 		if (rc < 0) {
-			fprintf(stderr, "keyhash 发送失败: %s\n", strerror(-rc));
+			ts_printf(stderr, "keyhash 发送失败: %s\n", strerror(-rc));
 			rc = EXIT_COMM_ERR;
 			goto out_close;
 		}
-		printf("      keyhash 5 帧已发送 (32B)\n");
-		printf("[1/4] keyhash 已发送\n");
+		ts_printf(stdout, "      keyhash 5 帧已发送 (32B)\n");
+		ts_printf(stdout, "[1/4] keyhash 已发送\n");
 	} else {
-		printf("[1/4] 跳过 keyhash (--no-keyhash)\n");
+		ts_printf(stdout, "[1/4] 跳过 keyhash (--no-keyhash)\n");
 	}
 
 	/* [2/4] START_UPDATE */
-	printf("[2/4] START_UPDATE (size=%zuB, 擦 slot1 ~5s)...\n", img.size);
+	ts_printf(stdout, "[2/4] START_UPDATE (size=%zuB, 擦 flash ~5s)...\n", img.size);
 	rc = can_start_update(&c, (u32)img.size);
 	if (rc < 0) {
 		if (rc == -EACCES) {
 			rc = EXIT_DEVICE_REJECT;
 		} else {
-			fprintf(stderr, "START_UPDATE 失败: %s\n", strerror(-rc));
+			ts_printf(stderr, "START_UPDATE 失败: %s\n", strerror(-rc));
 			rc = EXIT_COMM_ERR;
 		}
 		goto out_close;
 	}
-	printf("[2/4] START_UPDATE OK\n");
+	ts_printf(stdout, "[2/4] START_UPDATE OK\n");
 
 	/* [3/4] 数据 */
-	printf("[3/4] FW_DATA 发送 %zuB (8B/帧, 每 64B 流控)...\n", img.size);
+	ts_printf(stdout, "[3/4] FW_DATA 发送 %zuB (8B/帧, 每 64B 流控)...\n", img.size);
 	progress_init(&prog, img.size, "      数据");
 	rc = can_send_data(&c, img.data, img.size, img.size, &prog);
 	if (rc < 0) {
-		fprintf(stderr, "\nFW_DATA 失败: %s\n", strerror(-rc));
+		ts_printf(stderr, "\nFW_DATA 失败: %s\n", strerror(-rc));
 		rc = EXIT_COMM_ERR;
 		goto out_close;
 	}
-	printf("[3/4] FW_DATA 完成\n");
+	ts_printf(stdout, "[3/4] FW_DATA 完成\n");
 
 	/* [4/4] CONFIRM */
-	printf("[4/4] CONFIRM (%s模式)...\n", test_mode ? "测试" : "永久");
+	ts_printf(stdout, "[4/4] CONFIRM (%s模式)...\n", test_mode ? "测试" : "永久");
 	rc = can_confirm(&c, !test_mode);
 	if (rc < 0) {
-		fprintf(stderr, "CONFIRM 失败: %s\n", strerror(-rc));
+		ts_printf(stderr, "CONFIRM 失败: %s\n", strerror(-rc));
 		rc = EXIT_COMM_ERR;
 		goto out_close;
 	}
-	printf("[4/4] CONFIRM OK (%s)\n", test_mode ? "测试模式" : "永久模式");
+	ts_printf(stdout, "[4/4] CONFIRM OK (%s)\n", test_mode ? "测试模式" : "永久模式");
 
-	/* CONFIRM 后设备在 bootloader 本会话内直接完成交换 (无重启,
-	 * 约 30-40s); 普通模式需发 REBOOT 让设备重启触发交换 */
-	if (boot_mode) {
-		printf("      CONFIRM 完成, 设备在本会话内交换 (~30-40s), 等待新固件...\n");
-	} else {
-		printf("      REBOOT (触发设备重启)...\n");
+	/* CONFIRM 后行为:
+	 * - boot_mode: 写 slot0, hook 退出后 MCUboot 直接验证启动, 无需 reboot
+	 * - 非 boot_mode: 写 slot1, 发 REBOOT 让 MCUboot 做 SWAP_SCRATCH 交换 slot1→slot0 */
+	if (!boot_mode) {
+		ts_printf(stdout, "      REBOOT (触发 MCUboot swap)...\n");
 		can_send_fw_cmd(&c, CAN_FW_CMD_REBOOT, 0);
+	} else {
+		ts_printf(stdout, "      MCUboot 验证并启动新固件, 等待重启...\n");
 	}
 	usleep(100000);
-	printf("升级完成 (%s), 等待设备重启...\n",
+	ts_printf(stdout, "升级完成 (%s), 等待设备重启...\n",
 	       test_mode ? "测试模式" : "永久模式");
 	rc = EXIT_OK;
 
@@ -1218,7 +1233,7 @@ out_free:
 
 static void usage(const char *prog)
 {
-	fprintf(stderr,
+	ts_printf(stderr,
 		"io-edge-hub 固件升级 CLI (Linux)\n\n"
 		"用法:\n"
 		"  %s upgrade  -f <file> [-i <ip>|-c <can>] [选项]\n"
@@ -1266,7 +1281,7 @@ static int parse_common_opts(int argc, char **argv,
 		} else if (strcmp(a, "--no-keyhash") == 0) {
 			*no_keyhash = 1;
 		} else {
-			fprintf(stderr, "未知参数: %s\n", a);
+			ts_printf(stderr, "未知参数: %s\n", a);
 			return -1;
 		}
 		optind++;
@@ -1308,7 +1323,7 @@ int main(int argc, char **argv)
 		return EXIT_IMAGE_ERR;
 	}
 	if (boot_mode && !can) {
-		fprintf(stderr, "-b bootloader 模式仅支持 CAN 通道 (需 -c <can>)\n");
+		ts_printf(stderr, "-b bootloader 模式仅支持 CAN 通道 (需 -c <can>)\n");
 		return EXIT_IMAGE_ERR;
 	}
 
@@ -1317,15 +1332,15 @@ int main(int argc, char **argv)
 		if (ip) {
 			rc = udp_get_version(ip, port, ver, sizeof(ver));
 			if (rc == EXIT_OK) {
-				printf("UDP 版本: %s\n", ver);
+				ts_printf(stdout, "UDP 版本: %s\n", ver);
 			}
 		} else if (can) {
 			rc = can_get_version(can, ver, sizeof(ver));
 			if (rc == EXIT_OK) {
-				printf("CAN 版本: %s\n", ver);
+				ts_printf(stdout, "CAN 版本: %s\n", ver);
 			}
 		} else {
-			fprintf(stderr, "version 需要 -i <ip> 或 -c <can>\n");
+			ts_printf(stderr, "version 需要 -i <ip> 或 -c <can>\n");
 			return EXIT_IMAGE_ERR;
 		}
 		return rc;
@@ -1333,7 +1348,7 @@ int main(int argc, char **argv)
 
 	if (strcmp(cmd, "upgrade") == 0) {
 		if (!file) {
-			fprintf(stderr, "upgrade 必须指定 -f <file>\n");
+			ts_printf(stderr, "upgrade 必须指定 -f <file>\n");
 			return EXIT_IMAGE_ERR;
 		}
 		if (ip) {
@@ -1341,11 +1356,11 @@ int main(int argc, char **argv)
 		} else if (can) {
 			return upgrade_can(can, file, test_mode, no_keyhash, boot_mode);
 		}
-		fprintf(stderr, "upgrade 需要 -i <ip> (UDP) 或 -c <can> (CAN)\n");
+		ts_printf(stderr, "upgrade 需要 -i <ip> (UDP) 或 -c <can> (CAN)\n");
 		return EXIT_IMAGE_ERR;
 	}
 
-	fprintf(stderr, "未知子命令: %s (支持 upgrade / version)\n", cmd);
+	ts_printf(stderr, "未知子命令: %s (支持 upgrade / version)\n", cmd);
 	usage(argv[0]);
 	return EXIT_IMAGE_ERR;
 }

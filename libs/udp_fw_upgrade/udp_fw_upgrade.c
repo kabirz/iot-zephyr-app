@@ -256,7 +256,7 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 			if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
 				LOG_ERR("FW_START: flash_area_open failed");
 			} else {
-				flash_area_erase(fa, 0, fa->fa_size);
+				flash_area_erase(fa, 0, ROUND_UP(fw_size, 4096));
 				flash_area_close(fa);
 				if (flash_img_init(&flash_img_ctx) != 0) {
 					LOG_ERR("FW_START: flash_img_init failed");

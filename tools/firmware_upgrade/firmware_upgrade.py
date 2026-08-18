@@ -6,6 +6,10 @@
   can  - Linux SocketCAN (帧 0x101-0x105, 适合 UDP 不可达场景)
          -b 模式: 0x106/0x107 引导握手, 升级全程在 MCUboot 内完成 (掉底牌也能升)
 
+MCUboot 配置:
+  双 slot 模式: -b 模式写 slot0, MCUboot 直接验证启动; 非 -b 模式写
+  slot1, MCUboot SWAP_SCRATCH 交换 slot1→slot0.
+
 镜像格式:
   MCUboot 签名镜像 (zephyr.signed.bin). 脚本自动从 TLV 区提取 KEYHASH (32B),
   升级前发到设备, 设备对比自己编译时的 fw_keyhash.h, 不匹配则拒绝.
@@ -47,10 +51,16 @@ import sys
 import time
 from dataclasses import dataclass
 
+
+def ts() -> str:
+    """返回当前时间戳 'HH:MM:SS '."""
+    t = time.localtime()
+    return f"{t.tm_hour:02d}:{t.tm_min:02d}:{t.tm_sec:02d} "
+
 # 固件协议常量 (与 libs/udp_fw_upgrade + libs/can_fw_upgrade 对齐)
 UDP_FW_PORT_DEFAULT = 8600
 UDP_FW_TIMEOUT_DEFAULT = 2.0       # 单帧默认超时
-UDP_FW_START_TIMEOUT = 5.0         # FW_START 等擦 slot1
+UDP_FW_START_TIMEOUT = 5.0         # FW_START 等擦 flash
 UDP_FW_END_TIMEOUT = 10.0          # FW_END 等 flush + 读回 CRC
 UDP_CHUNK_SIZE = 511               # legacy FW_DATA (固件 RX 缓冲 512B - 1B cmd)
 UDP_CHUNK_SIZE_V2_MAX = 1400       # DATA_V2 上位机上限 (实际取设备协商值)
@@ -131,7 +141,7 @@ class Progress:
         if self.last_pct >= 0 and self.last_pct < 100:
             sys.stdout.write("\n")
         self.last_pct = -1
-        print(msg)
+        print(f"{ts()}{msg}")
 
 
 # ================================================================
@@ -265,7 +275,7 @@ class UdpUpgrade:
             pass  # 重启过程中常失联, 忽略
 
     def fw_start(self, img_size: int, keyhash: bytes):
-        """FW_START (0x01): 擦 slot1 + 初始化 flash_img.
+        """FW_START (0x01): 擦 flash + 初始化 flash_img.
         返回 (status, v2_chunk): status 0=失败 1=成功 2=keyhash 不匹配;
         v2_chunk 为设备 DATA_V2 单帧最大数据量 (老固件回复无此字段 → 0)."""
         payload = struct.pack("<I", img_size)
@@ -346,7 +356,7 @@ def upgrade_udp(ip: str, port: int, image_path: str, test: bool,
     up = UdpUpgrade(ip, port)
     try:
         # 1. FW_START
-        progress.message("[1/4] FW_START (擦写 slot1, 请稍候 ~5s)...")
+        progress.message("[1/4] FW_START (擦写 flash, 请稍候 ~5s)...")
         status, v2_chunk = up.fw_start(img.size, img.keyhash)
         if status == 2:
             raise UpgradeError("设备拒绝: keyhash 不匹配 (镜像签名密钥与设备 fw_keyhash.h 不一致)")
@@ -499,9 +509,9 @@ class CanUpgrade:
             progress.message(f"      keyhash 5 帧已发送 ({IMG_KEYHASH_LEN}B)")
 
     def start_update(self, img_size: int):
-        """0x101 START_UPDATE (cmd=0, arg=size). 设备校验 keyhash + 擦 slot1."""
+        """0x101 START_UPDATE (cmd=0, arg=size). 设备校验 keyhash + 擦 flash."""
         self._send_fw_cmd(CAN_FW_CMD_START_UPDATE, img_size)
-        # 擦 slot1 耗时, 给长超时
+        # 擦 flash 耗时, 给长超时
         code, arg = self._wait_fw_reply(timeout=10.0)
         if code == CAN_FW_CODE_KEYHASH_ERROR:
             raise UpgradeError("设备拒绝: keyhash 不匹配")
@@ -513,32 +523,39 @@ class CanUpgrade:
             raise UpgradeError(f"START_UPDATE 初始 offset 非 0: {arg}")
 
     def send_data(self, data: bytes, total: int, progress: Progress):
-        """0x103 流式发固件数据 (8B/帧, 每 64B 设备回 OFFSET 做流控)."""
-        if len(data) % CAN_DATA_FRAME_PAYLOAD != 0:
-            # 固件按 8B 累积, 不足补 0 (末尾不影响, 总量在 START 时确定)
-            pad = CAN_DATA_FRAME_PAYLOAD - (len(data) % CAN_DATA_FRAME_PAYLOAD)
-            data = data + b"\xff" * pad
+        """0x103 流式发固件数据 (8B/帧, 每 8 帧等 OFFSET 回复做流控)."""
         off = 0
         seq_in_block = 0
-        while off < len(data):
+        while off + CAN_DATA_FRAME_PAYLOAD <= len(data):
             chunk = data[off:off + CAN_DATA_FRAME_PAYLOAD]
             self._send(CAN_ID_FW_DATA, chunk)
             off += CAN_DATA_FRAME_PAYLOAD
             seq_in_block += 1
             progress.update(min(off, total))
+            # 数据发完也要等回复: 尾帧落在流控边界之外时,
+            # 设备的 UPDATE_SUCCESS 若不消费会被下一条 CONFIRM 误读
             if seq_in_block >= CAN_OFFSET_REPLY_INTERVAL or off >= len(data):
-                # 等设备 OFFSET 回复做流控
                 code, arg = self._wait_fw_reply(timeout=5.0)
                 if code == CAN_FW_CODE_FLASH_ERROR:
                     raise UpgradeError(f"FW_DATA flash 写失败 (arg={arg})")
                 if code == CAN_FW_CODE_TRANSFER_ERROR:
                     raise UpgradeError(f"FW_DATA 传输错误 (arg={arg})")
                 if code == CAN_FW_CODE_UPDATE_SUCCESS:
-                    # 全部数据写完, 设备确认
-                    break
+                    return
                 if code != CAN_FW_CODE_OFFSET:
                     raise UpgradeError(f"FW_DATA 意外回复: code={code} arg={arg}")
                 seq_in_block = 0
+        # 不足 8B 的末尾用实际长度发送 (补 0 会使设备 fw_written 超过总数)
+        if off < len(data):
+            self._send(CAN_ID_FW_DATA, data[off:])
+            progress.update(total)
+            code, arg = self._wait_fw_reply(timeout=5.0)
+            if code == CAN_FW_CODE_FLASH_ERROR:
+                raise UpgradeError(f"FW_DATA flash 写失败 (arg={arg})")
+            if code == CAN_FW_CODE_TRANSFER_ERROR:
+                raise UpgradeError(f"FW_DATA 传输错误 (arg={arg})")
+            if code != CAN_FW_CODE_UPDATE_SUCCESS and code != CAN_FW_CODE_OFFSET:
+                raise UpgradeError(f"FW_DATA 意外回复: code={code} arg={arg}")
 
     def confirm(self, permanent: bool):
         """0x101 CONFIRM (cmd=1, arg=permanent?1:0). 设备 boot_request_upgrade."""
@@ -600,7 +617,7 @@ def upgrade_can(channel: str, image_path: str, test: bool,
             progress.message("[1/4] 跳过 keyhash (--no-keyhash)")
 
         # 2. START_UPDATE
-        progress.message(f"[2/4] START_UPDATE (size={img.size:,}B, 擦 slot1 ~5s)...")
+        progress.message(f"[2/4] START_UPDATE (size={img.size:,}B, 擦 flash ~5s)...")
         up.start_update(img.size)
         progress.message("[2/4] START_UPDATE OK")
 
@@ -614,13 +631,13 @@ def upgrade_can(channel: str, image_path: str, test: bool,
         progress.message(f"[4/4] CONFIRM ({'测试' if test else '永久'}模式)...")
         up.confirm(permanent=not test)
         if boot:
-            progress.message("[4/4] CONFIRM OK, 设备在本会话内交换 (~30-40s),"
-                             " 等待新固件...")
+            progress.message("[4/4] CONFIRM OK, MCUboot 验证并启动新固件,"
+                             " 等待重启...")
         else:
             up.reboot()
             mode = "测试模式 (重启后回滚)" if test else "永久模式"
             progress.message(f"[4/4] CONFIRM OK ({mode}), REBOOT 已发送,"
-                             " MCUboot 重启后交换")
+                             " MCUboot swap")
     finally:
         up.close()
 

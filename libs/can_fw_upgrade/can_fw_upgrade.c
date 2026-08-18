@@ -64,7 +64,11 @@ enum fw_code {
 	FW_CODE_KEYHASH_ERROR,   /* keyhash 不一致, 已拒绝升级 */
 };
 
-#define SLOT1_PARTITION_ID PARTITION_ID(slot1_partition)
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+#define FW_TARGET_PARTITION_ID PARTITION_ID(slot0_partition)
+#else
+#define FW_TARGET_PARTITION_ID PARTITION_ID(slot1_partition)
+#endif
 
 /* ================================================================
  * 全局状态
@@ -188,22 +192,23 @@ static void handle_platform_rx(struct can_frame *frame)
 
 		/* 每次都重新擦除 + 初始化: 上次中途失败的传输若不重置,
 		 * 旧偏移/缓冲状态会导致 flash 写错位 */
+		fw_total_size = frame->data_32[1];
 		{
 			const struct flash_area *fa;
 
-			if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
+			if (flash_area_open(FW_TARGET_PARTITION_ID, &fa) != 0) {
 				LOG_ERR("flash_area_open failed");
 				fw_can_reply(FW_CODE_FLASH_ERROR, 0);
 				return;
 			}
-			flash_area_erase(fa, 0, fa->fa_size);
+			flash_area_erase(fa, 0, ROUND_UP(fw_total_size, 4096));
 			flash_area_close(fa);
 
 			/* 显式指定 slot1: flash_img_init() 在无 chosen
 			 * zephyr,code-partition 的构建 (mcuboot) 会选 slot0,
 			 * 数据将未擦除直接覆盖运行镜像 */
 			if (flash_img_init_id(&flash_img_ctx,
-					      SLOT1_PARTITION_ID) != 0) {
+					      FW_TARGET_PARTITION_ID) != 0) {
 				LOG_ERR("flash_img_init failed");
 				fw_img_initialized = false;
 				fw_can_reply(FW_CODE_FLASH_ERROR, 0);
@@ -221,21 +226,16 @@ static void handle_platform_rx(struct can_frame *frame)
 			}
 		}
 
-		LOG_INF("FW upgrade start, size=%d", frame->data_32[1]);
-		fw_total_size = frame->data_32[1];
+		LOG_INF("FW upgrade start, size=%d", fw_total_size);
 		fw_can_reply(FW_CODE_OFFSET, 0);
 
 	} else if (cmd == FW_CMD_CONFIRM) {
-		/* val (data_32[1]): 0=临时升级 (重启后回滚), 1=永久升级.
-		 * 与 gateway UDP 侧语义一致, 直接透传给 boot_request_upgrade.
-		 * 未先成功 START 则拒绝 (不触碰 flash, 对齐 UDP 侧 fw_started 语义). */
 		if (!fw_img_initialized) {
 			LOG_WRN("FW confirm before start");
 			fw_can_reply(FW_CODE_TRANFER_ERROR, 0);
 			return;
 		}
 
-		uint32_t permanent = frame->data_32[1];
 
 		flash_img_buffered_write(&flash_img_ctx, NULL, 0, true);
 		fw_img_initialized = false;
@@ -246,23 +246,28 @@ static void handle_platform_rx(struct can_frame *frame)
 			return;
 		}
 
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+		/* MCUboot -b 模式: 写入 slot0, boot_go_hook 已接管,
+		 * 通知 hook 退出等待, MCUboot 直接验证并启动 slot0
+		 * (无 swap 请求标记, 不走 SWAP_SCRATCH 路径) */
+		LOG_INF("FW upgrade confirmed, written=%zu", fw_written);
+		fw_can_reply(FW_CODE_CONFIRM, 0x55AA55AA);
+		can_fw_confirmed = true;
+#else
+		/* App 上下文: 写入 slot1, 请求 MCUboot 下次启动
+		 * 执行 SWAP_SCRATCH 将 slot1→slot0 激活新镜像 */
+		uint32_t permanent = frame->data_32[1];
 		int ret = boot_request_upgrade(permanent);
 
 		if (ret == 0) {
-#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
-			LOG_INF("FW upgrade confirmed (permanent=%u), swap in this session",
-				permanent);
-			fw_can_reply(FW_CODE_CONFIRM, 0x55AA55AA);
-			can_fw_confirmed = true;
-#else
 			LOG_INF("FW upgrade confirmed (permanent=%u), waiting for reboot",
 				permanent);
 			fw_can_reply(FW_CODE_CONFIRM, 0x55AA55AA);
-#endif
 		} else {
 			LOG_ERR("boot_request_upgrade failed: %d", ret);
 			fw_can_reply(FW_CODE_TRANFER_ERROR, 0);
 		}
+#endif
 
 	} else if (cmd == FW_CMD_VERSION) {
 		/* "v<M>.<m>.<p>_<6hex>" 分帧回复: 先发 code=VERSION (offset=
