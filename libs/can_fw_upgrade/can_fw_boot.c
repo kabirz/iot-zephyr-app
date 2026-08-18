@@ -119,7 +119,12 @@ fih_ret boot_go_hook(struct boot_rsp *rsp)
 			uint32_t now = k_uptime_get_32();
 
 			if ((int32_t)(now - can_fw_last_activity_ms) >=
-			    CONFIG_CAN_FW_UPGRADE_IDLE_TIMEOUT_MS) {
+			    CONFIG_CAN_FW_UPGRADE_IDLE_TIMEOUT_MS &&
+			    !can_fw_rx_busy) {
+				/* idle 到期退出前必须确认 RX 线程不在长命令中
+				 * (START 擦 slot0 阻塞数秒且期间无帧刷新活动),
+				 * 否则 can_stop() 会掐死命令完成后的回复帧,
+				 * 上位机表现为 START 15s 超时 */
 				break;
 			}
 			k_msleep(CAN_FW_BOOT_POLL_MS);

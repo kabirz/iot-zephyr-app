@@ -116,14 +116,21 @@ static inline void can_fw_note_activity(void)
 }
 #endif
 
+/* RX 线程正在处理长命令 (如 START 的 flash 擦除, 阻塞数秒):
+ * boot_go_hook 据此在 idle 判定时暂不退出, 避免 can_stop() 掐死
+ * 命令完成后的回复帧。app 域闲置。 */
+volatile bool can_fw_rx_busy;
+
 #ifdef CAN_FW_KEYHASH_ENABLE
 /* 上位机 keyhash 累积缓冲 (4 x 8B 分帧) + 到齐位图 */
 static uint8_t rx_keybuf[FW_KEYHASH_KEY_LEN];
 static uint8_t key_chunk_mask;
 #endif
 
-/* RX msgq (全接收过滤器投递目标) */
-K_MSGQ_DEFINE(can_fw_rx_msgq, sizeof(struct can_frame), 8, 4);
+/* RX msgq (全接收过滤器投递目标)。深度 32: 上位机 keyhash 5 帧 +
+ * START 在 ~3ms 内连发, 深度 8 在 RX 线程受干扰 (日志/忙总线) 时
+ * 可能溢出丢帧, START 丢失 = 升级无回复超时 */
+K_MSGQ_DEFINE(can_fw_rx_msgq, sizeof(struct can_frame), 32, 4);
 
 /* ================================================================
  * 固件升级响应
@@ -175,6 +182,20 @@ static void handle_platform_rx(struct can_frame *frame)
 			fw_can_reply(FW_CODE_FLASH_ERROR, 0);
 			return;
 		}
+
+#ifdef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
+		/* 诊断 trace: START 帧已到达协议层 (candump 见 0x108#06;
+		 * 之后无 0x102 → 卡在擦除/open, 有 keyhash_error → 密钥不符) */
+		{
+			struct can_frame t = {
+				.id = CAN_FW_BOOT_TRACE_TX,
+				.dlc = can_bytes_to_dlc(1),
+			};
+
+			t.data[0] = CAN_FW_TRACE_FW_START;
+			(void)can_send(can_dev, &t, K_MSEC(100), NULL, NULL);
+		}
+#endif
 
 #ifdef CAN_FW_KEYHASH_ENABLE
 		/* 升级前 keyhash 校验: 仅当上位机先前把 4 帧 keyhash (0x104) 送齐才校验;
@@ -400,7 +421,11 @@ static void can_fw_rx_thread_fn(void *p1, void *p2, void *p3)
 
 		if (frame.id == CAN_FW_PLATFORM_RX) {
 			can_fw_note_activity();
+			/* START 擦 flash 阻塞数秒: 置忙标志让 boot_go_hook
+			 * 不因 idle 超时退出 (can_stop 会掐死擦完后的回复) */
+			can_fw_rx_busy = true;
 			handle_platform_rx(&frame);
+			can_fw_rx_busy = false;
 		} else if (frame.id == CAN_FW_FW_DATA_RX) {
 			can_fw_note_activity();
 			handle_fw_data(&frame);
@@ -414,7 +439,9 @@ static void can_fw_rx_thread_fn(void *p1, void *p2, void *p3)
 			k_sem_give(&can_fw_boot_ack_sem);
 #endif
 		} else {
-			/* 广播给所有已注册的业务帧 handler; 若均未处理则告警 */
+			/* 广播给所有已注册的业务帧 handler; 若均未处理则告警.
+			 * bootloader 构建无业务 handler, 总线上其他节点帧会逐帧
+			 * 刷日志拖慢 RX 线程 (msgq 溢出丢升级帧), 仅静默丢弃 */
 			bool handled = false;
 
 			for (int i = 0; i < CONFIG_CAN_FW_UPGRADE_MAX_HANDLERS; i++) {
@@ -423,10 +450,12 @@ static void can_fw_rx_thread_fn(void *p1, void *p2, void *p3)
 				}
 			}
 			if (!handled) {
+#ifndef CONFIG_CAN_FW_UPGRADE_BOOT_WAIT
 				uint8_t dlc = can_dlc_to_bytes(frame.dlc);
 
 				LOG_WRN("unhandled CAN frame id=0x%03x dlc=%u", frame.id, dlc);
 				LOG_HEXDUMP_WRN(frame.data, dlc, "data");
+#endif
 			}
 		}
 	}
