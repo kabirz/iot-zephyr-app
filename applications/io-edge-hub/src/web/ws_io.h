@@ -21,8 +21,7 @@ extern "C" {
 int ws_io_build_status(char *buf, size_t bufsz);
 
 /* WebSocket 升级回调 (HTTP_RESOURCE_TYPE_WEBSOCKET 的 cb) */
-int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx,
-		void *user_data);
+int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx, void *user_data);
 
 /* /ws 资源描述 (httpd.c 的 HTTP_RESOURCE_DEFINE 引用) */
 extern struct http_resource_detail_websocket ws_io_detail;

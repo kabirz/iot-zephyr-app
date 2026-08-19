@@ -66,8 +66,7 @@ static int can_app_init(void)
 		LOG_ERR("CAN app handler registration failed");
 		return -ENODEV;
 	}
-	LOG_INF("CAN app handler ready (bus id=0x%03x)",
-		get_holding_reg(HOLDING_CAN_ID_IDX));
+	LOG_INF("CAN app handler ready (bus id=0x%03x)", get_holding_reg(HOLDING_CAN_ID_IDX));
 	return 0;
 }
 

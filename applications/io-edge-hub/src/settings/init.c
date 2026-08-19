@@ -61,23 +61,27 @@ static int modbus_settings_init(void)
 		uint16_t bps_k = get_holding_reg(HOLDING_CAN_BAUDRATE_IDX);
 
 		switch (bps_k) {
-		case 50: case 100: case 125: case 250:
-		case 500: case 800: case 1000:
+		case 50:
+		case 100:
+		case 125:
+		case 250:
+		case 500:
+		case 800:
+		case 1000:
 			can_fw_set_bitrate((uint32_t)bps_k * 1000);
 			break;
 		default:
 			LOG_WRN("invalid CAN baudrate in settings (%u), "
-				"using default", bps_k);
+				"using default",
+				bps_k);
 			break;
 		}
 	}
 #endif
 
 	LOG_INF("settings loaded (slave_id=%u ip=%u.%u.%u.%u)",
-		get_holding_reg(HOLDING_SLAVE_ID_IDX),
-		get_holding_reg(HOLDING_IP_OCTET1_IDX),
-		get_holding_reg(HOLDING_IP_OCTET2_IDX),
-		get_holding_reg(HOLDING_IP_OCTET3_IDX),
+		get_holding_reg(HOLDING_SLAVE_ID_IDX), get_holding_reg(HOLDING_IP_OCTET1_IDX),
+		get_holding_reg(HOLDING_IP_OCTET2_IDX), get_holding_reg(HOLDING_IP_OCTET3_IDX),
 		get_holding_reg(HOLDING_IP_OCTET4_IDX));
 	return 0;
 }

@@ -25,8 +25,8 @@ static const struct device *rtc_dev;
 /* 合法时间戳范围: [2000-01-01, 2100-01-01)。超出范围的值通常是主站写入错误
  * (如只写低 16 位、高字为 0 -> 1970 年), gmtime 对部分非法输入会返回 NULL,
  * 解引用将触发 HardFault。这里直接拒绝越界值。 */
-#define TS_MIN	946684800U	/* 2000-01-01 00:00:00 UTC */
-#define TS_MAX	4102444800U	/* 2100-01-01 00:00:00 UTC */
+#define TS_MIN 946684800U  /* 2000-01-01 00:00:00 UTC */
+#define TS_MAX 4102444800U /* 2100-01-01 00:00:00 UTC */
 
 bool set_timestamp(time_t t)
 {
@@ -61,7 +61,7 @@ bool set_timestamp(time_t t)
 		return false;
 	}
 
-	struct timespec ts = { .tv_sec = t, .tv_nsec = 0 };
+	struct timespec ts = {.tv_sec = t, .tv_nsec = 0};
 
 	clock_settime(CLOCK_REALTIME, &ts);
 	LOG_INF("time set: %lld", (long long)t);
@@ -80,9 +80,9 @@ static int clock_init(void)
 	struct rtc_time tm;
 
 	if (rtc_get_time(rtc_dev, &tm) == 0) {
-		tm.tm_isdst = 0;  /* RTC 存储 UTC, 无夏令时 */
+		tm.tm_isdst = 0; /* RTC 存储 UTC, 无夏令时 */
 		time_t t = mktime((struct tm *)&tm);
-		struct timespec ts = { .tv_sec = t, .tv_nsec = 0 };
+		struct timespec ts = {.tv_sec = t, .tv_nsec = 0};
 
 		clock_settime(CLOCK_REALTIME, &ts);
 		LOG_INF("RTC time restored: %lld", (long long)t);

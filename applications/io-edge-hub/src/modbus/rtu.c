@@ -23,7 +23,7 @@ extern const struct modbus_user_callbacks io_modbus_cbs;
 
 static int rtu_init(void)
 {
-	const char iface_name[] = { DEVICE_DT_NAME(MODBUS_NODE) };
+	const char iface_name[] = {DEVICE_DT_NAME(MODBUS_NODE)};
 	int iface = modbus_iface_get_by_name(iface_name);
 
 	if (iface < 0) {
@@ -33,14 +33,16 @@ static int rtu_init(void)
 
 	struct modbus_iface_param param = {
 		.mode = MODBUS_MODE_RTU,
-		.server = {
-			.user_cb = (struct modbus_user_callbacks *)&io_modbus_cbs,
-			.unit_id = (uint8_t)get_holding_reg(HOLDING_SLAVE_ID_IDX),
-		},
-		.serial = {
-			.baud = get_holding_reg(HOLDING_RS485_BAUDRATE_IDX),
-			.parity = UART_CFG_PARITY_NONE,
-		},
+		.server =
+			{
+				.user_cb = (struct modbus_user_callbacks *)&io_modbus_cbs,
+				.unit_id = (uint8_t)get_holding_reg(HOLDING_SLAVE_ID_IDX),
+			},
+		.serial =
+			{
+				.baud = get_holding_reg(HOLDING_RS485_BAUDRATE_IDX),
+				.parity = UART_CFG_PARITY_NONE,
+			},
 	};
 
 	int rc = modbus_init_server(iface, param);
@@ -48,8 +50,8 @@ static int rtu_init(void)
 	if (rc) {
 		LOG_ERR("RTU init failed: %d", rc);
 	} else {
-		LOG_INF("Modbus RTU slave (id=%u, %u bps)",
-			param.server.unit_id, param.serial.baud);
+		LOG_INF("Modbus RTU slave (id=%u, %u bps)", param.server.unit_id,
+			param.serial.baud);
 	}
 	return rc;
 }

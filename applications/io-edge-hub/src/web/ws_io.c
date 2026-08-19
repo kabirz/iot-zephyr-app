@@ -47,18 +47,18 @@
 
 LOG_MODULE_REGISTER(io_ws, LOG_LEVEL_INF);
 
-#define WS_RX_BUF_SIZE	256
-#define WS_TX_BUF_SIZE	640	/* info 帧最大 (~500B) */
-#define WS_PUSH_MS	1000	/* io / regs 推送周期 */
-#define WS_INFO_MS	10000	/* info 推送周期 */
+#define WS_RX_BUF_SIZE 256
+#define WS_TX_BUF_SIZE 640   /* info 帧最大 (~500B) */
+#define WS_PUSH_MS     1000  /* io / regs 推送周期 */
+#define WS_INFO_MS     10000 /* info 推送周期 */
 
 /* ==================== 固件升级状态 ==================== */
 
 #define SLOT1_PARTITION_ID PARTITION_ID(slot1_partition)
-#define IMG_MAGIC		0x96F3B83D
-#define IMG_TLV_INFO_MAGIC	0x6907
-#define IMG_TLV_KEYHASH		0x0001
-#define FW_CRC_CHUNK		64
+#define IMG_MAGIC          0x96F3B83D
+#define IMG_TLV_INFO_MAGIC 0x6907
+#define IMG_TLV_KEYHASH    0x0001
+#define FW_CRC_CHUNK       64
 
 /* 验证客户端发送的 keyhash 与编译时固件签名密钥匹配 */
 static bool fw_upg_verify_client_keyhash(const char *b64_keyhash, size_t b64_len)
@@ -109,22 +109,19 @@ int ws_io_build_status(char *buf, size_t bufsz)
 
 	n += snprintf(buf + n, bufsz - n, "{\"t\":\"io\",\"di\":[");
 	for (int i = 0; i < DI_NUM; i++) {
-		n += snprintf(buf + n, bufsz - n, "%s%u", i ? "," : "",
-			      (di >> i) & 1);
+		n += snprintf(buf + n, bufsz - n, "%s%u", i ? "," : "", (di >> i) & 1);
 	}
 	n += snprintf(buf + n, bufsz - n, "],\"do\":[");
 	for (int i = 0; i < DO_NUM; i++) {
-		n += snprintf(buf + n, bufsz - n, "%s%u", i ? "," : "",
-			      (do_v >> i) & 1);
+		n += snprintf(buf + n, bufsz - n, "%s%u", i ? "," : "", (do_v >> i) & 1);
 	}
 	n += snprintf(buf + n, bufsz - n, "],\"ai\":[");
 	for (int i = 0; i < AI_NUM; i++) {
 		n += snprintf(buf + n, bufsz - n, "%s%u", i ? "," : "",
 			      get_input_reg(INPUT_AI0_IDX + i));
 	}
-	n += snprintf(buf + n, bufsz - n,
-		      "],\"di_en\":%u,\"ai_en\":%u,\"ms\":%lld}",
-		      di_en, ai_en, (long long)k_uptime_get());
+	n += snprintf(buf + n, bufsz - n, "],\"di_en\":%u,\"ai_en\":%u,\"ms\":%lld}", di_en, ai_en,
+		      (long long)k_uptime_get());
 	return (n > (int)bufsz) ? (int)bufsz : n;
 }
 
@@ -185,8 +182,7 @@ static bool fw_upg_verify_crc(void)
 	}
 	flash_area_close(fa);
 	if (calc != fw_upg.crc) {
-		LOG_ERR("fw CRC mismatch: calc=0x%04x recv=0x%04x",
-			calc, fw_upg.crc);
+		LOG_ERR("fw CRC mismatch: calc=0x%04x recv=0x%04x", calc, fw_upg.crc);
 		return false;
 	}
 	return true;
@@ -209,8 +205,7 @@ static bool fw_upg_verify_keyhash(void)
 	}
 
 	/* 镜像头: magic LE32 @0, hdr_size LE16 @8, img_size LE32 @12 */
-	if (flash_area_read(fa, 0, hdr, sizeof(hdr)) != 0 ||
-	    sys_get_le32(hdr) != IMG_MAGIC) {
+	if (flash_area_read(fa, 0, hdr, sizeof(hdr)) != 0 || sys_get_le32(hdr) != IMG_MAGIC) {
 		LOG_ERR("fw keyhash: no image magic");
 		goto out;
 	}
@@ -218,10 +213,8 @@ static bool fw_upg_verify_keyhash(void)
 	uint32_t img_size = sys_get_le32(hdr + 12);
 	uint32_t tlv_off = hdr_size + img_size;
 
-	if (hdr_size < 32 || (hdr_size & 0x3) || tlv_off % 4 ||
-	    tlv_off + 4 > fw_upg.received) {
-		LOG_ERR("fw keyhash: bad image header (hdr=%u img=%u)",
-			hdr_size, img_size);
+	if (hdr_size < 32 || (hdr_size & 0x3) || tlv_off % 4 || tlv_off + 4 > fw_upg.received) {
+		LOG_ERR("fw keyhash: bad image header (hdr=%u img=%u)", hdr_size, img_size);
 		goto out;
 	}
 	if (flash_area_read(fa, tlv_off, tlv_hdr, sizeof(tlv_hdr)) != 0 ||
@@ -271,8 +264,7 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 	int32_t index = 0, addr = 0, value = 0, ts = 0;
 	int n;
 
-	if (strncmp(cmd, "\"do\"", 4) == 0 &&
-	    json_get_i32(cmd, len, "index", &index) &&
+	if (strncmp(cmd, "\"do\"", 4) == 0 && json_get_i32(cmd, len, "index", &index) &&
 	    json_get_i32(cmd, len, "value", &value)) {
 		int rc = web_cmd_exec_do(index, value);
 
@@ -282,13 +274,11 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"bad index\"}");
 		}
-	} else if (strncmp(cmd, "\"reg\"", 5) == 0 &&
-		   json_get_i32(cmd, len, "addr", &addr) &&
+	} else if (strncmp(cmd, "\"reg\"", 5) == 0 && json_get_i32(cmd, len, "addr", &addr) &&
 		   json_get_i32(cmd, len, "value", &value)) {
 		n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":%s}",
 			     web_cmd_exec_reg(addr, value) == 0 ? "true" : "false");
-	} else if (strncmp(cmd, "\"time\"", 6) == 0 &&
-		   json_get_i32(cmd, len, "ts", &ts)) {
+	} else if (strncmp(cmd, "\"time\"", 6) == 0 && json_get_i32(cmd, len, "ts", &ts)) {
 		n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":%s}",
 			     set_timestamp((time_t)ts) ? "true" : "false");
 	} else if (strncmp(cmd, "\"cfg\"", 5) == 0) {
@@ -298,8 +288,8 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 		if (web_cmd_exec_cfg(cmd, len, &err) == 0) {
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":true}");
 		} else {
-			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-				     "{\"ok\":false,\"err\":\"%s\"}", err);
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":false,\"err\":\"%s\"}",
+				     err);
 		}
 	} else if (strncmp(cmd, "\"save\"", 6) == 0) {
 		holding_reg_save();
@@ -354,14 +344,15 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 						     "{\"ok\":false,\"err\":\"flash open\"}");
 				} else {
 					watchdog_feed();
-					int rc = flash_area_erase(fa, 0,
-								  ROUND_UP((uint32_t)fw_size, 4096));
+					int rc = flash_area_erase(
+						fa, 0, ROUND_UP((uint32_t)fw_size, 4096));
 
 					watchdog_feed();
 					flash_area_close(fa);
 					if (rc != 0 || flash_img_init(&fw_upg.fic) != 0) {
-						n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-							     "{\"ok\":false,\"err\":\"erase/init\"}");
+						n = snprintf(
+							s->tx_buf, sizeof(s->tx_buf),
+							"{\"ok\":false,\"err\":\"erase/init\"}");
 					} else {
 						k_mutex_lock(&fw_upg_lock, K_FOREVER);
 						fw_upg.active = true;
@@ -392,8 +383,7 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 					     "{\"ok\":false,\"err\":\"no data\"}");
 			} else if (received != total) {
 				/* 尺寸不符 = 传输缺帧, 残缺镜像不能交给 MCUboot */
-				LOG_ERR("fw size mismatch: recv=%u expect=%u",
-					received, total);
+				LOG_ERR("fw size mismatch: recv=%u expect=%u", received, total);
 				n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 					     "{\"ok\":false,\"err\":\"size mismatch\"}");
 			} else if (!fw_upg_verify_crc()) {
@@ -417,8 +407,7 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 		n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 			     "{\"ok\":false,\"err\":\"unknown cmd\"}");
 	}
-	(void)websocket_send_msg(s->sock, s->tx_buf, n,
-				 WEBSOCKET_OPCODE_DATA_TEXT, false, true,
+	(void)websocket_send_msg(s->sock, s->tx_buf, n, WEBSOCKET_OPCODE_DATA_TEXT, false, true,
 				 1000);
 }
 
@@ -436,14 +425,13 @@ static void ws_thread(void *p1, void *p2, void *p3)
 	/* 避开握手竞态窗口: 101 刚发出时浏览器可能尚未完成 WS 建立,
 	 * 立即推送首帧会被部分客户端当作非法帧导致 RST */
 	k_msleep(300);
-	last_push = k_uptime_get() - WS_PUSH_MS;	/* 立即推首帧 */
+	last_push = k_uptime_get() - WS_PUSH_MS; /* 立即推首帧 */
 	last_info = k_uptime_get() - WS_INFO_MS;
 
 	while (true) {
 		uint32_t type = 0;
 		uint64_t remaining = 0;
-		int len = websocket_recv_msg(s->sock, s->rx_buf,
-					     sizeof(s->rx_buf) - 1, &type,
+		int len = websocket_recv_msg(s->sock, s->rx_buf, sizeof(s->rx_buf) - 1, &type,
 					     &remaining, 200);
 
 		if (len == -EAGAIN) {
@@ -469,8 +457,8 @@ static void ws_thread(void *p1, void *p2, void *p3)
 								     len, false) == 0) {
 						k_mutex_lock(&fw_upg_lock, K_FOREVER);
 						fw_upg.crc = crc16_ccitt(fw_upg.crc,
-									  (const uint8_t *)s->rx_buf,
-									  len);
+									 (const uint8_t *)s->rx_buf,
+									 len);
 						fw_upg.received += len;
 						k_mutex_unlock(&fw_upg_lock);
 					} else {
@@ -487,15 +475,13 @@ static void ws_thread(void *p1, void *p2, void *p3)
 			/* io + regs 帧共用周期, 一次 recv 超时窗口内顺序发出 */
 			int n = ws_io_build_status(s->tx_buf, sizeof(s->tx_buf));
 
-			if (websocket_send_msg(s->sock, s->tx_buf, n,
-					       WEBSOCKET_OPCODE_DATA_TEXT,
+			if (websocket_send_msg(s->sock, s->tx_buf, n, WEBSOCKET_OPCODE_DATA_TEXT,
 					       false, true, 500) < 0) {
 				LOG_INF("ws send failed, closing");
 				break;
 			}
 			n = web_build_regs_json(s->tx_buf, sizeof(s->tx_buf));
-			if (websocket_send_msg(s->sock, s->tx_buf, n,
-					       WEBSOCKET_OPCODE_DATA_TEXT,
+			if (websocket_send_msg(s->sock, s->tx_buf, n, WEBSOCKET_OPCODE_DATA_TEXT,
 					       false, true, 500) < 0) {
 				LOG_INF("ws send failed, closing");
 				break;
@@ -506,8 +492,7 @@ static void ws_thread(void *p1, void *p2, void *p3)
 		if (k_uptime_get() - last_info >= WS_INFO_MS) {
 			int n = web_build_info_json(s->tx_buf, sizeof(s->tx_buf));
 
-			if (websocket_send_msg(s->sock, s->tx_buf, n,
-					       WEBSOCKET_OPCODE_DATA_TEXT,
+			if (websocket_send_msg(s->sock, s->tx_buf, n, WEBSOCKET_OPCODE_DATA_TEXT,
 					       false, true, 500) < 0) {
 				LOG_INF("ws send failed, closing");
 				break;
@@ -525,8 +510,7 @@ static void ws_thread(void *p1, void *p2, void *p3)
 /* HTTP 服务器 WebSocket 升级回调.
  * 注意: websocket_register 的解析缓冲是资源级共享的, 并发连接会互相
  * 踩踏, 因此同一时刻只接受 1 条连接 (多余的被拒绝, 前端自动降级轮询). */
-int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx,
-		void *user_data)
+int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx, void *user_data)
 {
 	ARG_UNUSED(request_ctx);
 	ARG_UNUSED(user_data);
@@ -543,8 +527,7 @@ int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx,
 	s->sock = ws_socket;
 	s->in_use = true;
 
-	k_thread_create(&s->thread, ws_stacks[slot],
-			K_THREAD_STACK_SIZEOF(ws_stacks[slot]),
+	k_thread_create(&s->thread, ws_stacks[slot], K_THREAD_STACK_SIZEOF(ws_stacks[slot]),
 			ws_thread, s, NULL, NULL, 8, 0, K_NO_WAIT);
 #ifdef CONFIG_THREAD_NAME
 	char name[12];
@@ -560,10 +543,11 @@ int ws_io_setup(int ws_socket, struct http_request_ctx *request_ctx,
 static uint8_t ws_data_buffer[WS_RX_BUF_SIZE];
 
 struct http_resource_detail_websocket ws_io_detail = {
-	.common = {
-		.type = HTTP_RESOURCE_TYPE_WEBSOCKET,
-		.bitmask_of_supported_http_methods = BIT(HTTP_GET),
-	},
+	.common =
+		{
+			.type = HTTP_RESOURCE_TYPE_WEBSOCKET,
+			.bitmask_of_supported_http_methods = BIT(HTTP_GET),
+		},
 	.cb = ws_io_setup,
 	.data_buffer = ws_data_buffer,
 	.data_buffer_len = sizeof(ws_data_buffer),

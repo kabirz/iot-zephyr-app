@@ -25,8 +25,7 @@ LOG_MODULE_REGISTER(io_udp, LOG_LEVEL_INF);
 static int64_t factory_reset_pending_ms;
 static bool factory_reset_confirmed;
 
-static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
-			    void *user_data)
+static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len, void *user_data)
 {
 	ARG_UNUSED(user_data);
 
@@ -40,8 +39,8 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
 			update_holding_reg(HOLDING_IP_OCTET3_IDX, data[2]);
 			update_holding_reg(HOLDING_IP_OCTET4_IDX, data[3]);
 			holding_reg_save();
-			LOG_INF("SET_IP %u.%u.%u.%u (manual reboot required to apply)",
-				data[0], data[1], data[2], data[3]);
+			LOG_INF("SET_IP %u.%u.%u.%u (manual reboot required to apply)", data[0],
+				data[1], data[2], data[3]);
 			ok = 1;
 		}
 		udp_fw_reply(cmd, &ok, sizeof(ok));

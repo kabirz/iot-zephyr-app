@@ -56,20 +56,21 @@ static const uint8_t index_html_gz[] = {
 };
 
 static struct http_resource_detail_static index_html_detail = {
-	.common = {
-		.type = HTTP_RESOURCE_TYPE_STATIC,
-		.bitmask_of_supported_http_methods = BIT(HTTP_GET),
-		.content_encoding = "gzip",
-		.content_type = "text/html",
-	},
+	.common =
+		{
+			.type = HTTP_RESOURCE_TYPE_STATIC,
+			.bitmask_of_supported_http_methods = BIT(HTTP_GET),
+			.content_encoding = "gzip",
+			.content_type = "text/html",
+		},
 	.static_data = index_html_gz,
 	.static_data_len = sizeof(index_html_gz),
 };
 
 /* ==================== 通用响应辅助 ==================== */
 
-#define JSON_OK		"{\"ok\":true}"
-#define JSON_BAD_REQ	"{\"ok\":false,\"err\":\"bad request\"}"
+#define JSON_OK      "{\"ok\":true}"
+#define JSON_BAD_REQ "{\"ok\":false,\"err\":\"bad request\"}"
 
 static void respond_json_ok(struct http_response_ctx *rsp)
 {
@@ -96,7 +97,7 @@ static void respond_json_err(struct http_response_ctx *rsp, const char *err)
 
 static char body_buf[BODY_MAX];
 static size_t body_len;
-static bool body_done;	/* 上一事务已处理完, 新事务首块先清缓冲 */
+static bool body_done; /* 上一事务已处理完, 新事务首块先清缓冲 */
 
 static void body_reset(void)
 {
@@ -139,10 +140,9 @@ int web_build_info_json(char *json, size_t bufsz)
 		const struct net_linkaddr *ll = net_if_get_link_addr(iface);
 
 		if (ll->len == 6) {
-			snprintf(mac_str, sizeof(mac_str),
-				 "%02x:%02x:%02x:%02x:%02x:%02x",
-				 ll->addr[0], ll->addr[1], ll->addr[2],
-				 ll->addr[3], ll->addr[4], ll->addr[5]);
+			snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+				 ll->addr[0], ll->addr[1], ll->addr[2], ll->addr[3], ll->addr[4],
+				 ll->addr[5]);
 		}
 	}
 
@@ -155,7 +155,8 @@ int web_build_info_json(char *json, size_t bufsz)
 	}
 
 	/* snprintf may return more than bufsz if truncated; clamp to buffer size */
-	int n = snprintf(json, bufsz,
+	int n = snprintf(
+		json, bufsz,
 		"{\"t\":\"info\","
 		"\"version\":\"v%d.%d.%d_%s\","
 		"\"build\":\"%s %s\","
@@ -171,34 +172,23 @@ int web_build_info_json(char *json, size_t bufsz)
 		"\"lfs_free\":%llu,\"lfs_total\":%llu,"
 		"\"net_up\":%s,"
 		"\"di_ms\":%u,\"ai_ms\":%u}",
-		APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL,
-		FW_GIT_VERSION,
-		__DATE__, __TIME__,
-		CONFIG_BOARD_TARGET,
-		CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC / 1000000U,
-		CONFIG_FLASH_SIZE, CONFIG_SRAM_SIZE,
-		mac_str,
-		get_holding_reg(HOLDING_IP_OCTET1_IDX),
-		get_holding_reg(HOLDING_IP_OCTET2_IDX),
-		get_holding_reg(HOLDING_IP_OCTET3_IDX),
-		get_holding_reg(HOLDING_IP_OCTET4_IDX),
-		get_holding_reg(HOLDING_SLAVE_ID_IDX),
-		get_holding_reg(HOLDING_RS485_BAUDRATE_IDX),
-		get_holding_reg(HOLDING_CAN_ID_IDX),
-		get_holding_reg(HOLDING_CAN_BAUDRATE_IDX),
+		APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL, FW_GIT_VERSION, __DATE__,
+		__TIME__, CONFIG_BOARD_TARGET, CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC / 1000000U,
+		CONFIG_FLASH_SIZE, CONFIG_SRAM_SIZE, mac_str,
+		get_holding_reg(HOLDING_IP_OCTET1_IDX), get_holding_reg(HOLDING_IP_OCTET2_IDX),
+		get_holding_reg(HOLDING_IP_OCTET3_IDX), get_holding_reg(HOLDING_IP_OCTET4_IDX),
+		get_holding_reg(HOLDING_SLAVE_ID_IDX), get_holding_reg(HOLDING_RS485_BAUDRATE_IDX),
+		get_holding_reg(HOLDING_CAN_ID_IDX), get_holding_reg(HOLDING_CAN_BAUDRATE_IDX),
 		(long long)k_uptime_get(), (long long)time(NULL),
-		get_holding_reg(HOLDING_HISTORY_ENABLE_IDX) != 0,
-		lfs_free, lfs_total,
-		net_link_is_up() ? "true" : "false",
-		get_holding_reg(HOLDING_DI_SAMPLE_MS_IDX),
+		get_holding_reg(HOLDING_HISTORY_ENABLE_IDX) != 0, lfs_free, lfs_total,
+		net_link_is_up() ? "true" : "false", get_holding_reg(HOLDING_DI_SAMPLE_MS_IDX),
 		get_holding_reg(HOLDING_AI_SAMPLE_MS_IDX));
 	return (n > (int)bufsz) ? (int)bufsz : n;
 }
 
-static int info_handler(struct http_client_ctx *client,
-			enum http_transaction_status status,
-			const struct http_request_ctx *req,
-			struct http_response_ctx *rsp, void *user_data)
+static int info_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			void *user_data)
 {
 	static char json[640];
 
@@ -214,10 +204,9 @@ static int info_handler(struct http_client_ctx *client,
 
 /* ==================== GET /api/io ==================== */
 
-static int io_handler(struct http_client_ctx *client,
-		      enum http_transaction_status status,
-		      const struct http_request_ctx *req,
-		      struct http_response_ctx *rsp, void *user_data)
+static int io_handler(struct http_client_ctx *client, enum http_transaction_status status,
+		      const struct http_request_ctx *req, struct http_response_ctx *rsp,
+		      void *user_data)
 {
 	static char json[256];
 
@@ -241,22 +230,19 @@ int web_build_regs_json(char *json, size_t bufsz)
 	for (int i = 0; i < CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS; i++) {
 		/* io_read_holding: 时间戳寄存器返回实时时间 (与 FC03 一致),
 		 * 否则 web 上时间戳恒为 0 且不动 */
-		n += snprintf(json + n, bufsz - n, "%s%u",
-			      i ? "," : "", io_read_holding(i));
+		n += snprintf(json + n, bufsz - n, "%s%u", i ? "," : "", io_read_holding(i));
 	}
 	n += snprintf(json + n, bufsz - n, "],\"input\":[");
 	for (int i = 0; i < CONFIG_MODBUS_INPUT_REGISTER_NUMBERS; i++) {
-		n += snprintf(json + n, bufsz - n, "%s%u",
-			      i ? "," : "", get_input_reg(i));
+		n += snprintf(json + n, bufsz - n, "%s%u", i ? "," : "", get_input_reg(i));
 	}
 	n += snprintf(json + n, bufsz - n, "]}");
 	return (n > (int)bufsz) ? (int)bufsz : n;
 }
 
-static int regs_handler(struct http_client_ctx *client,
-			enum http_transaction_status status,
-			const struct http_request_ctx *req,
-			struct http_response_ctx *rsp, void *user_data)
+static int regs_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			void *user_data)
 {
 	static char json[256];
 
@@ -285,8 +271,8 @@ int web_cmd_exec_do(int32_t index, int32_t value)
 
 int web_cmd_exec_reg(int32_t addr, int32_t value)
 {
-	if (addr < 0 || addr >= CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS ||
-	    value < 0 || value > 0xFFFF) {
+	if (addr < 0 || addr >= CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS || value < 0 ||
+	    value > 0xFFFF) {
 		return -EINVAL;
 	}
 	if (addr == HOLDING_REBOOT_IDX) {
@@ -318,8 +304,8 @@ int web_cmd_exec_cfg(const char *json, size_t len, const char **err)
 	if (json_get_str(json, len, "ip", ip_str, sizeof(ip_str))) {
 		uint32_t a, b, c, d;
 
-		if (sscanf(ip_str, "%u.%u.%u.%u", &a, &b, &c, &d) != 4 ||
-		    a > 255 || b > 255 || c > 255 || d > 255 ||
+		if (sscanf(ip_str, "%u.%u.%u.%u", &a, &b, &c, &d) != 4 || a > 255 || b > 255 ||
+		    c > 255 || d > 255 ||
 		    !ip_addr_valid((uint8_t)a, (uint8_t)b, (uint8_t)c, (uint8_t)d)) {
 			*err = e_bad_ip;
 			return -EINVAL;
@@ -350,8 +336,8 @@ int web_cmd_exec_cfg(const char *json, size_t len, const char **err)
 
 	/* CAN 波特率 (寄存器存 x1000): 常用档位 */
 	if (json_get_i32(json, len, "can_bps", &v)) {
-		if (v != 50 && v != 100 && v != 125 && v != 250 &&
-		    v != 500 && v != 800 && v != 1000) {
+		if (v != 50 && v != 100 && v != 125 && v != 250 && v != 500 && v != 800 &&
+		    v != 1000) {
 			*err = e_bad_can;
 			return -EINVAL;
 		}
@@ -370,10 +356,9 @@ int web_cmd_exec_cfg(const char *json, size_t len, const char **err)
 	return 0;
 }
 
-static int api_do_handler(struct http_client_ctx *client,
-			  enum http_transaction_status status,
-			  const struct http_request_ctx *req,
-			  struct http_response_ctx *rsp, void *user_data)
+static int api_do_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			  const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			  void *user_data)
 {
 	int32_t index = 0, value = 0;
 
@@ -400,10 +385,9 @@ static int api_do_handler(struct http_client_ctx *client,
 	return 0;
 }
 
-static int reg_handler(struct http_client_ctx *client,
-		       enum http_transaction_status status,
-		       const struct http_request_ctx *req,
-		       struct http_response_ctx *rsp, void *user_data)
+static int reg_handler(struct http_client_ctx *client, enum http_transaction_status status,
+		       const struct http_request_ctx *req, struct http_response_ctx *rsp,
+		       void *user_data)
 {
 	int32_t addr = -1, value = 0;
 
@@ -430,10 +414,9 @@ static int reg_handler(struct http_client_ctx *client,
 	return 0;
 }
 
-static int api_time_handler(struct http_client_ctx *client,
-			    enum http_transaction_status status,
-			    const struct http_request_ctx *req,
-			    struct http_response_ctx *rsp, void *user_data)
+static int api_time_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			    const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			    void *user_data)
 {
 	int32_t ts = 0;
 
@@ -449,8 +432,7 @@ static int api_time_handler(struct http_client_ctx *client,
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
 		return 0;
 	}
-	if (json_get_i32(body_buf, body_len, "ts", &ts) &&
-	    set_timestamp((time_t)ts)) {
+	if (json_get_i32(body_buf, body_len, "ts", &ts) && set_timestamp((time_t)ts)) {
 		respond_json_ok(rsp);
 	} else {
 		respond_json_err(rsp, "invalid timestamp");
@@ -459,10 +441,9 @@ static int api_time_handler(struct http_client_ctx *client,
 	return 0;
 }
 
-static int save_handler(struct http_client_ctx *client,
-			enum http_transaction_status status,
-			const struct http_request_ctx *req,
-			struct http_response_ctx *rsp, void *user_data)
+static int save_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			void *user_data)
 {
 	if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
 		body_finalize();
@@ -472,10 +453,9 @@ static int save_handler(struct http_client_ctx *client,
 	return 0;
 }
 
-static int reboot_handler(struct http_client_ctx *client,
-			  enum http_transaction_status status,
-			  const struct http_request_ctx *req,
-			  struct http_response_ctx *rsp, void *user_data)
+static int reboot_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			  const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			  void *user_data)
 {
 	if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
 		set_reboot_status(true);
@@ -487,7 +467,7 @@ static int reboot_handler(struct http_client_ctx *client,
 
 /* ==================== GET /api/history ==================== */
 
-#define HIST_DIR	"/lfs1"
+#define HIST_DIR "/lfs1"
 
 /* 文件名合法性: 仅允许 data_ 前续 + 字母数字/._-, 杜绝路径穿越 */
 static bool hist_name_valid(const char *name)
@@ -509,10 +489,9 @@ static bool hist_name_valid(const char *name)
 	return n > 5 && n < 32;
 }
 
-static int history_handler(struct http_client_ctx *client,
-			   enum http_transaction_status status,
-			   const struct http_request_ctx *req,
-			   struct http_response_ctx *rsp, void *user_data)
+static int history_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			   const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			   void *user_data)
 {
 	static char json[640];
 	struct fs_dir_t dir;
@@ -535,10 +514,8 @@ static int history_handler(struct http_client_ctx *client,
 			if (ent.type != FS_DIR_ENTRY_FILE || !hist_name_valid(ent.name)) {
 				continue;
 			}
-			n += snprintf(json + n, sizeof(json) - n,
-				      "%s{\"name\":\"%s\",\"size\":%u}",
-				      first ? "" : ",", ent.name,
-				      (unsigned)ent.size);
+			n += snprintf(json + n, sizeof(json) - n, "%s{\"name\":\"%s\",\"size\":%u}",
+				      first ? "" : ",", ent.name, (unsigned)ent.size);
 			first = false;
 			if (n >= (int)sizeof(json) - 64) {
 				break;
@@ -565,12 +542,11 @@ static struct {
 	size_t remain;
 } dl;
 
-#define DL_CHUNK	512
+#define DL_CHUNK 512
 
-static int download_handler(struct http_client_ctx *client,
-			    enum http_transaction_status status,
-			    const struct http_request_ctx *req,
-			    struct http_response_ctx *rsp, void *user_data)
+static int download_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			    const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			    void *user_data)
 {
 	static char chunk[DL_CHUNK];
 	static struct http_header hdrs[2];
@@ -619,8 +595,7 @@ static int download_handler(struct http_client_ctx *client,
 		dl.remain = ent.size;
 
 		/* 响应头: 二进制流 + 附件下载 */
-		snprintf(disp, sizeof(disp),
-			 "attachment; filename=\"%s\"", name);
+		snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", name);
 		hdrs[0].name = "Content-Type";
 		hdrs[0].value = "application/octet-stream";
 		hdrs[1].name = "Content-Disposition";
@@ -662,10 +637,9 @@ static int download_handler(struct http_client_ctx *client,
 
 /* ==================== POST /api/history/delete ==================== */
 
-static int hist_del_handler(struct http_client_ctx *client,
-			   enum http_transaction_status status,
-			   const struct http_request_ctx *req,
-			   struct http_response_ctx *rsp, void *user_data)
+static int hist_del_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			    const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			    void *user_data)
 {
 	char name[32];
 
@@ -682,8 +656,7 @@ static int hist_del_handler(struct http_client_ctx *client,
 		return 0;
 	}
 
-	if (json_get_str(body_buf, body_len, "name", name, sizeof(name)) &&
-	    hist_name_valid(name)) {
+	if (json_get_str(body_buf, body_len, "name", name, sizeof(name)) && hist_name_valid(name)) {
 		char path[48];
 
 		snprintf(path, sizeof(path), "%s/%s", HIST_DIR, name);
@@ -701,15 +674,16 @@ static int hist_del_handler(struct http_client_ctx *client,
 
 /* ==================== 资源注册 ==================== */
 
-#define DYNAMIC_DETAIL(_name, _methods)				\
-	static struct http_resource_detail_dynamic _name = {	\
-		.common = {					\
-			.type = HTTP_RESOURCE_TYPE_DYNAMIC,	\
-			.bitmask_of_supported_http_methods = (_methods),\
-			.content_type = "application/json",	\
-		},						\
-		.cb = _name##_handler,				\
-		.user_data = NULL,				\
+#define DYNAMIC_DETAIL(_name, _methods)                                                            \
+	static struct http_resource_detail_dynamic _name = {                                       \
+		.common =                                                                          \
+			{                                                                          \
+				.type = HTTP_RESOURCE_TYPE_DYNAMIC,                                \
+				.bitmask_of_supported_http_methods = (_methods),                   \
+				.content_type = "application/json",                                \
+			},                                                                         \
+		.cb = _name##_handler,                                                             \
+		.user_data = NULL,                                                                 \
 	}
 
 DYNAMIC_DETAIL(info, BIT(HTTP_GET));
@@ -726,8 +700,8 @@ DYNAMIC_DETAIL(hist_del, BIT(HTTP_POST));
 
 static uint16_t io_web_port = CONFIG_IO_WEB_PORT;
 
-HTTP_SERVICE_DEFINE(io_web, NULL, &io_web_port,
-		    CONFIG_HTTP_SERVER_MAX_CLIENTS, 10, NULL, NULL, NULL);
+HTTP_SERVICE_DEFINE(io_web, NULL, &io_web_port, CONFIG_HTTP_SERVER_MAX_CLIENTS, 10, NULL, NULL,
+		    NULL);
 
 HTTP_RESOURCE_DEFINE(res_index, io_web, "/", &index_html_detail);
 HTTP_RESOURCE_DEFINE(res_info, io_web, "/api/info", &info);

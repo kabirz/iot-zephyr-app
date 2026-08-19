@@ -24,24 +24,19 @@
 LOG_MODULE_REGISTER(io_dio, LOG_LEVEL_INF);
 
 /* 采样间隔上限 5s: 业务合理性约束 (远程调大时钳制, 防止采样响应过慢) */
-#define SAMPLE_INTERVAL_MAX	5000U
+#define SAMPLE_INTERVAL_MAX 5000U
 
 #define ZU_NODE DT_PATH(zephyr_user)
 
 /* 从 /zephyr,user 的 gpio 列表生成引脚描述数组 */
-#define DI_SPEC_FN(inst, prop, idx) GPIO_DT_SPEC_GET_BY_IDX(inst, prop, idx),
-#define DO_SPEC_FN(inst, prop, idx) GPIO_DT_SPEC_GET_BY_IDX(inst, prop, idx),
+#define DI_SPEC_FN(inst, prop, idx)  GPIO_DT_SPEC_GET_BY_IDX(inst, prop, idx),
+#define DO_SPEC_FN(inst, prop, idx)  GPIO_DT_SPEC_GET_BY_IDX(inst, prop, idx),
 #define LED_SPEC_FN(inst, prop, idx) GPIO_DT_SPEC_GET_BY_IDX(inst, prop, idx),
 
-static const struct gpio_dt_spec di_gpios[] = {
-	DT_FOREACH_PROP_ELEM(ZU_NODE, di_gpios, DI_SPEC_FN)
-};
-static const struct gpio_dt_spec do_gpios[] = {
-	DT_FOREACH_PROP_ELEM(ZU_NODE, do_gpios, DO_SPEC_FN)
-};
+static const struct gpio_dt_spec di_gpios[] = {DT_FOREACH_PROP_ELEM(ZU_NODE, di_gpios, DI_SPEC_FN)};
+static const struct gpio_dt_spec do_gpios[] = {DT_FOREACH_PROP_ELEM(ZU_NODE, do_gpios, DO_SPEC_FN)};
 static const struct gpio_dt_spec led_gpios[] = {
-	DT_FOREACH_PROP_ELEM(ZU_NODE, led_gpios, LED_SPEC_FN)
-};
+	DT_FOREACH_PROP_ELEM(ZU_NODE, led_gpios, LED_SPEC_FN)};
 
 /* ================================================================
  * DO 输出 + LED 联动
@@ -101,7 +96,8 @@ static void di_thread(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(di, CONFIG_IO_DI_STACK_SIZE, di_thread, NULL, NULL, NULL, CONFIG_IO_DI_PRIORITY, 0, 0);
+K_THREAD_DEFINE(di, CONFIG_IO_DI_STACK_SIZE, di_thread, NULL, NULL, NULL, CONFIG_IO_DI_PRIORITY, 0,
+		0);
 
 /* ================================================================
  * GPIO 初始化
@@ -122,8 +118,8 @@ static int dio_init(void)
 		gpio_pin_configure_dt(&led_gpios[i], GPIO_OUTPUT_INACTIVE);
 	}
 
-	LOG_INF("DIO ready: %zu DI, %zu DO, %zu LED",
-		ARRAY_SIZE(di_gpios), ARRAY_SIZE(do_gpios), ARRAY_SIZE(led_gpios));
+	LOG_INF("DIO ready: %zu DI, %zu DO, %zu LED", ARRAY_SIZE(di_gpios), ARRAY_SIZE(do_gpios),
+		ARRAY_SIZE(led_gpios));
 	return 0;
 }
 

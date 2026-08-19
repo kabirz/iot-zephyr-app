@@ -37,7 +37,7 @@
 #include "init.h"
 
 /* 时间显示偏移: RTC 存 UTC, shell 按本地时区显示 (默认 UTC+8) */
-#define IO_SHELL_TZ_OFFSET_SECS	(8LL * 3600)
+#define IO_SHELL_TZ_OFFSET_SECS (8LL * 3600)
 
 /* ==================== info ==================== */
 
@@ -53,29 +53,25 @@ static int cmd_info(const struct shell *sh, size_t argc, char *argv[])
 		const struct net_linkaddr *ll = net_if_get_link_addr(iface);
 
 		if (ll->len == 6) {
-			snprintf(mac_str, sizeof(mac_str),
-				 "%02x:%02x:%02x:%02x:%02x:%02x",
-				 ll->addr[0], ll->addr[1], ll->addr[2],
-				 ll->addr[3], ll->addr[4], ll->addr[5]);
+			snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+				 ll->addr[0], ll->addr[1], ll->addr[2], ll->addr[3], ll->addr[4],
+				 ll->addr[5]);
 		}
 	}
 
-	shell_print(sh, "version : v%d.%d.%d_%s", APP_VERSION_MAJOR,
-		    APP_VERSION_MINOR, APP_PATCHLEVEL, FW_GIT_VERSION);
+	shell_print(sh, "version : v%d.%d.%d_%s", APP_VERSION_MAJOR, APP_VERSION_MINOR,
+		    APP_PATCHLEVEL, FW_GIT_VERSION);
 	shell_print(sh, "build   : %s %s", __DATE__, __TIME__);
 	shell_print(sh, "board   : %s", CONFIG_BOARD_TARGET);
 	shell_print(sh, "mac     : %s", mac_str);
-	shell_print(sh, "ip      : %u.%u.%u.%u/24",
-		    get_holding_reg(HOLDING_IP_OCTET1_IDX),
-		    get_holding_reg(HOLDING_IP_OCTET2_IDX),
-		    get_holding_reg(HOLDING_IP_OCTET3_IDX),
+	shell_print(sh, "ip      : %u.%u.%u.%u/24", get_holding_reg(HOLDING_IP_OCTET1_IDX),
+		    get_holding_reg(HOLDING_IP_OCTET2_IDX), get_holding_reg(HOLDING_IP_OCTET3_IDX),
 		    get_holding_reg(HOLDING_IP_OCTET4_IDX));
 	shell_print(sh, "link    : %s", net_link_is_up() ? "up" : "down");
 	shell_print(sh, "rs485   : %u bps, slave id %u (8N1)",
 		    get_holding_reg(HOLDING_RS485_BAUDRATE_IDX),
 		    get_holding_reg(HOLDING_SLAVE_ID_IDX));
-	shell_print(sh, "can     : id 0x%03x, %u kbit/s",
-		    get_holding_reg(HOLDING_CAN_ID_IDX),
+	shell_print(sh, "can     : id 0x%03x, %u kbit/s", get_holding_reg(HOLDING_CAN_ID_IDX),
 		    get_holding_reg(HOLDING_CAN_BAUDRATE_IDX));
 	shell_print(sh, "uptime  : %lld s", (long long)(k_uptime_get() / 1000));
 	/* RTC 存 UTC, 显示时加时区偏移 (Web 前端在浏览器侧做同样转换) */
@@ -100,8 +96,7 @@ static int cmd_di(const struct shell *sh, size_t argc, char *argv[])
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	shell_print(sh, "DI: 0x%04x (enable: 0x%04x)", di,
-		    get_holding_reg(HOLDING_DI_ENABLE_IDX));
+	shell_print(sh, "DI: 0x%04x (enable: 0x%04x)", di, get_holding_reg(HOLDING_DI_ENABLE_IDX));
 	for (int row = 0; row < DI_NUM; row += 8) {
 		shell_fprintf(sh, SHELL_NORMAL, "DI%-2d-%-2d :", row + 1, row + 8);
 		for (int i = 0; i < 8; i++) {
@@ -157,7 +152,7 @@ static int cmd_do_set(const struct shell *sh, size_t argc, char *argv[])
 
 static int cmd_ai(const struct shell *sh, size_t argc, char *argv[])
 {
-	static const char *unit[AI_NUM] = { "mA", "mA", "V", "V" };
+	static const char *unit[AI_NUM] = {"mA", "mA", "V", "V"};
 	uint16_t en = get_holding_reg(HOLDING_AI_ENABLE_IDX);
 
 	ARG_UNUSED(argc);
@@ -168,8 +163,8 @@ static int cmd_ai(const struct shell *sh, size_t argc, char *argv[])
 		uint16_t raw = get_input_reg(INPUT_AI0_IDX + i);
 
 		/* input_reg 存 0.01mA (AI1/2) / 0.01V (AI3/4), 展开为工程量 */
-		shell_print(sh, "AI%d: %5u.%02u %s (raw %u)", i + 1,
-			    raw / 100, raw % 100, unit[i], raw);
+		shell_print(sh, "AI%d: %5u.%02u %s (raw %u)", i + 1, raw / 100, raw % 100, unit[i],
+			    raw);
 	}
 	return 0;
 }
@@ -227,8 +222,7 @@ static int cmd_can(const struct shell *sh, size_t argc, char *argv[])
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	shell_print(sh, "can: id 0x%03x, %u kbit/s",
-		    get_holding_reg(HOLDING_CAN_ID_IDX),
+	shell_print(sh, "can: id 0x%03x, %u kbit/s", get_holding_reg(HOLDING_CAN_ID_IDX),
 		    get_holding_reg(HOLDING_CAN_BAUDRATE_IDX));
 	shell_print(sh, "(changes take effect after reboot)");
 	return 0;
@@ -268,8 +262,7 @@ static int cmd_can_bps(const struct shell *sh, size_t argc, char *argv[])
 	case 1000:
 		break;
 	default:
-		shell_error(sh, "invalid bps: %s (50/100/125/250/500/800/1000)",
-			    argv[1]);
+		shell_error(sh, "invalid bps: %s (50/100/125/250/500/800/1000)", argv[1]);
 		return -EINVAL;
 	}
 	io_write_holding(HOLDING_CAN_BAUDRATE_IDX, (uint16_t)v);
@@ -285,9 +278,8 @@ static int cmd_ip(const struct shell *sh, size_t argc, char *argv[])
 
 	ARG_UNUSED(argc);
 
-	if (sscanf(argv[1], "%u.%u.%u.%u", &a, &b, &c, &d) != 4 ||
-	    a > 255 || b > 255 || c > 255 || d > 255 ||
-	    !ip_addr_valid((uint8_t)a, (uint8_t)b, (uint8_t)c, (uint8_t)d)) {
+	if (sscanf(argv[1], "%u.%u.%u.%u", &a, &b, &c, &d) != 4 || a > 255 || b > 255 || c > 255 ||
+	    d > 255 || !ip_addr_valid((uint8_t)a, (uint8_t)b, (uint8_t)c, (uint8_t)d)) {
 		shell_error(sh, "invalid ip: %s", argv[1]);
 		return -EINVAL;
 	}
@@ -296,8 +288,7 @@ static int cmd_ip(const struct shell *sh, size_t argc, char *argv[])
 	io_write_holding(HOLDING_IP_OCTET3_IDX, (uint16_t)c);
 	io_write_holding(HOLDING_IP_OCTET4_IDX, (uint16_t)d);
 	holding_reg_save();
-	shell_print(sh, "ip -> %u.%u.%u.%u (saved, reboot to apply)",
-		    a, b, c, d);
+	shell_print(sh, "ip -> %u.%u.%u.%u (saved, reboot to apply)", a, b, c, d);
 	return 0;
 }
 
@@ -307,19 +298,16 @@ static int cmd_ip(const struct shell *sh, size_t argc, char *argv[])
 static int cmd_reg(const struct shell *sh, size_t argc, char *argv[])
 {
 	if (argc == 1) {
-		shell_print(sh, "holding registers (%d):",
-			    CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS);
+		shell_print(sh, "holding registers (%d):", CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS);
 		for (int i = 0; i < CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS; i++) {
 			shell_fprintf(sh, SHELL_NORMAL, "%s0x%02x=%u",
-				      (i % 6) ? " " : (i ? "\n" : ""),
-				      i, io_read_holding(i));
+				      (i % 6) ? " " : (i ? "\n" : ""), i, io_read_holding(i));
 		}
 		shell_fprintf(sh, SHELL_NORMAL, "\ninput registers (%d):\n",
 			      CONFIG_MODBUS_INPUT_REGISTER_NUMBERS);
 		for (int i = 0; i < CONFIG_MODBUS_INPUT_REGISTER_NUMBERS; i++) {
 			shell_fprintf(sh, SHELL_NORMAL, "%s0x%02x=%u",
-				      (i % 6) ? " " : (i ? "\n" : ""),
-				      i, get_input_reg(i));
+				      (i % 6) ? " " : (i ? "\n" : ""), i, get_input_reg(i));
 		}
 		shell_fprintf(sh, SHELL_NORMAL, "\n");
 		return 0;
@@ -328,15 +316,13 @@ static int cmd_reg(const struct shell *sh, size_t argc, char *argv[])
 	char *end;
 	long addr = strtol(argv[1], &end, 0);
 
-	if (*end != '\0' || addr < 0 ||
-	    addr >= CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS) {
+	if (*end != '\0' || addr < 0 || addr >= CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS) {
 		shell_error(sh, "invalid addr: %s", argv[1]);
 		return -EINVAL;
 	}
 
 	if (argc == 2) {
-		shell_print(sh, "holding[0x%02lx] = %u", addr,
-			    io_read_holding((uint16_t)addr));
+		shell_print(sh, "holding[0x%02lx] = %u", addr, io_read_holding((uint16_t)addr));
 		return 0;
 	}
 
@@ -350,8 +336,7 @@ static int cmd_reg(const struct shell *sh, size_t argc, char *argv[])
 		shell_error(sh, "write failed");
 		return -EIO;
 	}
-	shell_print(sh, "holding[0x%02lx] = %u", addr,
-		    io_read_holding((uint16_t)addr));
+	shell_print(sh, "holding[0x%02lx] = %u", addr, io_read_holding((uint16_t)addr));
 	return 0;
 }
 
@@ -388,34 +373,40 @@ static int cmd_factory(const struct shell *sh, size_t argc, char *argv[])
 /* ==================== 命令树 ==================== */
 
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_io_do,
-	SHELL_CMD_ARG(set, NULL, "set DO output: <ch 1-8> <0|1>", cmd_do_set, 3, 0),
-	SHELL_SUBCMD_SET_END);
+			       SHELL_CMD_ARG(set, NULL, "set DO output: <ch 1-8> <0|1>", cmd_do_set,
+					     3, 0),
+			       SHELL_SUBCMD_SET_END);
 
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_io_rs485,
-	SHELL_CMD_ARG(baud, NULL, "set baud <1200-115200> (reboot to apply)",
-		      cmd_rs485_baud, 2, 0),
-	SHELL_CMD_ARG(sid, NULL, "set modbus slave id <1-247> (reboot to apply)",
-		      cmd_rs485_sid, 2, 0),
-	SHELL_SUBCMD_SET_END);
+			       SHELL_CMD_ARG(baud, NULL, "set baud <1200-115200> (reboot to apply)",
+					     cmd_rs485_baud, 2, 0),
+			       SHELL_CMD_ARG(sid, NULL,
+					     "set modbus slave id <1-247> (reboot to apply)",
+					     cmd_rs485_sid, 2, 0),
+			       SHELL_SUBCMD_SET_END);
 
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_io_can,
-	SHELL_CMD_ARG(id, NULL, "set business frame id <1-0x7FF> (reboot to apply)",
-		      cmd_can_id, 2, 0),
-	SHELL_CMD_ARG(bps, NULL, "set baud <50/100/125/250/500/800/1000> kbit/s "
-		      "(reboot to apply)", cmd_can_bps, 2, 0),
-	SHELL_SUBCMD_SET_END);
+			       SHELL_CMD_ARG(id, NULL,
+					     "set business frame id <1-0x7FF> (reboot to apply)",
+					     cmd_can_id, 2, 0),
+			       SHELL_CMD_ARG(bps, NULL,
+					     "set baud <50/100/125/250/500/800/1000> kbit/s "
+					     "(reboot to apply)",
+					     cmd_can_bps, 2, 0),
+			       SHELL_SUBCMD_SET_END);
 
-SHELL_STATIC_SUBCMD_SET_CREATE(sub_io,
-	SHELL_CMD(info, NULL, "show version / mac / ip / rs485 / can info", cmd_info),
+SHELL_STATIC_SUBCMD_SET_CREATE(
+	sub_io, SHELL_CMD(info, NULL, "show version / mac / ip / rs485 / can info", cmd_info),
 	SHELL_CMD(di, NULL, "show DI1-16 status", cmd_di),
 	SHELL_CMD(do, &sub_io_do, "show DO1-8 status", cmd_do),
 	SHELL_CMD(ai, NULL, "show AI1-4 values (mA / V)", cmd_ai),
 	SHELL_CMD(rs485, &sub_io_rs485, "show rs485 baud / slave id", cmd_rs485),
 	SHELL_CMD(can, &sub_io_can, "show can id / baud", cmd_can),
-	SHELL_CMD_ARG(ip, NULL, "set static ip <a.b.c.d> (saved, reboot to apply)",
-		      cmd_ip, 2, 0),
-	SHELL_CMD_ARG(reg, NULL, "dump / read / write holding register: "
-		      "[addr [value]]", cmd_reg, 1, 2),
+	SHELL_CMD_ARG(ip, NULL, "set static ip <a.b.c.d> (saved, reboot to apply)", cmd_ip, 2, 0),
+	SHELL_CMD_ARG(reg, NULL,
+		      "dump / read / write holding register: "
+		      "[addr [value]]",
+		      cmd_reg, 1, 2),
 	SHELL_CMD(save, NULL, "persist parameters to FCB", cmd_save),
 	SHELL_CMD(factory, NULL, "factory reset (erase params + reboot)", cmd_factory),
 	SHELL_SUBCMD_SET_END);

@@ -16,7 +16,7 @@
 
 LOG_MODULE_REGISTER(io_wdt, LOG_LEVEL_INF);
 
-#define WDG_TIMEOUT_MS	30000
+#define WDG_TIMEOUT_MS 30000
 
 static const struct device *const wdt_dev = DEVICE_DT_GET(DT_NODELABEL(iwdg));
 static int wdt_channel;
@@ -29,7 +29,7 @@ int watchdog_init(void)
 	}
 
 	struct wdt_timeout_cfg cfg = {
-		.window = { .min = 0, .max = WDG_TIMEOUT_MS },
+		.window = {.min = 0, .max = WDG_TIMEOUT_MS},
 		.callback = NULL,
 	};
 

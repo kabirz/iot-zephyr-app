@@ -23,30 +23,27 @@
 LOG_MODULE_REGISTER(io_adc, LOG_LEVEL_INF);
 
 /* 采样间隔上限 5s: 业务合理性约束 (远程调大时钳制, 防止采样响应过慢) */
-#define SAMPLE_INTERVAL_MAX	5000U
+#define SAMPLE_INTERVAL_MAX 5000U
 
 #define ADC_NODE DT_PATH(zephyr_user)
 
 /* 通道配置 (device + channel_id + channel_cfg) 取自 /zephyr,user 的 io-channels */
 #define ADC_SPEC_FN(node_id, prop, idx) ADC_DT_SPEC_GET_BY_IDX(node_id, idx),
 static const struct adc_dt_spec adc_specs[] = {
-	DT_FOREACH_PROP_ELEM(ADC_NODE, io_channels, ADC_SPEC_FN)
-};
+	DT_FOREACH_PROP_ELEM(ADC_NODE, io_channels, ADC_SPEC_FN)};
 
 /* 工程量转换系数 (放大 1e4 倍做整数运算): 从 /zephyr,user 的 ai-coeffs 读取,
  * 与 io-channels 顺序一一对应 (数量错误时按少于 AI_NUM 的配置静默补 0,
  * 由 adc_init 的 io-channels 数量校验 + 线程 MIN 上限兜底) */
 #define AI_COEFF_FN(node_id, prop, idx) DT_PROP_BY_IDX(node_id, prop, idx),
-static const uint32_t ai_coeff[AI_NUM] = {
-	DT_FOREACH_PROP_ELEM(ADC_NODE, ai_coeffs, AI_COEFF_FN)
-};
+static const uint32_t ai_coeff[AI_NUM] = {DT_FOREACH_PROP_ELEM(ADC_NODE, ai_coeffs, AI_COEFF_FN)};
 
 static int16_t ai_buffer[AI_NUM];
 
 /* 12-bit raw -> 工程量 (0.01mA / 0.01V) */
 static uint16_t ai_convert(int ch, int32_t raw)
 {
-	int32_t voltage_mv = raw * 3300 / 4096;	/* VREF = VDDA = 3.3V */
+	int32_t voltage_mv = raw * 3300 / 4096; /* VREF = VDDA = 3.3V */
 	uint32_t val = (uint64_t)ai_coeff[ch] * (uint32_t)voltage_mv / 10000U;
 
 	return (uint16_t)val;
@@ -107,13 +104,14 @@ static void adc_thread(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(adc_io, CONFIG_IO_ADC_STACK_SIZE, adc_thread, NULL, NULL, NULL, CONFIG_IO_ADC_PRIORITY, 0, 0);
+K_THREAD_DEFINE(adc_io, CONFIG_IO_ADC_STACK_SIZE, adc_thread, NULL, NULL, NULL,
+		CONFIG_IO_ADC_PRIORITY, 0, 0);
 
 static int adc_init(void)
 {
 	if (ARRAY_SIZE(adc_specs) != AI_NUM) {
-		LOG_ERR("io-channels count mismatch (expect %d, got %d)",
-			AI_NUM, (int)ARRAY_SIZE(adc_specs));
+		LOG_ERR("io-channels count mismatch (expect %d, got %d)", AI_NUM,
+			(int)ARRAY_SIZE(adc_specs));
 		return -EINVAL;
 	}
 

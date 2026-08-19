@@ -24,40 +24,40 @@ extern "C" {
 #endif
 
 /* ==================== IO 通道数量 ==================== */
-#define DI_NUM    16	/* 数字输入 */
-#define DO_NUM    8	/* 数字输出 */
-#define AI_NUM    4	/* 模拟输入 */
+#define DI_NUM 16 /* 数字输入 */
+#define DO_NUM 8  /* 数字输出 */
+#define AI_NUM 4  /* 模拟输入 */
 
 /* ==================== Input Registers (只读, 6 个) ==================== */
 enum input_reg_idx {
-	INPUT_VER_IDX = 0,	/* 固件版本 (MAJOR<<12 | MINOR<<8 | PATCH), 主/次<16 */
-	INPUT_AI0_IDX,		/* AI1 电流 (0.01mA) */
-	INPUT_AI1_IDX,		/* AI2 电流 (0.01mA) */
-	INPUT_AI2_IDX,		/* AI3 电压 (0.01V) */
-	INPUT_AI3_IDX,		/* AI4 电压 (0.01V) */
-	INPUT_DI_IDX,		/* DI1-16 状态 bitmap */
+	INPUT_VER_IDX = 0, /* 固件版本 (MAJOR<<12 | MINOR<<8 | PATCH), 主/次<16 */
+	INPUT_AI0_IDX,     /* AI1 电流 (0.01mA) */
+	INPUT_AI1_IDX,     /* AI2 电流 (0.01mA) */
+	INPUT_AI2_IDX,     /* AI3 电压 (0.01V) */
+	INPUT_AI3_IDX,     /* AI4 电压 (0.01V) */
+	INPUT_DI_IDX,      /* DI1-16 状态 bitmap */
 };
 
 /* ==================== Holding Registers (读写, 18 个) ==================== */
 enum holding_reg_idx {
-	HOLDING_DO_IDX = 0x00,		/* DO1-8 输出控制 */
-	HOLDING_DI_ENABLE_IDX,		/* 0x01 DI1-16 使能 */
-	HOLDING_AI_ENABLE_IDX,		/* 0x02 AI1-4 使能 */
-	HOLDING_DI_SAMPLE_MS_IDX,		/* 0x03 DI 采样间隔 (ms) */
-	HOLDING_AI_SAMPLE_MS_IDX,		/* 0x04 AI 采样间隔 (ms) */
-	HOLDING_HISTORY_ENABLE_IDX,		/* 0x05 历史保存使能 */
-	HOLDING_CAN_ID_IDX,		/* 0x06 CAN ID */
-	HOLDING_CAN_BAUDRATE_IDX,		/* 0x07 CAN 波特率 (x1000) */
-	HOLDING_RS485_BAUDRATE_IDX,		/* 0x08 RS485 波特率 */
-	HOLDING_SLAVE_ID_IDX,		/* 0x09 Modbus RTU Slave ID */
-	HOLDING_IP_OCTET1_IDX,		/* 0x0A IP 段1 */
-	HOLDING_IP_OCTET2_IDX,		/* 0x0B IP 段2 */
-	HOLDING_IP_OCTET3_IDX,		/* 0x0C IP 段3 */
-	HOLDING_IP_OCTET4_IDX,		/* 0x0D IP 段4 */
-	HOLDING_TIMESTAMP_HI_IDX,		/* 0x0E 时间戳高16位 */
-	HOLDING_TIMESTAMP_LO_IDX,		/* 0x0F 时间戳低16位 */
-	HOLDING_CONFIG_SAVE_IDX,		/* 0x10 参数保存触发 */
-	HOLDING_REBOOT_IDX,		/* 0x11 写1触发重启 */
+	HOLDING_DO_IDX = 0x00,      /* DO1-8 输出控制 */
+	HOLDING_DI_ENABLE_IDX,      /* 0x01 DI1-16 使能 */
+	HOLDING_AI_ENABLE_IDX,      /* 0x02 AI1-4 使能 */
+	HOLDING_DI_SAMPLE_MS_IDX,   /* 0x03 DI 采样间隔 (ms) */
+	HOLDING_AI_SAMPLE_MS_IDX,   /* 0x04 AI 采样间隔 (ms) */
+	HOLDING_HISTORY_ENABLE_IDX, /* 0x05 历史保存使能 */
+	HOLDING_CAN_ID_IDX,         /* 0x06 CAN ID */
+	HOLDING_CAN_BAUDRATE_IDX,   /* 0x07 CAN 波特率 (x1000) */
+	HOLDING_RS485_BAUDRATE_IDX, /* 0x08 RS485 波特率 */
+	HOLDING_SLAVE_ID_IDX,       /* 0x09 Modbus RTU Slave ID */
+	HOLDING_IP_OCTET1_IDX,      /* 0x0A IP 段1 */
+	HOLDING_IP_OCTET2_IDX,      /* 0x0B IP 段2 */
+	HOLDING_IP_OCTET3_IDX,      /* 0x0C IP 段3 */
+	HOLDING_IP_OCTET4_IDX,      /* 0x0D IP 段4 */
+	HOLDING_TIMESTAMP_HI_IDX,   /* 0x0E 时间戳高16位 */
+	HOLDING_TIMESTAMP_LO_IDX,   /* 0x0F 时间戳低16位 */
+	HOLDING_CONFIG_SAVE_IDX,    /* 0x10 参数保存触发 */
+	HOLDING_REBOOT_IDX,         /* 0x11 写1触发重启 */
 };
 
 /* ==================== 历史数据结构 (与 RT-Thread / PC 解析工具兼容) ==================== */
@@ -65,16 +65,16 @@ enum holding_reg_idx {
 #define AI_TYPE 2
 
 struct his_data {
-	uint16_t type;		/* 1=DI, 2=AI */
-	uint32_t timestamps;	/* Unix 时间戳 */
+	uint16_t type;       /* 1=DI, 2=AI */
+	uint32_t timestamps; /* Unix 时间戳 */
 	union {
 		struct {
-			uint16_t di_en_status;	/* DI 使能 bitmap */
-			uint16_t di_value;	/* DI 值 bitmap */
+			uint16_t di_en_status; /* DI 使能 bitmap */
+			uint16_t di_value;     /* DI 值 bitmap */
 		} di;
 		struct {
-			uint16_t ai_en_status;		/* AI 使能 bitmap (低4位) */
-			uint16_t ai_value[AI_NUM];	/* AI 值数组 */
+			uint16_t ai_en_status;     /* AI 使能 bitmap (低4位) */
+			uint16_t ai_value[AI_NUM]; /* AI 值数组 */
 		} ai;
 	};
 } __packed;

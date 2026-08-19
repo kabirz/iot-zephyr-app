@@ -54,8 +54,7 @@ static int littlefs_init(void)
 		/* mkfs 擦整个分区 (15MB SPI NOR) 耗时可达数十秒, 超过看门狗窗口,
 		 * 擦除前后喂狗避免中途复位导致文件系统半损坏 */
 		watchdog_feed();
-		rc = fs_mkfs(FS_LITTLEFS, (uintptr_t)lfs_mnt.storage_dev,
-			     &lfs_data, 0);
+		rc = fs_mkfs(FS_LITTLEFS, (uintptr_t)lfs_mnt.storage_dev, &lfs_data, 0);
 		watchdog_feed();
 		if (rc == 0) {
 			rc = fs_mount(&lfs_mnt);

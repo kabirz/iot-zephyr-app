@@ -32,26 +32,26 @@
 
 LOG_MODULE_REGISTER(io_ftp, LOG_LEVEL_INF);
 
-#define FTP_MAX_CLIENTS		3
-#define FTP_SESSION_TIMEOUT_SEC	120
+#define FTP_MAX_CLIENTS         3
+#define FTP_SESSION_TIMEOUT_SEC 120
 /* 控制/数据连接 socket 超时: 防止慢速/恶意客户端逐字节滴水长时间冻结
  * 整个 FTP 线程 (单线程 select 多路复用, 一冻全冻)。 */
-#define FTP_CTRL_TIMEOUT_MS	10000	/* 控制连接 recv 超时 */
-#define FTP_DATA_TIMEOUT_MS	15000	/* 数据连接 recv/send 超时 (大文件传输兜底) */
+#define FTP_CTRL_TIMEOUT_MS     10000 /* 控制连接 recv 超时 */
+#define FTP_DATA_TIMEOUT_MS     15000 /* 数据连接 recv/send 超时 (大文件传输兜底) */
 
 struct ftp_session {
 	int ctrl;
 	bool authed;
 	bool anon;
-	int data_listen;	/* PASV 监听 */
-	bool data_is_port;	/* PORT 主动模式 */
+	int data_listen;   /* PASV 监听 */
+	bool data_is_port; /* PORT 主动模式 */
 	struct sockaddr_in port_addr;
 	char cwd[64];
 	bool type_ascii;
 	uint32_t rest;
 	char rename_from[128];
 	bool rename_pending;
-	bool pending_cr;	/* ASCII 上传: 上一块末尾的 \r 待与下一块 \n 合并 */
+	bool pending_cr; /* ASCII 上传: 上一块末尾的 \r 待与下一块 \n 合并 */
 	int64_t last_activity;
 	char buf[FTP_BUF_SIZE];
 };
@@ -183,8 +183,8 @@ static void get_local_ip(uint8_t *ip)
 
 	memset(ip, 0, 4);
 	if (iface) {
-		struct in_addr *a = (struct in_addr *)net_if_ipv4_get_global_addr(
-			iface, NET_ADDR_PREFERRED);
+		struct in_addr *a =
+			(struct in_addr *)net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
 
 		if (a) {
 			memcpy(ip, &a->s_addr, 4);
@@ -230,17 +230,15 @@ static size_t ascii_strip_cr(char *buf, size_t len, bool *pending_cr)
 	/* 本块末字节若是 \r, 留待下一块判定是否跟 \n */
 	if (len > start && buf[len - 1] == '\r') {
 		if (o > 0) {
-			o--;	/* 暂不输出末尾 \r */
+			o--; /* 暂不输出末尾 \r */
 		}
 		*pending_cr = true;
 	}
 	return o;
 }
 
-static const char *const ftp_months[] = {
-	"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-	"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-};
+static const char *const ftp_months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+					 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 /* 历史文件名 data_MMDD_HHMM.raw -> 真实创建时间 (Zephyr fs_dirent 不暴露 mtime) */
 static bool parse_hist_time(const char *name, int *mon, int *day, int *hour, int *min)
@@ -256,7 +254,10 @@ static bool parse_hist_time(const char *name, int *mon, int *day, int *hour, int
 	if (M < 1 || M > 12 || D < 1 || D > 31 || H > 23 || m > 59) {
 		return false;
 	}
-	*mon = M; *day = D; *hour = H; *min = m;
+	*mon = M;
+	*day = D;
+	*hour = H;
+	*min = m;
 	return true;
 }
 
@@ -266,8 +267,7 @@ static void format_ls_time(char *out, size_t len, const char *name)
 	int mon, day, hour, minute;
 
 	if (parse_hist_time(name, &mon, &day, &hour, &minute)) {
-		snprintf(out, len, "%s %2d %02d:%02d",
-			 ftp_months[mon - 1], day, hour, minute);
+		snprintf(out, len, "%s %2d %02d:%02d", ftp_months[mon - 1], day, hour, minute);
 		return;
 	}
 	time_t t = time(NULL);
@@ -278,8 +278,8 @@ static void format_ls_time(char *out, size_t len, const char *name)
 		snprintf(out, len, "%s %2d %02d:%02d", ftp_months[0], 1, 0, 0);
 		return;
 	}
-	snprintf(out, len, "%s %2d %02d:%02d",
-		 ftp_months[lt->tm_mon], lt->tm_mday, lt->tm_hour, lt->tm_min);
+	snprintf(out, len, "%s %2d %02d:%02d", ftp_months[lt->tm_mon], lt->tm_mday, lt->tm_hour,
+		 lt->tm_min);
 }
 
 static void cmd_pasv(struct ftp_session *s)
@@ -316,8 +316,8 @@ static void cmd_pasv(struct ftp_session *s)
 	uint16_t port = ntohs(addr.sin_port);
 
 	get_local_ip(ip);
-	ftp_sendf(s->ctrl, "227 Entering Passive Mode (%u,%u,%u,%u,%u,%u)",
-		  ip[0], ip[1], ip[2], ip[3], (port >> 8) & 0xFF, port & 0xFF);
+	ftp_sendf(s->ctrl, "227 Entering Passive Mode (%u,%u,%u,%u,%u,%u)", ip[0], ip[1], ip[2],
+		  ip[3], (port >> 8) & 0xFF, port & 0xFF);
 }
 
 /* EPSV: 扩展被动模式 (RFC 2428), 回 229 (|||port|) */
@@ -347,8 +347,7 @@ static void cmd_epsv(struct ftp_session *s)
 	socklen_t alen = sizeof(addr);
 
 	getsockname(s->data_listen, (struct sockaddr *)&addr, &alen);
-	ftp_sendf(s->ctrl, "229 Entering Extended Passive Mode (|||%u|)",
-		  ntohs(addr.sin_port));
+	ftp_sendf(s->ctrl, "229 Entering Extended Passive Mode (|||%u|)", ntohs(addr.sin_port));
 }
 
 /* PORT h1,h2,h3,h4,p1,p2 -> 主动模式目标地址 */
@@ -364,7 +363,7 @@ static void cmd_port(struct ftp_session *s, const char *arg)
 		close(s->data_listen);
 		s->data_listen = -1;
 	}
-	uint8_t ip[4] = { h[0], h[1], h[2], h[3] };
+	uint8_t ip[4] = {h[0], h[1], h[2], h[3]};
 
 	memset(&s->port_addr, 0, sizeof(s->port_addr));
 	s->port_addr.sin_family = AF_INET;
@@ -482,11 +481,10 @@ static void cmd_list(struct ftp_session *s, const char *path, bool long_fmt)
 		char tbuf[24];
 
 		format_ls_time(tbuf, sizeof(tbuf), base);
-		int len = long_fmt ?
-			snprintf(s->buf, sizeof(s->buf),
-				 "-rw-r--r-- 1 owner group %10u %s %s\r\n",
-				 (unsigned)de.size, tbuf, base) :
-			snprintf(s->buf, sizeof(s->buf), "%s\r\n", base);
+		int len = long_fmt ? snprintf(s->buf, sizeof(s->buf),
+					      "-rw-r--r-- 1 owner group %10u %s %s\r\n",
+					      (unsigned)de.size, tbuf, base)
+				   : snprintf(s->buf, sizeof(s->buf), "%s\r\n", base);
 
 		if (len > 0) {
 			send(data, s->buf, len, 0);
@@ -506,12 +504,12 @@ static void cmd_list(struct ftp_session *s, const char *path, bool long_fmt)
 			char tbuf[24];
 
 			format_ls_time(tbuf, sizeof(tbuf), de.name);
-			int len = long_fmt ?
-				snprintf(s->buf, sizeof(s->buf),
-					 "%s 1 owner group %10u %s %s\r\n",
-					 de.type == FS_DIR_ENTRY_DIR ? "drwxr-xr-x" : "-rw-r--r--",
-					 (unsigned)de.size, tbuf, de.name) :
-				snprintf(s->buf, sizeof(s->buf), "%s\r\n", de.name);
+			int len = long_fmt ? snprintf(s->buf, sizeof(s->buf),
+						      "%s 1 owner group %10u %s %s\r\n",
+						      de.type == FS_DIR_ENTRY_DIR ? "drwxr-xr-x"
+										  : "-rw-r--r--",
+						      (unsigned)de.size, tbuf, de.name)
+					   : snprintf(s->buf, sizeof(s->buf), "%s\r\n", de.name);
 
 			if (len > 0) {
 				send(data, s->buf, len, 0);
@@ -798,8 +796,9 @@ static void handle_command(struct ftp_session *s, char *line)
 		char fspath[FTP_BUF_SIZE];
 
 		fs_path(fspath, sizeof(fspath), s->cwd, arg);
-		int rc = (!s->rename_pending || !s->authed || s->anon) ? -1 :
-			 fs_rename(s->rename_from, fspath);
+		int rc = (!s->rename_pending || !s->authed || s->anon)
+				 ? -1
+				 : fs_rename(s->rename_from, fspath);
 
 		s->rename_pending = false;
 		ftp_send(s->ctrl, rc == 0 ? "250 Rename successful" : "550 Rename failed");
@@ -888,8 +887,8 @@ static void ftp_thread(void *p1, void *p2, void *p3)
 		return;
 	}
 
-	LOG_INF("FTP server on port %d (root %s, max %d clients, single-thread)",
-		FTP_CTRL_PORT, FTP_ROOT, FTP_MAX_CLIENTS);
+	LOG_INF("FTP server on port %d (root %s, max %d clients, single-thread)", FTP_CTRL_PORT,
+		FTP_ROOT, FTP_MAX_CLIENTS);
 
 	while (1) {
 		fd_set rfds;
@@ -906,7 +905,7 @@ static void ftp_thread(void *p1, void *p2, void *p3)
 			}
 		}
 
-		struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+		struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
 		int n = select(maxfd + 1, &rfds, NULL, NULL, &tv);
 
 		if (n > 0) {
@@ -923,14 +922,12 @@ static void ftp_thread(void *p1, void *p2, void *p3)
 						}
 					}
 					if (slot < 0) {
-						static const char busy[] =
-							"421 Too many users\r\n";
+						static const char busy[] = "421 Too many users\r\n";
 
 						(void)send(c, busy, sizeof(busy) - 1, 0);
 						close(c);
 					} else {
-						memset(&sessions[slot], 0,
-						       sizeof(sessions[slot]));
+						memset(&sessions[slot], 0, sizeof(sessions[slot]));
 						sessions[slot].ctrl = c;
 						sessions[slot].data_listen = -1;
 						sessions[slot].last_activity = k_uptime_get();
@@ -943,19 +940,17 @@ static void ftp_thread(void *p1, void *p2, void *p3)
 				}
 			}
 			for (int i = 0; i < FTP_MAX_CLIENTS; i++) {
-				if (sessions[i].ctrl >= 0 &&
-				    FD_ISSET(sessions[i].ctrl, &rfds)) {
+				if (sessions[i].ctrl >= 0 && FD_ISSET(sessions[i].ctrl, &rfds)) {
 					char line[FTP_BUF_SIZE];
-						int rl = recv_line(sessions[i].ctrl, line,
-								   sizeof(line));
+					int rl = recv_line(sessions[i].ctrl, line, sizeof(line));
 
-						if (rl > 0) {
-							handle_command(&sessions[i], line);
-						} else if (rl == 0) {
-							LOG_INF("FTP client %d gone", i);
-							close_session(&sessions[i]);
-						}
-						/* rl < 0: SO_RCVTIMEO 超时, 保留会话等下次 select */
+					if (rl > 0) {
+						handle_command(&sessions[i], line);
+					} else if (rl == 0) {
+						LOG_INF("FTP client %d gone", i);
+						close_session(&sessions[i]);
+					}
+					/* rl < 0: SO_RCVTIMEO 超时, 保留会话等下次 select */
 				}
 			}
 		}
@@ -966,7 +961,7 @@ static void ftp_thread(void *p1, void *p2, void *p3)
 		for (int i = 0; i < FTP_MAX_CLIENTS; i++) {
 			if (sessions[i].ctrl >= 0 &&
 			    (now - sessions[i].last_activity) >
-			    (FTP_SESSION_TIMEOUT_SEC * MSEC_PER_SEC)) {
+				    (FTP_SESSION_TIMEOUT_SEC * MSEC_PER_SEC)) {
 				LOG_INF("FTP client %d timeout", i);
 				close_session(&sessions[i]);
 			}
@@ -974,5 +969,5 @@ static void ftp_thread(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(ftp, CONFIG_IO_FTP_STACK_SIZE, ftp_thread,
-		NULL, NULL, NULL, CONFIG_IO_FTP_PRIORITY, 0, 0);
+K_THREAD_DEFINE(ftp, CONFIG_IO_FTP_STACK_SIZE, ftp_thread, NULL, NULL, NULL, CONFIG_IO_FTP_PRIORITY,
+		0, 0);

@@ -28,9 +28,9 @@
 
 LOG_MODULE_REGISTER(io_history, LOG_LEVEL_INF);
 
-#define HIST_DIR		"/lfs1"
-#define HIST_MAX_FILES		10
-#define HIST_FILE_MAX		(1024 * 1024)
+#define HIST_DIR       "/lfs1"
+#define HIST_MAX_FILES 10
+#define HIST_FILE_MAX  (1024 * 1024)
 
 K_MSGQ_DEFINE(his_msgq, sizeof(struct his_data), 16, 4);
 
@@ -59,8 +59,7 @@ static void cleanup_old_files(void)
 		return;
 	}
 	while (fs_readdir(&dir, &ent) == 0 && ent.name[0] != '\0') {
-		if (ent.type != FS_DIR_ENTRY_FILE ||
-		    strncmp(ent.name, "data_", 5) != 0) {
+		if (ent.type != FS_DIR_ENTRY_FILE || strncmp(ent.name, "data_", 5) != 0) {
 			continue;
 		}
 		if (n < HIST_MAX_FILES + 2) {
@@ -106,13 +105,12 @@ static void make_hist_name(char *buf, size_t len)
 	}
 	/* 钳位到合法范围: 消除 -Wformat-truncation (字段值域本应有界,
 	 * 钳位既保证 %02d 定宽 2 位, 也避免 RTC 异常数据生成非法文件名) */
-	mon  = CLAMP(lt->tm_mon + 1, 1, 12);
+	mon = CLAMP(lt->tm_mon + 1, 1, 12);
 	mday = CLAMP(lt->tm_mday, 1, 31);
 	hour = CLAMP(lt->tm_hour, 0, 23);
-	min  = CLAMP(lt->tm_min, 0, 59);
-	sec  = CLAMP(lt->tm_sec, 0, 59);
-	snprintf(buf, len, "data_%02d%02d_%02d%02d%02d.raw",
-		 mon, mday, hour, min, sec);
+	min = CLAMP(lt->tm_min, 0, 59);
+	sec = CLAMP(lt->tm_sec, 0, 59);
+	snprintf(buf, len, "data_%02d%02d_%02d%02d%02d.raw", mon, mday, hour, min, sec);
 }
 
 /* 确保当前文件可写: 未打开或超 1MB 时新建 (data_MMDD_HHMMSS.raw) */
@@ -160,7 +158,8 @@ static int ensure_file(void)
 					if (tell >= 0 && (uint32_t)tell < HIST_FILE_MAX) {
 						his_cur_size = (uint32_t)tell;
 						his_fp_open = true;
-						LOG_INF("history file: %s (%u bytes, appending)", path, his_cur_size);
+						LOG_INF("history file: %s (%u bytes, appending)",
+							path, his_cur_size);
 						return 0;
 					}
 					fs_close(&his_fp);
@@ -250,8 +249,8 @@ K_WORK_DEFINE(his_work, his_work_handler);
 /* 专用工作队列初始化 (priority 5: 早于 settings 11, 供历史开关同步使用) */
 static int hist_work_q_init(void)
 {
-	k_work_queue_start(&hist_work_q, hist_q_stack,
-			   K_KERNEL_STACK_SIZEOF(hist_q_stack), 10, NULL);
+	k_work_queue_start(&hist_work_q, hist_q_stack, K_KERNEL_STACK_SIZEOF(hist_q_stack), 10,
+			   NULL);
 	return 0;
 }
 SYS_INIT(hist_work_q_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_HIST_WORKQ);

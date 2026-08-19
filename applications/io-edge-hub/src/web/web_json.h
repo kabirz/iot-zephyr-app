@@ -20,8 +20,7 @@ extern "C" {
 #endif
 
 /* 在 buf[0..len) 中定位 "key" 的值起始位置 (跳过空白与 ':'), 失败返回 NULL */
-static inline const char *json_find_value(const char *buf, size_t len,
-					  const char *key)
+static inline const char *json_find_value(const char *buf, size_t len, const char *key)
 {
 	size_t klen = strlen(key);
 	size_t i = 0;
@@ -49,8 +48,7 @@ static inline const char *json_find_value(const char *buf, size_t len,
 }
 
 /* 取整数 (含 bool: true→1 / false→0) */
-static inline bool json_get_i32(const char *buf, size_t len, const char *key,
-				int32_t *out)
+static inline bool json_get_i32(const char *buf, size_t len, const char *key, int32_t *out)
 {
 	const char *v = json_find_value(buf, len, key);
 
@@ -76,8 +74,8 @@ static inline bool json_get_i32(const char *buf, size_t len, const char *key,
 }
 
 /* 取字符串值 (不含引号), 截断到 outsz-1 */
-static inline bool json_get_str(const char *buf, size_t len, const char *key,
-				char *out, size_t outsz)
+static inline bool json_get_str(const char *buf, size_t len, const char *key, char *out,
+				size_t outsz)
 {
 	const char *v = json_find_value(buf, len, key);
 
@@ -102,8 +100,7 @@ static inline bool json_get_str(const char *buf, size_t len, const char *key,
 
 /* 取无转义的 URL 查询参数值 (?a=b&c=d 中的 b), 不做百分号解码
  * (本服务参数均为 data_XXXX.raw / 十六进制等安全字符) */
-static inline bool url_query_get(const char *query, const char *key,
-				 char *out, size_t outsz)
+static inline bool url_query_get(const char *query, const char *key, char *out, size_t outsz)
 {
 	size_t klen = strlen(key);
 	const char *p = query;

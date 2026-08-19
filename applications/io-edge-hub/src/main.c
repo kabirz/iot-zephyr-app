@@ -68,8 +68,8 @@ bool get_reboot_status(void)
  * ================================================================
  * Zephyr net_mgmt mask 按 layer 精确匹配, IF_UP/IF_DOWN 同属 L2 可共用。
  */
-static void net_if_event_handler(uint64_t mgmt_event, struct net_if *iface,
-				 void *info, size_t info_length, void *user_data)
+static void net_if_event_handler(uint64_t mgmt_event, struct net_if *iface, void *info,
+				 size_t info_length, void *user_data)
 {
 	ARG_UNUSED(info);
 	ARG_UNUSED(info_length);
@@ -89,8 +89,7 @@ static void net_if_event_handler(uint64_t mgmt_event, struct net_if *iface,
 	}
 }
 
-NET_MGMT_REGISTER_EVENT_HANDLER(net_if_handler_cb,
-				NET_EVENT_IF_UP | NET_EVENT_IF_DOWN,
+NET_MGMT_REGISTER_EVENT_HANDLER(net_if_handler_cb, NET_EVENT_IF_UP | NET_EVENT_IF_DOWN,
 				net_if_event_handler, NULL);
 
 /* ================================================================
@@ -98,7 +97,7 @@ NET_MGMT_REGISTER_EVENT_HANDLER(net_if_handler_cb,
  * ================================================================ */
 static void derive_mac_from_uid(uint8_t *mac)
 {
-	static const uint8_t oui[3] = { 0x00, 0x08, 0xDC };
+	static const uint8_t oui[3] = {0x00, 0x08, 0xDC};
 	uint8_t uid[12];
 	ssize_t n = hwinfo_get_device_id(uid, sizeof(uid));
 
@@ -132,16 +131,15 @@ static int net_init(void)
 	/* MAC: 接口自动 up 已由 CONFIG_ETH_NET_IF_NO_AUTO_START 关闭,
 	 * 接口 admin down, SET_MAC_ADDRESS 可直接成功, 之后 net_if_up。 */
 	uint8_t mac[NET_ETH_ADDR_LEN];
-	struct ethernet_req_params params = { 0 };
+	struct ethernet_req_params params = {0};
 
 	derive_mac_from_uid(mac);
 	memcpy(params.mac_address.addr, mac, NET_ETH_ADDR_LEN);
-	if (net_mgmt(NET_REQUEST_ETHERNET_SET_MAC_ADDRESS, iface,
-		     &params, sizeof(params)) != 0) {
+	if (net_mgmt(NET_REQUEST_ETHERNET_SET_MAC_ADDRESS, iface, &params, sizeof(params)) != 0) {
 		LOG_WRN("set MAC failed, using DT default");
 	} else {
-		LOG_INF("MAC (UID): %02x:%02x:%02x:%02x:%02x:%02x",
-			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+		LOG_INF("MAC (UID): %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3],
+			mac[4], mac[5]);
 	}
 
 	/* 静态 IP: 从 holding_reg 组装; 掩码固定 /24; 网关 = IP 末段改 1 */
@@ -191,8 +189,8 @@ int main(void)
 	LOG_INF("board: %s, clk: %dMHz", CONFIG_BOARD_TARGET,
 		CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC / MHZ(1));
 	LOG_INF("flash: %dKB, ram: %dKB", CONFIG_FLASH_SIZE, CONFIG_SRAM_SIZE);
-	LOG_INF("version: v%d.%d.%d_%s", APP_VERSION_MAJOR, APP_VERSION_MINOR,
-		APP_PATCHLEVEL, FW_GIT_VERSION);
+	LOG_INF("version: v%d.%d.%d_%s", APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL,
+		FW_GIT_VERSION);
 
 	net_init();
 

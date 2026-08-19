@@ -46,8 +46,7 @@ static void bw_echo_thread(void *p1, void *p2, void *p3)
 		.sin_port = htons(CONFIG_IO_BW_TEST_PORT),
 	};
 
-	if (bind(serv, (struct sockaddr *)&addr, sizeof(addr)) < 0 ||
-	    listen(serv, 1) < 0) {
+	if (bind(serv, (struct sockaddr *)&addr, sizeof(addr)) < 0 || listen(serv, 1) < 0) {
 		LOG_ERR("bind/listen failed: %d", errno);
 		close(serv);
 		return;

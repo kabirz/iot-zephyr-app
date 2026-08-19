@@ -34,24 +34,22 @@ static K_MUTEX_DEFINE(reg_lock);
 
 /* ==================== 寄存器数组 (唯一数据源) ==================== */
 static uint16_t holding_reg[CONFIG_MODBUS_HOLDING_REGISTER_NUMBERS] = {
-	[HOLDING_DI_ENABLE_IDX]	= 0xFFFF,	/* DI 全使能 */
-	[HOLDING_AI_ENABLE_IDX]	= 0x000F,	/* AI 全使能 */
-	[HOLDING_DI_SAMPLE_MS_IDX]	= 200,		/* DI 采样间隔 ms */
-	[HOLDING_AI_SAMPLE_MS_IDX]	= 200,		/* AI 采样间隔 ms */
-	[HOLDING_CAN_ID_IDX]	= 0x0111,	/* CAN ID */
-	[HOLDING_CAN_BAUDRATE_IDX]	= 250,		/* CAN 波特率 x1000, settings 加载后注入升级库生效 */
-	[HOLDING_RS485_BAUDRATE_IDX]	= 9600,		/* RS485 波特率 */
-	[HOLDING_SLAVE_ID_IDX]	= 1,		/* Modbus Slave ID */
-	[HOLDING_IP_OCTET1_IDX]	= 192,		/* 默认 IP 192.168.12.101 */
-	[HOLDING_IP_OCTET2_IDX]	= 168,
-	[HOLDING_IP_OCTET3_IDX]	= 12,
-	[HOLDING_IP_OCTET4_IDX]	= 101,
+	[HOLDING_DI_ENABLE_IDX] = 0xFFFF,    /* DI 全使能 */
+	[HOLDING_AI_ENABLE_IDX] = 0x000F,    /* AI 全使能 */
+	[HOLDING_DI_SAMPLE_MS_IDX] = 200,    /* DI 采样间隔 ms */
+	[HOLDING_AI_SAMPLE_MS_IDX] = 200,    /* AI 采样间隔 ms */
+	[HOLDING_CAN_ID_IDX] = 0x0111,       /* CAN ID */
+	[HOLDING_CAN_BAUDRATE_IDX] = 250,    /* CAN 波特率 x1000, settings 加载后注入升级库生效 */
+	[HOLDING_RS485_BAUDRATE_IDX] = 9600, /* RS485 波特率 */
+	[HOLDING_SLAVE_ID_IDX] = 1,          /* Modbus Slave ID */
+	[HOLDING_IP_OCTET1_IDX] = 192,       /* 默认 IP 192.168.12.101 */
+	[HOLDING_IP_OCTET2_IDX] = 168,       [HOLDING_IP_OCTET3_IDX] = 12,
+	[HOLDING_IP_OCTET4_IDX] = 101,
 };
 
 static uint16_t input_reg[CONFIG_MODBUS_INPUT_REGISTER_NUMBERS] = {
 	/* 主/次版本 <16, 三段塞进 16 位: MAJOR<<12 | MINOR<<8 | PATCH */
-	[INPUT_VER_IDX] = ((APP_VERSION_MAJOR << 12) | (APP_VERSION_MINOR << 8) |
-			   APP_PATCHLEVEL),
+	[INPUT_VER_IDX] = ((APP_VERSION_MAJOR << 12) | (APP_VERSION_MINOR << 8) | APP_PATCHLEVEL),
 };
 
 /* ==================== 寄存器访问接口 ==================== */
@@ -167,8 +165,8 @@ int io_write_holding(uint16_t addr, uint16_t reg)
 		break;
 	case HOLDING_TIMESTAMP_LO_IDX:
 		/* 写低16位时, 组合高低位设置 RTC 时间 */
-		set_timestamp((time_t)(((uint32_t)holding_reg[HOLDING_TIMESTAMP_HI_IDX] << 16) |
-				       reg));
+		set_timestamp(
+			(time_t)(((uint32_t)holding_reg[HOLDING_TIMESTAMP_HI_IDX] << 16) | reg));
 		break;
 	case HOLDING_CONFIG_SAVE_IDX:
 		/* 写非0 → 全量保存参数到 FCB, 然后恢复为 0 */
@@ -257,10 +255,10 @@ const struct modbus_user_callbacks io_modbus_cbs = {
 /* ==================== Settings 持久化 (FCB, modbus/ 命名空间) ==================== */
 
 /* Settings 键名精确匹配: 防止 "di_enx" 之类更长的段名误匹配 */
-#define NAME_IS(n, l, s)	((l) == (sizeof(s) - 1) && !strncmp((n), (s), (l)))
+#define NAME_IS(n, l, s) ((l) == (sizeof(s) - 1) && !strncmp((n), (s), (l)))
 
-static int mb_set_one(const char *name, size_t len, settings_read_cb read_cb,
-		      void *cb_arg, uint16_t addr)
+static int mb_set_one(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg,
+		      uint16_t addr)
 {
 	if (len == sizeof(uint16_t)) {
 		uint16_t val;
@@ -272,8 +270,7 @@ static int mb_set_one(const char *name, size_t len, settings_read_cb read_cb,
 	return 0;
 }
 
-static int mb_handle_set(const char *name, size_t len, settings_read_cb read_cb,
-			 void *cb_arg)
+static int mb_handle_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg)
 {
 	const char *next;
 	size_t name_len = settings_name_next(name, &next);
@@ -348,8 +345,7 @@ static bool ip_is_valid_for_export(void)
 			     (uint8_t)holding_reg[HOLDING_IP_OCTET4_IDX]);
 }
 
-static int mb_handle_export(int (*cb)(const char *name, const void *value,
-				      size_t val_len))
+static int mb_handle_export(int (*cb)(const char *name, const void *value, size_t val_len))
 {
 	(void)cb("modbus/di_en", &holding_reg[HOLDING_DI_ENABLE_IDX], sizeof(uint16_t));
 	(void)cb("modbus/ai_en", &holding_reg[HOLDING_AI_ENABLE_IDX], sizeof(uint16_t));
@@ -361,14 +357,12 @@ static int mb_handle_export(int (*cb)(const char *name, const void *value,
 	(void)cb("modbus/rs485_bps", &holding_reg[HOLDING_RS485_BAUDRATE_IDX], sizeof(uint16_t));
 	(void)cb("modbus/slave_id", &holding_reg[HOLDING_SLAVE_ID_IDX], sizeof(uint16_t));
 	if (ip_is_valid_for_export()) {
-		(void)cb("modbus/ip", &holding_reg[HOLDING_IP_OCTET1_IDX],
-			 sizeof(uint16_t) * 4);
+		(void)cb("modbus/ip", &holding_reg[HOLDING_IP_OCTET1_IDX], sizeof(uint16_t) * 4);
 	}
 	return 0;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(modbus, "modbus", NULL, mb_handle_set, NULL,
-			       mb_handle_export);
+SETTINGS_STATIC_HANDLER_DEFINE(modbus, "modbus", NULL, mb_handle_set, NULL, mb_handle_export);
 
 /* ==================== 出厂恢复 ==================== */
 int settings_factory_reset(void)

@@ -30,16 +30,16 @@
 
 LOG_MODULE_REGISTER(io_tcp, LOG_LEVEL_INF);
 
-#define MODBUS_TCP_PORT		502
-#define MB_TCP_MAX_CLIENTS	16	/* listen backlog + 初始客户端槽位数 */
+#define MODBUS_TCP_PORT        502
+#define MB_TCP_MAX_CLIENTS     16 /* listen backlog + 初始客户端槽位数 */
 /* 会话超时须 > TCP Keepalive 总探测时间 (KEEPIDLE+KEEPCNT*KEEPINTVL = 30+3*5 = 45s),
  * 否则正常空闲主站会被应用层误踢而 keepalive 尚未生效。
  * 由 CONFIG_IO_MODBUS_TCP_SESSION_TIMEOUT 使能 (默认 n, 不踢空闲连接)。 */
-#define MB_TCP_SESSION_TIMEOUT	60000	/* ms */
+#define MB_TCP_SESSION_TIMEOUT 60000 /* ms */
 /* recv/send 超时压到亚秒级, 避免单慢/恶意客户端长时间阻塞 select 主循环
  * (本线程为单线程 select 多路复用, 阻塞会拖死全部客户端)。 */
-#define MB_TCP_IO_TIMEOUT	500	/* ms: 客户端 recv/send 超时 */
-#define MB_TCP_RESP_TIMEOUT	800	/* ms: 等待 modbus server 处理超时 */
+#define MB_TCP_IO_TIMEOUT      500 /* ms: 客户端 recv/send 超时 */
+#define MB_TCP_RESP_TIMEOUT    800 /* ms: 等待 modbus server 处理超时 */
 
 extern const struct modbus_user_callbacks io_modbus_cbs;
 
@@ -57,8 +57,7 @@ static struct modbus_adu g_resp;
 static K_SEM_DEFINE(g_resp_sem, 0, 1);
 
 /* raw_tx_cb: server(系统工作队列线程)处理完 ADU 后回填响应 */
-static int server_raw_cb(const int iface, const struct modbus_adu *adu,
-			 void *user_data)
+static int server_raw_cb(const int iface, const struct modbus_adu *adu, void *user_data)
 {
 	ARG_UNUSED(iface);
 	ARG_UNUSED(user_data);
@@ -81,11 +80,12 @@ static int init_modbus_server(void)
 
 	struct modbus_iface_param param = {
 		.mode = MODBUS_MODE_RAW,
-		.server = {
-			.user_cb = (struct modbus_user_callbacks *)&io_modbus_cbs,
-			.unit_id = srv_unit_id,
-		},
-		.rawcb = { .raw_tx_cb = server_raw_cb, .user_data = NULL },
+		.server =
+			{
+				.user_cb = (struct modbus_user_callbacks *)&io_modbus_cbs,
+				.unit_id = srv_unit_id,
+			},
+		.rawcb = {.raw_tx_cb = server_raw_cb, .user_data = NULL},
 	};
 
 	int rc = modbus_init_server(server_iface, param);
@@ -195,11 +195,11 @@ static int handle_client(int client)
 		LOG_ERR("MODBUS RAW wait timeout");
 		resp = req;
 		modbus_raw_set_server_failure(&resp);
-		resp.unit_id = orig_unit_id;  /* 回显客户端原始 unit_id */
+		resp.unit_id = orig_unit_id; /* 回显客户端原始 unit_id */
 		return reply_adu(client, &resp);
 	}
 
-	g_resp.unit_id = orig_unit_id;  /* 回显客户端原始 unit_id, 不暴露内部改写 */
+	g_resp.unit_id = orig_unit_id; /* 回显客户端原始 unit_id, 不暴露内部改写 */
 	return reply_adu(client, &g_resp);
 }
 
@@ -311,7 +311,7 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 			}
 		}
 
-		struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+		struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
 		int n = select(maxfd + 1, &rfds, NULL, NULL, &tv);
 
 		if (n > 0) {
@@ -327,20 +327,20 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 						.tv_usec = (MB_TCP_IO_TIMEOUT % 1000) * 1000,
 					};
 
-					(void)setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
-							 &tv, sizeof(tv));
-					(void)setsockopt(c, SOL_SOCKET, SO_SNDTIMEO,
-							 &tv, sizeof(tv));
+					(void)setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv,
+							 sizeof(tv));
+					(void)setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tv,
+							 sizeof(tv));
 					/* TCP Keepalive: 主站异常掉线时协议栈自动断开连接
 					 * (探测参数由 CONFIG_NET_TCP_KEEPIDLE/INTVL/CNT 决定) */
 					int ka = 1;
 
-					(void)setsockopt(c, SOL_SOCKET, SO_KEEPALIVE,
-							 &ka, sizeof(ka));
+					(void)setsockopt(c, SOL_SOCKET, SO_KEEPALIVE, &ka,
+							 sizeof(ka));
 
 					if (client_add(c)) {
-						LOG_INF("client connected (fd=%d, total=%d)",
-							c, client_count);
+						LOG_INF("client connected (fd=%d, total=%d)", c,
+							client_count);
 					}
 				}
 			}
@@ -376,5 +376,5 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(mb_tcp, CONFIG_IO_MODBUS_TCP_STACK, mb_tcp_thread,
-		NULL, NULL, NULL, CONFIG_IO_MODBUS_TCP_PRIORITY, 0, 0);
+K_THREAD_DEFINE(mb_tcp, CONFIG_IO_MODBUS_TCP_STACK, mb_tcp_thread, NULL, NULL, NULL,
+		CONFIG_IO_MODBUS_TCP_PRIORITY, 0, 0);
