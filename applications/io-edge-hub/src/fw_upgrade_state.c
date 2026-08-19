@@ -27,7 +27,7 @@ static int fw_upgrade_state_init(void)
 	return 0;
 }
 
-SYS_INIT(fw_upgrade_state_init, APPLICATION, 1);
+SYS_INIT(fw_upgrade_state_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_FW_UPGRADE);
 
 bool fw_upgrade_try_lock(enum fw_upgrade_channel channel)
 {

@@ -3,10 +3,10 @@
 测量:
 - 单次 RTT 分布 (P50/P95/P99)
 - 持续 N 秒的 QPS
-- 3 客户端并发时的聚合 QPS
+- 多客户端并发时的聚合 QPS
 
 用法:
-  python bench_modbus_fc03.py --ip 192.168.12.101 --duration 10
+  python bench_modbus_fc03.py --ip 192.168.12.101 --duration 10 --clients 10
 """
 import argparse
 import json

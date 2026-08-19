@@ -22,7 +22,7 @@ io-edge-hub 提供 **16 路数字输入**、**8 路数字输出**、**4 路模�
 ## 功能
 
 - **IO 采集**:16 路 DI(光耦隔离)+ 8 路 DO(驱动 + LED 联动)+ 4 路 AI(电流 4-20mA / 电压 0-10V,12-bit)
-- **Modbus TCP Server**:端口 502,RAW ADU + select() 多路复用,最多 3 客户端,30s 会话超时,链路断连安全清零 DO,TCP Keepalive 检测主站掉线
+- **Modbus TCP Server**:端口 502,RAW ADU + select() 多路复用,无客户端数量限制,链路断连安全清零 DO,TCP Keepalive 检测主站掉线
 - **Modbus RTU Slave**:RS485,波特率/Slave ID 可配(默认 9600/1)
 - **FTP Server**:端口 21,LittleFS 历史文件管理(admin/admin + anonymous 只读,PASV 模式)
 - **双通道固件升级**:UDP(端口 8600)+ CAN(帧 0x101-0x105),共享库自管,应用仅注册业务回调
@@ -89,6 +89,7 @@ io-edge-hub/
 
 | 优先级 | 配置项 | 模块 | 说明 |
 |--------|--------|------|------|
+| 3 | `CONFIG_IO_INIT_PRIORITY_FW_UPGRADE` | fw_upgrade_state | 固件升级互斥锁 + hook 注册 |
 | 5 | `CONFIG_IO_INIT_PRIORITY_HIST_WORKQ` | history | 历史记录工作队列 |
 | 8 | `CONFIG_IO_INIT_PRIORITY_SETTINGS` | settings | 加载持久化参数 (FCB → holding_reg) |
 | 10 | `CONFIG_IO_INIT_PRIORITY_CAN` | can | CAN 应用回调注册 |

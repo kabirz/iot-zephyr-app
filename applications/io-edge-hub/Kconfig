@@ -105,6 +105,10 @@ config IO_INIT_PRIORITY_HIST_WORKQ
 	int "History work queue init priority"
 	default 5
 
+config IO_INIT_PRIORITY_FW_UPGRADE
+	int "Firmware upgrade mutex init priority"
+	default 3
+
 # ==================== Web 服务 (HTTP + WebSocket) ====================
 menuconfig IO_WEB
 	bool "Enable web UI (HTTP server + REST API + WebSocket)"

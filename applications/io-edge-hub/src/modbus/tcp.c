@@ -6,7 +6,7 @@
  *
  *   - 使用 Zephyr modbus RAW ADU iface "RAW_0", user_cb = io_modbus_cbs
  *     (function.c 定义的 holding/input/coil 回调)
- *   - TCP socket 端口 502, select() 多路复用, 最多 3 客户端
+ *   - TCP socket 端口 502, select() 多路复用, 无客户端数量限制
  *   - 会话超时 (IO_MODBUS_TCP_SESSION_TIMEOUT, 默认关闭)
  *   - 网络链路断开 (net_link_is_up=false) 时拒绝新连接
  *   - TCP Keepalive (SO_KEEPALIVE) 检测主站连接存活
@@ -31,13 +31,13 @@
 LOG_MODULE_REGISTER(io_tcp, LOG_LEVEL_INF);
 
 #define MODBUS_TCP_PORT		502
-#define MB_TCP_MAX_CLIENTS	3
+#define MB_TCP_MAX_CLIENTS	16	/* listen backlog + 初始客户端槽位数 */
 /* 会话超时须 > TCP Keepalive 总探测时间 (KEEPIDLE+KEEPCNT*KEEPINTVL = 30+3*5 = 45s),
  * 否则正常空闲主站会被应用层误踢而 keepalive 尚未生效。
  * 由 CONFIG_IO_MODBUS_TCP_SESSION_TIMEOUT 使能 (默认 n, 不踢空闲连接)。 */
 #define MB_TCP_SESSION_TIMEOUT	60000	/* ms */
 /* recv/send 超时压到亚秒级, 避免单慢/恶意客户端长时间阻塞 select 主循环
- * (本线程为单线程 select 多路复用, 阻塞会拖死全部 3 个客户端)。 */
+ * (本线程为单线程 select 多路复用, 阻塞会拖死全部客户端)。 */
 #define MB_TCP_IO_TIMEOUT	500	/* ms: 客户端 recv/send 超时 */
 #define MB_TCP_RESP_TIMEOUT	800	/* ms: 等待 modbus server 处理超时 */
 
@@ -203,6 +203,60 @@ static int handle_client(int client)
 	return reply_adu(client, &g_resp);
 }
 
+/* 客户端节点 (动态链表) */
+struct mb_client {
+	int fd;
+	int64_t last_act;
+	struct mb_client *next;
+};
+
+static struct mb_client *client_list;
+static int client_count;
+
+static struct mb_client *client_find(int fd)
+{
+	for (struct mb_client *c = client_list; c; c = c->next) {
+		if (c->fd == fd) {
+			return c;
+		}
+	}
+	return NULL;
+}
+
+static void client_remove(int fd)
+{
+	struct mb_client **pp = &client_list;
+
+	while (*pp) {
+		if ((*pp)->fd == fd) {
+			struct mb_client *del = *pp;
+
+			*pp = del->next;
+			close(del->fd);
+			k_free(del);
+			client_count--;
+			return;
+		}
+		pp = &(*pp)->next;
+	}
+}
+
+static struct mb_client *client_add(int fd)
+{
+	struct mb_client *c = k_malloc(sizeof(*c));
+
+	if (!c) {
+		close(fd);
+		return NULL;
+	}
+	c->fd = fd;
+	c->last_act = k_uptime_get();
+	c->next = client_list;
+	client_list = c;
+	client_count++;
+	return c;
+}
+
 static void mb_tcp_thread(void *p1, void *p2, void *p3)
 {
 	ARG_UNUSED(p1);
@@ -241,14 +295,6 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 
 	LOG_INF("Modbus TCP server on port %d", MODBUS_TCP_PORT);
 
-	int clients[MB_TCP_MAX_CLIENTS];
-	int64_t last_act[MB_TCP_MAX_CLIENTS];
-
-	for (int i = 0; i < MB_TCP_MAX_CLIENTS; i++) {
-		clients[i] = -1;
-		last_act[i] = 0;
-	}
-
 	while (1) {
 		fd_set rfds;
 		int maxfd = serv;
@@ -256,12 +302,10 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 		FD_ZERO(&rfds);
 		FD_SET(serv, &rfds);
 
-		for (int i = 0; i < MB_TCP_MAX_CLIENTS; i++) {
-			if (clients[i] >= 0) {
-				FD_SET(clients[i], &rfds);
-				if (clients[i] > maxfd) {
-					maxfd = clients[i];
-				}
+		for (struct mb_client *c = client_list; c; c = c->next) {
+			FD_SET(c->fd, &rfds);
+			if (c->fd > maxfd) {
+				maxfd = c->fd;
 			}
 		}
 
@@ -292,40 +336,24 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 					(void)setsockopt(c, SOL_SOCKET, SO_KEEPALIVE,
 							 &ka, sizeof(ka));
 
-					for (int i = 0; i < MB_TCP_MAX_CLIENTS; i++) {
-						if (clients[i] < 0) {
-							clients[i] = c;
-							last_act[i] = k_uptime_get();
-							LOG_INF("client %d connected", i);
-							break;
-						}
-					}
-					/* 超出上限: 直接拒绝 */
-					bool found = false;
-
-					for (int i = 0; i < MB_TCP_MAX_CLIENTS; i++) {
-						if (clients[i] == c) {
-							found = true;
-							break;
-						}
-					}
-					if (!found) {
-						close(c);
+					if (client_add(c)) {
+						LOG_INF("client connected (fd=%d, total=%d)",
+							c, client_count);
 					}
 				}
 			}
 
 			/* 就绪客户端 */
-			for (int i = 0; i < MB_TCP_MAX_CLIENTS; i++) {
-				if (clients[i] >= 0 && FD_ISSET(clients[i], &rfds)) {
-					int rc = handle_client(clients[i]);
+			for (struct mb_client *c = client_list, *next; c; c = next) {
+				next = c->next;
+				if (FD_ISSET(c->fd, &rfds)) {
+					int rc = handle_client(c->fd);
 
 					if (rc == 0) {
-						last_act[i] = k_uptime_get();
+						c->last_act = k_uptime_get();
 					} else {
-						LOG_INF("client %d closed", i);
-						close(clients[i]);
-						clients[i] = -1;
+						LOG_INF("client disconnected (fd=%d)", c->fd);
+						client_remove(c->fd);
 					}
 				}
 			}
@@ -335,12 +363,11 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 #ifdef CONFIG_IO_MODBUS_TCP_SESSION_TIMEOUT
 		int64_t now = k_uptime_get();
 
-		for (int i = 0; i < MB_TCP_MAX_CLIENTS; i++) {
-			if (clients[i] >= 0 &&
-			    (now - last_act[i]) > MB_TCP_SESSION_TIMEOUT) {
-				LOG_INF("client %d timeout", i);
-				close(clients[i]);
-				clients[i] = -1;
+		for (struct mb_client *c = client_list, *next; c; c = next) {
+			next = c->next;
+			if ((now - c->last_act) > MB_TCP_SESSION_TIMEOUT) {
+				LOG_INF("client timeout (fd=%d)", c->fd);
+				client_remove(c->fd);
 			}
 		}
 #endif
