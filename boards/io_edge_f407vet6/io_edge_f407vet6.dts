@@ -80,8 +80,14 @@
 	status = "okay";
 };
 
-/* 内部 Flash: MCUboot (64KB) + Primary Slot (448KB) */
+/* 内部 Flash: MCUboot (64KB) + Primary Slot (448KB)
+ * erase-block-size: F407 扇区非均匀 (16/64/128KB), 上游 dtsi 不声明,
+ * slot0 (0x10000-0x80000) 覆盖 1x64KB + 3x128KB 扇区, 取最大值 128KB。
+ * 仅供 MCUboot 配置期估算 slot 容量 (消除 erase size 告警);
+ * Zephyr F4 flash 驱动运行时用自己的扇区表, 不读此属性。 */
 &flash0 {
+	erase-block-size = <DT_SIZE_K(128)>;
+
 	partitions {
 		compatible = "fixed-partitions";
 		#address-cells = <1>;

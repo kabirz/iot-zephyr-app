@@ -213,16 +213,6 @@ struct mb_client {
 static struct mb_client *client_list;
 static int client_count;
 
-static struct mb_client *client_find(int fd)
-{
-	for (struct mb_client *c = client_list; c; c = c->next) {
-		if (c->fd == fd) {
-			return c;
-		}
-	}
-	return NULL;
-}
-
 static void client_remove(int fd)
 {
 	struct mb_client **pp = &client_list;
