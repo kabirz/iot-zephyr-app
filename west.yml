@@ -13,7 +13,7 @@ manifest:
 
   projects:
     - name: zephyr
-      revision: v4.4.0-dtcm
+      revision: a05e4ff3f834d7ea149d191d4165b501659d7063
       path: zephyr
       import:
         name-allowlist:

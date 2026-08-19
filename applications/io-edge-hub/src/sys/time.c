@@ -22,19 +22,6 @@ LOG_MODULE_REGISTER(io_time, LOG_LEVEL_INF);
 
 static const struct device *rtc_dev;
 
-#ifdef CONFIG_LOG
-/* 日志时间戳: 返回 RTC 当前 Unix 秒 */
-static uint32_t rtc_timestamp_get(void)
-{
-	struct rtc_time tm;
-
-	if (rtc_dev && rtc_get_time(rtc_dev, &tm) == 0) {
-		return (uint32_t)mktime((struct tm *)&tm);
-	}
-	return 0;
-}
-#endif
-
 /* 合法时间戳范围: [2000-01-01, 2100-01-01)。超出范围的值通常是主站写入错误
  * (如只写低 16 位、高字为 0 -> 1970 年), gmtime 对部分非法输入会返回 NULL,
  * 解引用将触发 HardFault。这里直接拒绝越界值。 */
@@ -93,6 +80,7 @@ static int clock_init(void)
 	struct rtc_time tm;
 
 	if (rtc_get_time(rtc_dev, &tm) == 0) {
+		tm.tm_isdst = 0;  /* RTC 存储 UTC, 无夏令时 */
 		time_t t = mktime((struct tm *)&tm);
 		struct timespec ts = { .tv_sec = t, .tv_nsec = 0 };
 
@@ -100,9 +88,6 @@ static int clock_init(void)
 		LOG_INF("RTC time restored: %lld", (long long)t);
 	}
 
-#ifdef CONFIG_LOG
-	log_set_timestamp_func(rtc_timestamp_get, 1U);
-#endif
 	return 0;
 }
 
