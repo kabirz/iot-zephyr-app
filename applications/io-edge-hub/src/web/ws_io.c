@@ -541,4 +541,4 @@ static int ws_slots_init(void)
 	}
 	return 0;
 }
-SYS_INIT(ws_slots_init, APPLICATION, 60);
+SYS_INIT(ws_slots_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_WS);

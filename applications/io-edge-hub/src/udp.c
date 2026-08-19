@@ -120,4 +120,4 @@ static int udp_app_init(void)
 }
 
 /* 库 udp_fw_upgrade SYS_INIT priority 90; app handler 需在其前注册 */
-SYS_INIT(udp_app_init, APPLICATION, 80);
+SYS_INIT(udp_app_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_UDP);

@@ -55,4 +55,4 @@ static int rtu_init(void)
 }
 
 /* priority 13: 在 settings load (11) 之后, 拿到持久化的 baud/slave_id */
-SYS_INIT(rtu_init, APPLICATION, 13);
+SYS_INIT(rtu_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_RTU);

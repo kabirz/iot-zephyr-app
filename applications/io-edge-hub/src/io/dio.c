@@ -101,7 +101,7 @@ static void di_thread(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(di, CONFIG_IO_DI_STACK_SIZE, di_thread, NULL, NULL, NULL, 1, 0, 0);
+K_THREAD_DEFINE(di, CONFIG_IO_DI_STACK_SIZE, di_thread, NULL, NULL, NULL, CONFIG_IO_DI_PRIORITY, 0, 0);
 
 /* ================================================================
  * GPIO 初始化
@@ -127,4 +127,4 @@ static int dio_init(void)
 	return 0;
 }
 
-SYS_INIT(dio_init, APPLICATION, 12);
+SYS_INIT(dio_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_DIO);

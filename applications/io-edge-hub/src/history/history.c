@@ -246,7 +246,7 @@ static int hist_work_q_init(void)
 			   K_KERNEL_STACK_SIZEOF(hist_q_stack), 10, NULL);
 	return 0;
 }
-SYS_INIT(hist_work_q_init, APPLICATION, 5);
+SYS_INIT(hist_work_q_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_HIST_WORKQ);
 
 void history_enable_write(bool en)
 {

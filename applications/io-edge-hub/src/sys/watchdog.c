@@ -57,4 +57,4 @@ void watchdog_feed(void)
 	}
 }
 
-SYS_INIT(watchdog_init, APPLICATION, 50);
+SYS_INIT(watchdog_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_WATCHDOG);

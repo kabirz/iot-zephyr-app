@@ -21,9 +21,17 @@ config IO_DI_STACK_SIZE
 	int "DI sampling thread stack size"
 	default 512
 
+config IO_DI_PRIORITY
+	int "DI sampling thread priority"
+	default 2
+
 config IO_ADC_STACK_SIZE
 	int "AI sampling thread stack size"
 	default 512
+
+config IO_ADC_PRIORITY
+	int "AI sampling thread priority"
+	default 2
 
 config IO_MODBUS_TCP_STACK
 	int "Modbus TCP server thread stack size"
@@ -51,6 +59,51 @@ config IO_FTP_STACK_SIZE
 config IO_FTP_PRIORITY
 	int "FTP server thread priority"
 	default 13
+
+# ==================== SYS_INIT 优先级 ====================
+config IO_INIT_PRIORITY_SETTINGS
+	int "Settings subsystem init priority"
+	default 8
+
+config IO_INIT_PRIORITY_CAN
+	int "CAN app handler init priority"
+	default 10
+
+config IO_INIT_PRIORITY_DIO
+	int "Digital IO init priority"
+	default 12
+
+config IO_INIT_PRIORITY_ADC
+	int "ADC init priority"
+	default 12
+
+config IO_INIT_PRIORITY_RTU
+	int "Modbus RTU init priority"
+	default 13
+
+config IO_INIT_PRIORITY_CLOCK
+	int "RTC clock init priority"
+	default 41
+
+config IO_INIT_PRIORITY_WATCHDOG
+	int "Watchdog init priority"
+	default 50
+
+config IO_INIT_PRIORITY_WS
+	int "WebSocket slots init priority"
+	default 60
+
+config IO_INIT_PRIORITY_UDP
+	int "UDP app handler init priority"
+	default 80
+
+config IO_INIT_PRIORITY_LITTLEFS
+	int "LittleFS init priority"
+	default 99
+
+config IO_INIT_PRIORITY_HIST_WORKQ
+	int "History work queue init priority"
+	default 5
 
 # ==================== Web 服务 (HTTP + WebSocket) ====================
 menuconfig IO_WEB

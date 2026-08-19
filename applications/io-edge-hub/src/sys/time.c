@@ -91,4 +91,4 @@ static int clock_init(void)
 	return 0;
 }
 
-SYS_INIT(clock_init, POST_KERNEL, 41);
+SYS_INIT(clock_init, POST_KERNEL, CONFIG_IO_INIT_PRIORITY_CLOCK);

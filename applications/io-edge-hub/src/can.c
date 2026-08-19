@@ -71,4 +71,4 @@ static int can_app_init(void)
 	return 0;
 }
 
-SYS_INIT(can_app_init, APPLICATION, 10);
+SYS_INIT(can_app_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_CAN);

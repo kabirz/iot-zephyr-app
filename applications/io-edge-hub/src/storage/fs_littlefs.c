@@ -81,4 +81,4 @@ static int littlefs_init(void)
 	return 0;
 }
 
-SYS_INIT(littlefs_init, APPLICATION, 99);
+SYS_INIT(littlefs_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_LITTLEFS);

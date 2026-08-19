@@ -107,7 +107,7 @@ static void adc_thread(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(adc_io, CONFIG_IO_ADC_STACK_SIZE, adc_thread, NULL, NULL, NULL, 1, 0, 0);
+K_THREAD_DEFINE(adc_io, CONFIG_IO_ADC_STACK_SIZE, adc_thread, NULL, NULL, NULL, CONFIG_IO_ADC_PRIORITY, 0, 0);
 
 static int adc_init(void)
 {
@@ -132,4 +132,4 @@ static int adc_init(void)
 	return 0;
 }
 
-SYS_INIT(adc_init, APPLICATION, 12);
+SYS_INIT(adc_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_ADC);

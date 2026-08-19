@@ -85,6 +85,52 @@ io-edge-hub/
 
 板定义在仓库根 `boards/io_edge_f407vet6/`(含 clock/flash 分区/CAN1/RNG,供 MCUboot 共享)。
 
+## SYS_INIT 优先级
+
+| 优先级 | 配置项 | 模块 | 说明 |
+|--------|--------|------|------|
+| 5 | `CONFIG_IO_INIT_PRIORITY_HIST_WORKQ` | history | 历史记录工作队列 |
+| 8 | `CONFIG_IO_INIT_PRIORITY_SETTINGS` | settings | 加载持久化参数 (FCB → holding_reg) |
+| 10 | `CONFIG_IO_INIT_PRIORITY_CAN` | can | CAN 应用回调注册 |
+| 12 | `CONFIG_IO_INIT_PRIORITY_DIO` | dio | 16DI + 8DO + 8LED GPIO |
+| 12 | `CONFIG_IO_INIT_PRIORITY_ADC` | adc | 4 路 AI 采样 |
+| 13 | `CONFIG_IO_INIT_PRIORITY_RTU` | rtu | Modbus RTU Slave |
+| 41 | `CONFIG_IO_INIT_PRIORITY_CLOCK` | time | RTC → 系统时钟 |
+| 50 | `CONFIG_IO_INIT_PRIORITY_WATCHDOG` | watchdog | IWDG (30s) |
+| 60 | `CONFIG_IO_INIT_PRIORITY_WS` | ws_io | WebSocket 槽位初始化 |
+| 80 | `CONFIG_IO_INIT_PRIORITY_UDP` | udp | UDP 应用回调注册 |
+| 99 | `CONFIG_IO_INIT_PRIORITY_LITTLEFS` | fs_littlefs | LittleFS 挂载 |
+
+## 线程优先级
+
+### Zephyr 系统线程
+
+| 优先级 | 线程名 | 配置项 | 栈大小 | 说明 |
+|--------|--------|--------|--------|------|
+| -1 | sys_workq | `CONFIG_SYSTEM_WORKQUEUE_PRIORITY` | `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE` (2048) | 系统工作队列 |
+| 0 | main | `CONFIG_MAIN_THREAD_PRIORITY` | `CONFIG_MAIN_STACK_SIZE` (2048) | 主线程 |
+| 0 | log | `CONFIG_LOG_PROCESS_THREAD_PRIORITY` | `CONFIG_LOG_PROCESS_THREAD_STACK_SIZE` (768) | 日志处理 |
+| 最低 | idle | - | `CONFIG_IDLE_STACK_SIZE` (320) | 空闲线程 |
+
+### 应用线程
+
+| 优先级 | 线程名 | 配置项 | 栈大小 | 说明 |
+|--------|--------|--------|--------|------|
+| 2 | di | `CONFIG_IO_DI_PRIORITY` | `CONFIG_IO_DI_STACK_SIZE` (512) | DI 采样 |
+| 2 | adc_io | `CONFIG_IO_ADC_PRIORITY` | `CONFIG_IO_ADC_STACK_SIZE` (512) | AI 采样 |
+| 13 | mb_tcp | `CONFIG_IO_MODBUS_TCP_PRIORITY` | `CONFIG_IO_MODBUS_TCP_STACK` (2048) | Modbus TCP Server |
+| 13 | ftp | `CONFIG_IO_FTP_PRIORITY` | `CONFIG_IO_FTP_STACK_SIZE` (4096) | FTP Server |
+| 15 | bw_test | - | 4096 | TCP 带宽测试 (临时) |
+
+### 库线程 (libs/)
+
+| 优先级 | 线程名 | 配置项 | 栈大小 | 说明 |
+|--------|--------|--------|--------|------|
+| 1 | udp_fw_rx | `CONFIG_UDP_FW_RX_PRIORITY` | `CONFIG_UDP_FW_RX_STACK_SIZE` (2048) | UDP 固件升级 RX |
+| 1 | can_fw_rx | `CONFIG_CAN_FW_UPGRADE_RX_PRIORITY` | `CONFIG_CAN_FW_UPGRADE_RX_STACK_SIZE` (2048) | CAN 固件升级 RX |
+
+> 数值越小优先级越高。固件升级线程优先级最高 (1),DI/AI 采样次之 (2)。
+
 ## 与设计文档
 
 详细方案见 [`docs/io-edge-hub.md`](../../docs/io-edge-hub.md)。实现与设计的差异在该文档「附录 G:实现备注」章节记录。

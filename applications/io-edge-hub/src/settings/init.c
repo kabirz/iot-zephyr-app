@@ -83,4 +83,4 @@ static int modbus_settings_init(void)
 }
 
 /* priority 11: 在 dio/adc (12) 和 rtu (13) 之前加载持久化参数 */
-SYS_INIT(modbus_settings_init, APPLICATION, 11);
+SYS_INIT(modbus_settings_init, APPLICATION, CONFIG_IO_INIT_PRIORITY_SETTINGS);
