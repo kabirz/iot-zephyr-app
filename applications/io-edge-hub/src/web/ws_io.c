@@ -42,6 +42,7 @@
 #include "ws_io.h"
 #include "web_cmds.h"
 #include "watchdog.h"
+#include "fw_upgrade_state.h"
 #include <init.h>
 
 LOG_MODULE_REGISTER(io_ws, LOG_LEVEL_INF);
@@ -157,6 +158,7 @@ static void fw_upg_reset(void)
 	fw_upg.total = 0;
 	fw_upg.received = 0;
 	fw_upg.crc = 0;
+	fw_upgrade_unlock(FW_UPGRADE_CHANNEL_WS);
 }
 
 static bool fw_upg_verify_crc(void)
@@ -317,6 +319,9 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 		if (fw_size <= 0) {
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"bad size\"}");
+		} else if (!fw_upgrade_try_lock(FW_UPGRADE_CHANNEL_WS)) {
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+				     "{\"ok\":false,\"err\":\"upgrade in progress\"}");
 		} else {
 			/* 解析客户端发送的 keyhash (可选, Base64 编码) */
 			char b64_keyhash[64];

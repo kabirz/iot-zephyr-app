@@ -9,6 +9,7 @@ target_include_directories(app PRIVATE include src/sys src/storage src/ftp_serve
 
 target_sources(app PRIVATE
   src/main.c
+  src/fw_upgrade_state.c
   src/io/dio.c
   src/io/adc.c
   src/history/history.c

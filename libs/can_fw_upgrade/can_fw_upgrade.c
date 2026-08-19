@@ -95,6 +95,14 @@ void can_fw_add_pre_reboot_hook(can_fw_pre_reboot_hook_t hook)
 	pre_reboot_hooks[pre_reboot_hook_cnt++] = hook;
 }
 
+/* 固件升级开始前钩子 (keyhash 校验通过后、擦 flash 前调用) */
+static can_fw_pre_start_hook_t pre_start_hook;
+
+void can_fw_add_pre_start_hook(can_fw_pre_start_hook_t hook)
+{
+	pre_start_hook = hook;
+}
+
 static struct flash_img_context flash_img_ctx;
 static bool fw_img_initialized;
 static size_t fw_written;
@@ -210,6 +218,13 @@ static void handle_platform_rx(struct can_frame *frame)
 			}
 		}
 #endif
+
+		/* 调用应用注册的 pre_start 钩子 */
+		if (pre_start_hook && !pre_start_hook()) {
+			LOG_WRN("FW_START rejected: pre_start_hook declined");
+			fw_can_reply(FW_CODE_TRANFER_ERROR, 0);
+			return;
+		}
 
 		/* 每次都重新擦除 + 初始化: 上次中途失败的传输若不重置,
 		 * 旧偏移/缓冲状态会导致 flash 写错位 */

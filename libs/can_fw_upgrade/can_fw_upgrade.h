@@ -83,6 +83,17 @@ typedef void (*can_fw_pre_reboot_hook_t)(void);
 void can_fw_add_pre_reboot_hook(can_fw_pre_reboot_hook_t hook);
 
 /**
+ * @brief 注册固件升级开始前钩子
+ *
+ * 库在收到 START_UPDATE 命令且通过 keyhash 校验后、擦除 flash 前调用.
+ * 回调返回 true 允许升级, false 拒绝升级 (库会回复错误).
+ *
+ * @param hook 回调函数 (NULL 无操作, 默认允许)
+ */
+typedef bool (*can_fw_pre_start_hook_t)(void);
+void can_fw_add_pre_start_hook(can_fw_pre_start_hook_t hook);
+
+/**
  * @brief 覆盖 CAN 波特率 (须在库 SYS_INIT 初始化 CAN 之前调用)
  *
  * 应用侧从持久化 settings 恢复用户配置的波特率后注入, 优先于

@@ -80,6 +80,14 @@ void udp_fw_add_pre_reboot_hook(udp_fw_pre_reboot_hook_t hook)
 	pre_reboot_hooks[pre_reboot_hook_cnt++] = hook;
 }
 
+/* 固件升级开始前钩子 (keyhash 校验通过后、擦 flash 前调用) */
+static udp_fw_pre_start_hook_t pre_start_hook;
+
+void udp_fw_add_pre_start_hook(udp_fw_pre_start_hook_t hook)
+{
+	pre_start_hook = hook;
+}
+
 /* 配置端口 socket + 发送方地址 (回复路由用) */
 static int config_sock = -1;
 static struct sockaddr_in config_remote_addr;
@@ -250,6 +258,19 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 				return true;
 			}
 #endif
+
+			/* 调用应用注册的 pre_start 钩子 */
+			if (pre_start_hook && !pre_start_hook()) {
+				LOG_WRN("FW_START rejected: pre_start_hook declined");
+				uint8_t rep[3] = {
+					FW_START_ERR_FAIL,
+					CONFIG_UDP_FW_DATA_V2_CHUNK & 0xff,
+					(CONFIG_UDP_FW_DATA_V2_CHUNK >> 8) & 0xff,
+				};
+
+				udp_fw_reply(cmd, rep, 3);
+				return true;
+			}
 
 			const struct flash_area *fa;
 
