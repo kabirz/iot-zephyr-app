@@ -154,7 +154,8 @@ int web_build_info_json(char *json, size_t bufsz)
 		lfs_total = (unsigned long long)st.f_blocks * st.f_bsize;
 	}
 
-	return snprintf(json, bufsz,
+	/* snprintf may return more than bufsz if truncated; clamp to buffer size */
+	int n = snprintf(json, bufsz,
 		"{\"t\":\"info\","
 		"\"version\":\"v%d.%d.%d_%s\","
 		"\"build\":\"%s %s\","
@@ -191,6 +192,7 @@ int web_build_info_json(char *json, size_t bufsz)
 		net_link_is_up() ? "true" : "false",
 		get_holding_reg(HOLDING_DI_SAMPLE_MS_IDX),
 		get_holding_reg(HOLDING_AI_SAMPLE_MS_IDX));
+	return (n > (int)bufsz) ? (int)bufsz : n;
 }
 
 static int info_handler(struct http_client_ctx *client,
@@ -248,7 +250,7 @@ int web_build_regs_json(char *json, size_t bufsz)
 			      i ? "," : "", get_input_reg(i));
 	}
 	n += snprintf(json + n, bufsz - n, "]}");
-	return n;
+	return (n > (int)bufsz) ? (int)bufsz : n;
 }
 
 static int regs_handler(struct http_client_ctx *client,

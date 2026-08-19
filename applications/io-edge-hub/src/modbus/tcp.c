@@ -286,10 +286,12 @@ static void mb_tcp_thread(void *p1, void *p2, void *p3)
 
 	if (bind(serv, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
 		LOG_ERR("bind failed: %d", errno);
+		close(serv);
 		return;
 	}
 	if (listen(serv, MB_TCP_MAX_CLIENTS) < 0) {
 		LOG_ERR("listen failed: %d", errno);
+		close(serv);
 		return;
 	}
 

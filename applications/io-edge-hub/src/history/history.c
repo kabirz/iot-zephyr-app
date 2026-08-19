@@ -152,16 +152,19 @@ static int ensure_file(void)
 			snprintf(path, sizeof(path), "%s/%s", HIST_DIR, latest);
 			fs_file_t_init(&his_fp);
 			if (fs_open(&his_fp, path, FS_O_CREATE | FS_O_WRITE | FS_O_APPEND) == 0) {
-				fs_seek(&his_fp, 0, FS_SEEK_END);
-				off_t tell = fs_tell(&his_fp);
+				if (fs_seek(&his_fp, 0, FS_SEEK_END) != 0) {
+					fs_close(&his_fp);
+				} else {
+					off_t tell = fs_tell(&his_fp);
 
-				if (tell >= 0 && (uint32_t)tell < HIST_FILE_MAX) {
-					his_cur_size = (uint32_t)tell;
-					his_fp_open = true;
-					LOG_INF("history file: %s (%u bytes, appending)", path, his_cur_size);
-					return 0;
+					if (tell >= 0 && (uint32_t)tell < HIST_FILE_MAX) {
+						his_cur_size = (uint32_t)tell;
+						his_fp_open = true;
+						LOG_INF("history file: %s (%u bytes, appending)", path, his_cur_size);
+						return 0;
+					}
+					fs_close(&his_fp);
 				}
-				fs_close(&his_fp);
 			}
 		}
 		/* 没找到可用文件, 走下面新建逻辑 */
@@ -175,7 +178,12 @@ static int ensure_file(void)
 		return -EIO;
 	}
 
-	fs_seek(&his_fp, 0, FS_SEEK_END);
+	if (fs_seek(&his_fp, 0, FS_SEEK_END) != 0) {
+		LOG_ERR("history file seek failed");
+		fs_close(&his_fp);
+		his_fp_open = false;
+		return -EIO;
+	}
 	off_t tell = fs_tell(&his_fp);
 
 	if (tell < 0) {

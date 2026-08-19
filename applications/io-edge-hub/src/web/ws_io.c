@@ -95,6 +95,7 @@ static struct {
 	uint16_t crc;
 	struct flash_img_context fic;
 } fw_upg;
+static struct k_mutex fw_upg_lock;
 
 /* ==================== IO 快照 JSON (推送帧 / GET /api/io 共用) ==================== */
 
@@ -124,7 +125,7 @@ int ws_io_build_status(char *buf, size_t bufsz)
 	n += snprintf(buf + n, bufsz - n,
 		      "],\"di_en\":%u,\"ai_en\":%u,\"ms\":%lld}",
 		      di_en, ai_en, (long long)k_uptime_get());
-	return n;
+	return (n > (int)bufsz) ? (int)bufsz : n;
 }
 
 /* ==================== 连接槽位 + 处理线程 ==================== */
@@ -153,11 +154,13 @@ static int ws_get_free_slot(void)
 
 static void fw_upg_reset(void)
 {
+	k_mutex_lock(&fw_upg_lock, K_FOREVER);
 	fw_upg.active = false;
 	fw_upg.failed = false;
 	fw_upg.total = 0;
 	fw_upg.received = 0;
 	fw_upg.crc = 0;
+	k_mutex_unlock(&fw_upg_lock);
 	fw_upgrade_unlock(FW_UPGRADE_CHANNEL_WS);
 }
 
@@ -312,11 +315,17 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"erase failed\"}");
 		}
-	} else if (strncmp(cmd, "\"fw_start\"", 10) == 0 && !fw_upg.active) {
+	} else if (strncmp(cmd, "\"fw_start\"", 10) == 0) {
 		int32_t fw_size = 0;
 
 		json_get_i32(cmd, len, "size", &fw_size);
-		if (fw_size <= 0) {
+		k_mutex_lock(&fw_upg_lock, K_FOREVER);
+		bool active = fw_upg.active;
+		k_mutex_unlock(&fw_upg_lock);
+		if (active) {
+			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+				     "{\"ok\":false,\"err\":\"already in progress\"}");
+		} else if (fw_size <= 0) {
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"bad size\"}");
 		} else if (!fw_upgrade_try_lock(FW_UPGRADE_CHANNEL_WS)) {
@@ -354,8 +363,10 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 						n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 							     "{\"ok\":false,\"err\":\"erase/init\"}");
 					} else {
+						k_mutex_lock(&fw_upg_lock, K_FOREVER);
 						fw_upg.active = true;
 						fw_upg.total = (uint32_t)fw_size;
+						k_mutex_unlock(&fw_upg_lock);
 						LOG_INF("fw upgrade started (size=%d)", fw_size);
 						n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 							     "{\"ok\":true}");
@@ -363,33 +374,45 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 				}
 			}
 		}
-	} else if (strncmp(cmd, "\"fw_end\"", 8) == 0 && fw_upg.active) {
-		flash_img_buffered_write(&fw_upg.fic, NULL, 0, true);
-		if (fw_upg.received == 0) {
+	} else if (strncmp(cmd, "\"fw_end\"", 8) == 0) {
+		k_mutex_lock(&fw_upg_lock, K_FOREVER);
+		bool active = fw_upg.active;
+		k_mutex_unlock(&fw_upg_lock);
+		if (!active) {
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-				     "{\"ok\":false,\"err\":\"no data\"}");
-		} else if (fw_upg.received != fw_upg.total) {
-			/* 尺寸不符 = 传输缺帧, 残缺镜像不能交给 MCUboot */
-			LOG_ERR("fw size mismatch: recv=%u expect=%u",
-				fw_upg.received, fw_upg.total);
-			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-				     "{\"ok\":false,\"err\":\"size mismatch\"}");
-		} else if (!fw_upg_verify_crc()) {
-			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-				     "{\"ok\":false,\"err\":\"crc mismatch\"}");
-		} else if (!fw_upg_verify_keyhash()) {
-			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-				     "{\"ok\":false,\"err\":\"keyhash mismatch\"}");
-		} else if (boot_request_upgrade(1) != 0) {
-			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-				     "{\"ok\":false,\"err\":\"boot_request\"}");
+				     "{\"ok\":false,\"err\":\"not in progress\"}");
 		} else {
-			LOG_INF("fw upgrade verified, rebooting for swap");
+			flash_img_buffered_write(&fw_upg.fic, NULL, 0, true);
+			k_mutex_lock(&fw_upg_lock, K_FOREVER);
+			uint32_t received = fw_upg.received;
+			uint32_t total = fw_upg.total;
+			k_mutex_unlock(&fw_upg_lock);
+			if (received == 0) {
+				n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+					     "{\"ok\":false,\"err\":\"no data\"}");
+			} else if (received != total) {
+				/* 尺寸不符 = 传输缺帧, 残缺镜像不能交给 MCUboot */
+				LOG_ERR("fw size mismatch: recv=%u expect=%u",
+					received, total);
+				n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+					     "{\"ok\":false,\"err\":\"size mismatch\"}");
+			} else if (!fw_upg_verify_crc()) {
+				n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+					     "{\"ok\":false,\"err\":\"crc mismatch\"}");
+			} else if (!fw_upg_verify_keyhash()) {
+				n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+					     "{\"ok\":false,\"err\":\"keyhash mismatch\"}");
+			} else if (boot_request_upgrade(1) != 0) {
+				n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+					     "{\"ok\":false,\"err\":\"boot_request\"}");
+			} else {
+				LOG_INF("fw upgrade verified, rebooting for swap");
+				fw_upg_reset();
+				n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":true}");
+				set_reboot_status(true);
+			}
 			fw_upg_reset();
-			n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":true}");
-			set_reboot_status(true);
 		}
-		fw_upg_reset();
 	} else {
 		n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 			     "{\"ok\":false,\"err\":\"unknown cmd\"}");
@@ -436,18 +459,26 @@ static void ws_thread(void *p1, void *p2, void *p3)
 				if (cmd != NULL) {
 					ws_handle_cmd(s, cmd, len - (cmd - s->rx_buf));
 				}
-			} else if ((type & WEBSOCKET_FLAG_BINARY) &&
-				   fw_upg.active && !fw_upg.failed) {
-				if (flash_img_buffered_write(&fw_upg.fic,
-							     (const uint8_t *)s->rx_buf,
-							     len, false) == 0) {
-					fw_upg.crc = crc16_ccitt(fw_upg.crc,
-								  (const uint8_t *)s->rx_buf,
-								  len);
-					fw_upg.received += len;
-				} else {
-					LOG_ERR("fw: flash write failed @%u", fw_upg.received);
-					fw_upg.failed = true;
+			} else if (type & WEBSOCKET_FLAG_BINARY) {
+				k_mutex_lock(&fw_upg_lock, K_FOREVER);
+				bool active = fw_upg.active && !fw_upg.failed;
+				k_mutex_unlock(&fw_upg_lock);
+				if (active) {
+					if (flash_img_buffered_write(&fw_upg.fic,
+								     (const uint8_t *)s->rx_buf,
+								     len, false) == 0) {
+						k_mutex_lock(&fw_upg_lock, K_FOREVER);
+						fw_upg.crc = crc16_ccitt(fw_upg.crc,
+									  (const uint8_t *)s->rx_buf,
+									  len);
+						fw_upg.received += len;
+						k_mutex_unlock(&fw_upg_lock);
+					} else {
+						LOG_ERR("fw: flash write failed");
+						k_mutex_lock(&fw_upg_lock, K_FOREVER);
+						fw_upg.failed = true;
+						k_mutex_unlock(&fw_upg_lock);
+					}
 				}
 			}
 		}
@@ -541,6 +572,7 @@ struct http_resource_detail_websocket ws_io_detail = {
 
 static int ws_slots_init(void)
 {
+	k_mutex_init(&fw_upg_lock);
 	for (int i = 0; i < CONFIG_IO_WEB_WS_HANDLERS; i++) {
 		ws_slots[i].sock = -1;
 	}

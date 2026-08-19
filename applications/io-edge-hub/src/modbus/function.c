@@ -83,7 +83,9 @@ int update_holding_reg(uint16_t addr, uint16_t reg)
 	if (addr >= ARRAY_SIZE(holding_reg)) {
 		return -ENOTSUP;
 	}
+	k_mutex_lock(&reg_lock, K_FOREVER);
 	holding_reg[addr] = reg;
+	k_mutex_unlock(&reg_lock);
 	return 0;
 }
 

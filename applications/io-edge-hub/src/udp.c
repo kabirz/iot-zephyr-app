@@ -21,6 +21,10 @@
 
 LOG_MODULE_REGISTER(io_udp, LOG_LEVEL_INF);
 
+/* Factory reset confirmation: require two commands within 5 seconds */
+static int64_t factory_reset_pending_ms;
+static bool factory_reset_confirmed;
+
 static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
 			    void *user_data)
 {
@@ -90,18 +94,39 @@ static bool app_cmd_handler(uint8_t cmd, const uint8_t *data, size_t len,
 	}
 
 	case UDP_CMD_FACTORY_RESET: {
-		uint8_t ok = (settings_factory_reset() == 0) ? 1 : 0;
+		/* Two-step confirmation: first cmd sets pending, second within 5s executes */
+		int64_t now = k_uptime_get();
 
-		udp_fw_reply(cmd, &ok, sizeof(ok));
-		if (ok) {
-			/* 排空 deferred 日志缓冲再重启 */
-			history_sync();
-#ifdef CONFIG_LOG
-			while (log_process()) {
+		if (!factory_reset_confirmed) {
+			if ((now - factory_reset_pending_ms) > 5000) {
+				/* First cmd or timeout: set pending */
+				factory_reset_pending_ms = now;
+				factory_reset_confirmed = false;
+				uint8_t ok = 0;
+
+				udp_fw_reply(cmd, &ok, sizeof(ok));
+				LOG_INF("FACTORY_RESET: send again within 5s to confirm");
+			} else {
+				/* Second cmd within 5s: confirm and execute */
+				factory_reset_confirmed = true;
 			}
+		}
+
+		if (factory_reset_confirmed) {
+			uint8_t ok = (settings_factory_reset() == 0) ? 1 : 0;
+
+			udp_fw_reply(cmd, &ok, sizeof(ok));
+			if (ok) {
+				/* 排空 deferred 日志缓冲再重启 */
+				history_sync();
+#ifdef CONFIG_LOG
+				while (log_process()) {
+				}
 #endif
-			k_msleep(100);
-			sys_reboot(SYS_REBOOT_COLD);
+				k_msleep(100);
+				sys_reboot(SYS_REBOOT_COLD);
+			}
+			factory_reset_confirmed = false;
 		}
 		return true;
 	}
