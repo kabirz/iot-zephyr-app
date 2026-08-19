@@ -683,26 +683,107 @@ function pickFile(f){
 	setMsg("");
 }
 function setMsg(m,c){const e=$("#upMsg");e.textContent=m;e.className="msg "+(c||"")}
+
+/* MCUboot 镜像格式常量 */
+const IMG_MAGIC=0x96F3B83D;
+const IMG_TLV_INFO_MAGIC=0x6907;
+const IMG_TLV_KEYHASH=0x0001;
+
+/* 验证 MCUboot 镜像 magic 并提取 keyhash */
+async function parseFirmwareImage(file){
+	const buf=await file.arrayBuffer();
+	const view=new DataView(buf);
+
+	/* 校验 image magic (offset 0, LE32) */
+	const magic=view.getUint32(0,true);
+	if(magic!==IMG_MAGIC){
+		throw new Error("不是有效的 MCUboot 签名镜像 (magic 不匹配)");
+	}
+
+	/* 读取 header size (offset 8, LE16) 和 image size (offset 12, LE32) */
+	const hdrSize=view.getUint16(8,true);
+	const imgSize=view.getUint32(12,true);
+
+	if(hdrSize<32||(hdrSize&0x3)){
+		throw new Error("镜像头大小异常: "+hdrSize);
+	}
+	if(imgSize>buf.byteLength){
+		throw new Error("镜像大小异常: img_size "+imgSize+" > 文件大小 "+buf.byteLength);
+	}
+
+	/* 定位 TLV 区 */
+	const tlvOff=hdrSize+imgSize;
+	if(tlvOff+4>buf.byteLength){
+		throw new Error("TLV 区越界, 镜像可能被截断");
+	}
+
+	const tlvMagic=view.getUint16(tlvOff,true);
+	if(tlvMagic!==IMG_TLV_INFO_MAGIC){
+		throw new Error("TLV info magic 不匹配: 0x"+tlvMagic.toString(16));
+	}
+
+	/* 遍历 TLV 找 KEYHASH */
+	let keyhash=null;
+	let off=tlvOff+4;
+	while(off+4<=buf.byteLength){
+		const type=view.getUint16(off,true);
+		const tlvLen=view.getUint16(off+2,true);
+		if(type===0||tlvLen===0||off+4+tlvLen>buf.byteLength){
+			break;
+		}
+		if(type===IMG_TLV_KEYHASH&&tlvLen===32){
+			keyhash=new Uint8Array(buf,off+4,32);
+			break;
+		}
+		off+=4+tlvLen;
+	}
+
+	return{data:new Uint8Array(buf),size:buf.byteLength,keyhash:keyhash};
+}
+
+/* Base64 编码 */
+function toBase64(bytes){
+	let binary="";
+	for(let i=0;i<bytes.length;i++){
+		binary+=String.fromCharCode(bytes[i]);
+	}
+	return btoa(binary);
+}
+
 async function doUpgrade(){
 	if(!upFileBuf)return;
 	if(!await showConfirm("确认升级到 "+upFileBuf.name+" ？设备将自动重启"))return;
 	if(!WS||WS.readyState!==1){setMsg("WebSocket 未连接","err");return}
 	$("#upBtn").disabled=true;
 	const prog=$("#upProg");prog.style.display="block";
-	setMsg("擦除中…");
-	/* fw_start → bin frames → fw_end, 10KB/chunk */
-	const CHUNK=10240;
+
 	try{
-		const r=await wsSend({cmd:"fw_start",size:upFileBuf.size});
-		if(!r.ok){setMsg("启动失败："+r.err,"err");prog.style.display="none";$("#upBtn").disabled=false;return}
+		/* 解析镜像并验证 magic, 提取 keyhash */
+		setMsg("校验镜像格式…");
+		const img=await parseFirmwareImage(upFileBuf);
+
+		if(!img.keyhash){
+			throw new Error("镜像未签名 (无 KEYHASH TLV)");
+		}
+
+		/* 将 keyhash 编码为 Base64, 随 fw_start 一起发送到设备端验证 */
+		const keyhashB64=toBase64(img.keyhash);
+		setMsg("擦除中…");
+		const r=await wsSend({cmd:"fw_start",size:img.size,keyhash:keyhashB64});
+		if(!r.ok){
+			if(r.err==="keyhash mismatch"){
+				throw new Error("设备拒绝: 签名密钥不匹配 (镜像签名密钥与设备不一致)");
+			}
+			throw new Error("启动失败: "+r.err);
+		}
 		setMsg("上传中…");
-		const total=upFileBuf.size;
+		const total=img.size;
 		let off=0;
+		const CHUNK=10240;
 		while(off<total){
 			const end=Math.min(off+CHUNK,total);
-			const chunk=upFileBuf.slice(off,end);
-			const buf=await chunk.arrayBuffer();
-			WS.send(buf);
+			const chunk=img.data.slice(off,end);
+			WS.send(chunk);
 			prog.querySelector("i").style.width=(end/total*100)+"%";
 			off=end;
 			await new Promise(r=>setTimeout(r,5));
@@ -712,9 +793,11 @@ async function doUpgrade(){
 		if(r2.ok){
 			setMsg("校验通过，设备正在重启完成固件交换…","ok");
 			pollOnline();
-		}else setMsg("升级失败："+r2.err,"err");
+		}else{
+			throw new Error("升级失败: "+r2.err);
+		}
 	}catch(e){
-		prog.style.display="none";setMsg("升级中断："+e,"err");
+		prog.style.display="none";setMsg("升级失败: "+e.message,"err");
 	}
 	$("#upBtn").disabled=false;
 }

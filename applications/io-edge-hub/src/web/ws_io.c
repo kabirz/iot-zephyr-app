@@ -35,6 +35,7 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/crc.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/base64.h>
 #include <fw_keyhash.h>
 
 #include "web_json.h"
@@ -57,6 +58,33 @@ LOG_MODULE_REGISTER(io_ws, LOG_LEVEL_INF);
 #define IMG_TLV_INFO_MAGIC	0x6907
 #define IMG_TLV_KEYHASH		0x0001
 #define FW_CRC_CHUNK		64
+
+/* 验证客户端发送的 keyhash 与编译时固件签名密钥匹配 */
+static bool fw_upg_verify_client_keyhash(const char *b64_keyhash, size_t b64_len)
+{
+	uint8_t received_keyhash[FW_KEYHASH_KEY_LEN];
+	size_t decoded_len;
+
+	if (b64_keyhash == NULL || b64_len == 0) {
+		/* 客户端未发送 keyhash, 跳过验证 (兼容旧客户端) */
+		return true;
+	}
+
+	if (base64_decode(received_keyhash, sizeof(received_keyhash), &decoded_len,
+			  (const uint8_t *)b64_keyhash, b64_len) != 0 ||
+	    decoded_len != FW_KEYHASH_KEY_LEN) {
+		LOG_WRN("fw_start: bad keyhash (decode failed or length mismatch)");
+		return false;
+	}
+
+	if (memcmp(received_keyhash, fw_keyhash, FW_KEYHASH_KEY_LEN) != 0) {
+		LOG_WRN("fw_start: keyhash mismatch");
+		return false;
+	}
+
+	LOG_INF("fw_start: keyhash verified OK");
+	return true;
+}
 
 static struct {
 	bool active;
@@ -290,26 +318,43 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"bad size\"}");
 		} else {
-			const struct flash_area *fa;
+			/* 解析客户端发送的 keyhash (可选, Base64 编码) */
+			char b64_keyhash[64];
+			const char *keyhash_ptr = NULL;
+			size_t keyhash_len = 0;
 
-			if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
+			if (json_get_str(cmd, len, "keyhash", b64_keyhash, sizeof(b64_keyhash))) {
+				keyhash_ptr = b64_keyhash;
+				keyhash_len = strlen(b64_keyhash);
+			}
+
+			/* 在擦除 flash 之前验证 keyhash */
+			if (!fw_upg_verify_client_keyhash(keyhash_ptr, keyhash_len)) {
 				n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-					     "{\"ok\":false,\"err\":\"flash open\"}");
+					     "{\"ok\":false,\"err\":\"keyhash mismatch\"}");
 			} else {
-				watchdog_feed();
-				int rc = flash_area_erase(fa, 0, ROUND_UP((uint32_t)fw_size, 4096));
+				const struct flash_area *fa;
 
-				watchdog_feed();
-				flash_area_close(fa);
-				if (rc != 0 || flash_img_init(&fw_upg.fic) != 0) {
+				if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
 					n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-						     "{\"ok\":false,\"err\":\"erase/init\"}");
+						     "{\"ok\":false,\"err\":\"flash open\"}");
 				} else {
-					fw_upg.active = true;
-					fw_upg.total = (uint32_t)fw_size;
-					LOG_INF("fw upgrade started (size=%d)", fw_size);
-					n = snprintf(s->tx_buf, sizeof(s->tx_buf),
-						     "{\"ok\":true}");
+					watchdog_feed();
+					int rc = flash_area_erase(fa, 0,
+								  ROUND_UP((uint32_t)fw_size, 4096));
+
+					watchdog_feed();
+					flash_area_close(fa);
+					if (rc != 0 || flash_img_init(&fw_upg.fic) != 0) {
+						n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+							     "{\"ok\":false,\"err\":\"erase/init\"}");
+					} else {
+						fw_upg.active = true;
+						fw_upg.total = (uint32_t)fw_size;
+						LOG_INF("fw upgrade started (size=%d)", fw_size);
+						n = snprintf(s->tx_buf, sizeof(s->tx_buf),
+							     "{\"ok\":true}");
+					}
 				}
 			}
 		}
