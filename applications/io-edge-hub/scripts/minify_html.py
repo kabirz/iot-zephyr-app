@@ -13,5 +13,5 @@ def minify(html):
     return html.strip()
 
 if __name__ == '__main__':
-    with open(sys.argv[1], 'r') as f:
+    with open(sys.argv[1], 'r', encoding='utf-8') as f:
         sys.stdout.write(minify(f.read()))

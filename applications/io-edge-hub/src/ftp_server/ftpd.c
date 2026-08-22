@@ -58,8 +58,25 @@ struct ftp_session {
 
 static __dtcm_bss_section struct ftp_session sessions[FTP_MAX_CLIENTS];
 
-static void ftp_send(int s, const char *msg)
+/* 数据连接整段发送: send() 在 TX 缓冲紧张时只接受部分字节, 忽略返回值
+ * 会静默丢数据 (大文件传输内容错位的根因), 必须重试至发完 */
+static int send_all(int s, const void *buf, size_t len)
 {
+	const uint8_t *p = buf;
+
+	while (len > 0) {
+		ssize_t n = send(s, p, len, 0);
+
+		if (n <= 0) {
+			return -1;
+		}
+		p += n;
+		len -= (size_t)n;
+	}
+	return 0;
+}
+
+static void ftp_send(int s, const char *msg){
 	char buf[FTP_BUF_SIZE];
 	int len = snprintf(buf, sizeof(buf), "%s\r\n", msg);
 
@@ -487,7 +504,7 @@ static void cmd_list(struct ftp_session *s, const char *path, bool long_fmt)
 				   : snprintf(s->buf, sizeof(s->buf), "%s\r\n", base);
 
 		if (len > 0) {
-			send(data, s->buf, len, 0);
+			send_all(data, s->buf, len);
 		}
 		close(data);
 		ftp_send(s->ctrl, "226 Transfer complete");
@@ -512,7 +529,7 @@ static void cmd_list(struct ftp_session *s, const char *path, bool long_fmt)
 					   : snprintf(s->buf, sizeof(s->buf), "%s\r\n", de.name);
 
 			if (len > 0) {
-				send(data, s->buf, len, 0);
+				send_all(data, s->buf, len);
 			}
 		}
 		fs_closedir(&dir);
@@ -576,16 +593,16 @@ static void cmd_retr(struct ftp_session *s, const char *path)
 	}
 
 	ssize_t n;
-	char in[FTP_BUF_SIZE / 2];
+	static char in[FTP_BUF_SIZE / 2]; /* 单线程 select: 静态复用, 避免大数组压栈 */
 
 	while ((n = fs_read(&fp, in, sizeof(in))) > 0) {
 		size_t send_len = n;
 
 		if (s->type_ascii) {
 			send_len = ascii_crlf(s->buf, in, n);
-			(void)send(data, s->buf, send_len, 0);
+			(void)send_all(data, s->buf, send_len);
 		} else {
-			(void)send(data, in, n, 0);
+			(void)send_all(data, in, n);
 		}
 	}
 	fs_close(&fp);

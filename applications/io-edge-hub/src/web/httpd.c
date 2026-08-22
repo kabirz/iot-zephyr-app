@@ -98,11 +98,13 @@ static void respond_json_err(struct http_response_ctx *rsp, const char *err)
 static char body_buf[BODY_MAX];
 static size_t body_len;
 static bool body_done; /* 上一事务已处理完, 新事务首块先清缓冲 */
+static bool body_rejected;
 
 static void body_reset(void)
 {
 	body_len = 0;
 	body_done = false;
+	body_rejected = false;
 }
 
 /* 事务结束标记 (FINAL 处理完后调用): 下一次 body_append 先清旧数据,
@@ -118,7 +120,9 @@ static bool body_append(const char *data, size_t len)
 		body_len = 0;
 		body_done = false;
 	}
-	if (body_len + len > BODY_MAX) {
+	if (body_rejected || body_len + len > BODY_MAX) {
+		/* 粘性拒绝: 溢出后本事务后续回调一律失败, 防截断 body 被解析执行 */
+		body_rejected = true;
 		return false;
 	}
 	memcpy(body_buf + body_len, data, len);
@@ -174,7 +178,7 @@ int web_build_info_json(char *json, size_t bufsz)
 		"\"di_ms\":%u,\"ai_ms\":%u}",
 		APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL, FW_GIT_VERSION, __DATE__,
 		__TIME__, CONFIG_BOARD_TARGET, CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC / 1000000U,
-		CONFIG_FLASH_SIZE, CONFIG_SRAM_SIZE, mac_str,
+		CONFIG_FLASH_SIZE, CONFIG_SRAM_SIZE + 64, mac_str,
 		get_holding_reg(HOLDING_IP_OCTET1_IDX), get_holding_reg(HOLDING_IP_OCTET2_IDX),
 		get_holding_reg(HOLDING_IP_OCTET3_IDX), get_holding_reg(HOLDING_IP_OCTET4_IDX),
 		get_holding_reg(HOLDING_SLAVE_ID_IDX), get_holding_reg(HOLDING_RS485_BAUDRATE_IDX),
@@ -368,7 +372,9 @@ static int api_do_handler(struct http_client_ctx *client, enum http_transaction_
 		return 0;
 	}
 	if (!body_append(req->data, req->data_len)) {
-		respond_json_err(rsp, "body too large");
+		if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+			respond_json_err(rsp, "body too large");
+		}
 		return 0;
 	}
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
@@ -397,7 +403,9 @@ static int reg_handler(struct http_client_ctx *client, enum http_transaction_sta
 		return 0;
 	}
 	if (!body_append(req->data, req->data_len)) {
-		respond_json_err(rsp, "body too large");
+		if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+			respond_json_err(rsp, "body too large");
+		}
 		return 0;
 	}
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
@@ -426,7 +434,9 @@ static int api_time_handler(struct http_client_ctx *client, enum http_transactio
 		return 0;
 	}
 	if (!body_append(req->data, req->data_len)) {
-		respond_json_err(rsp, "body too large");
+		if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+			respond_json_err(rsp, "body too large");
+		}
 		return 0;
 	}
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
@@ -450,6 +460,35 @@ static int save_handler(struct http_client_ctx *client, enum http_transaction_st
 		holding_reg_save();
 		respond_json_ok(rsp);
 	}
+	return 0;
+}
+
+static int cfg_handler(struct http_client_ctx *client, enum http_transaction_status status,
+			   const struct http_request_ctx *req, struct http_response_ctx *rsp,
+			   void *user_data)
+{
+	if (status == HTTP_SERVER_TRANSACTION_ABORTED ||
+	    status == HTTP_SERVER_TRANSACTION_COMPLETE) {
+		body_reset();
+		return 0;
+	}
+	if (!body_append(req->data, req->data_len)) {
+		if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+			respond_json_err(rsp, "body too large");
+		}
+		return 0;
+	}
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+	const char *err = NULL;
+
+	if (web_cmd_exec_cfg(body_buf, body_len, &err) == 0) {
+		respond_json_ok(rsp);
+	} else {
+		respond_json_err(rsp, err ? err : "bad request");
+	}
+	body_finalize();
 	return 0;
 }
 
@@ -649,7 +688,9 @@ static int hist_del_handler(struct http_client_ctx *client, enum http_transactio
 		return 0;
 	}
 	if (!body_append(req->data, req->data_len)) {
-		respond_json_err(rsp, "body too large");
+		if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+			respond_json_err(rsp, "body too large");
+		}
 		return 0;
 	}
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
@@ -692,6 +733,7 @@ DYNAMIC_DETAIL(regs, BIT(HTTP_GET));
 DYNAMIC_DETAIL(api_do, BIT(HTTP_POST));
 DYNAMIC_DETAIL(reg, BIT(HTTP_POST));
 DYNAMIC_DETAIL(api_time, BIT(HTTP_POST));
+DYNAMIC_DETAIL(cfg, BIT(HTTP_POST));
 DYNAMIC_DETAIL(save, BIT(HTTP_POST));
 DYNAMIC_DETAIL(reboot, BIT(HTTP_POST));
 DYNAMIC_DETAIL(history, BIT(HTTP_GET));
@@ -710,6 +752,7 @@ HTTP_RESOURCE_DEFINE(res_regs, io_web, "/api/regs", &regs);
 HTTP_RESOURCE_DEFINE(res_do, io_web, "/api/do", &api_do);
 HTTP_RESOURCE_DEFINE(res_reg, io_web, "/api/reg", &reg);
 HTTP_RESOURCE_DEFINE(res_time, io_web, "/api/time", &api_time);
+HTTP_RESOURCE_DEFINE(res_cfg, io_web, "/api/cfg", &cfg);
 HTTP_RESOURCE_DEFINE(res_save, io_web, "/api/save", &save);
 HTTP_RESOURCE_DEFINE(res_reboot, io_web, "/api/reboot", &reboot);
 HTTP_RESOURCE_DEFINE(res_history, io_web, "/api/history", &history);

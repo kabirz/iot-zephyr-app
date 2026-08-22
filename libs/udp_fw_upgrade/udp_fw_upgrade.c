@@ -390,7 +390,11 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 
 	case FW_CMD_REBOOT:
 		LOG_INF("reboot requested");
-		udp_fw_reply(cmd, NULL, 0);
+	{
+		uint8_t ok = 1;
+
+		udp_fw_reply(cmd, &ok, sizeof(ok));
+	}
 		/* 排空 deferred 日志缓冲, 给 shell 线程打印窗口, 避免随重启丢失 */
 #ifdef CONFIG_LOG
 		while (log_process()) {

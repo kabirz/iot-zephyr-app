@@ -129,6 +129,17 @@ static int recv_full(int sock, uint8_t *buf, size_t want)
 	return 0;
 }
 
+static bool fc_supported(uint8_t fc)
+{
+	switch (fc) {
+	case 1: case 2: case 3: case 4:
+	case 5: case 6: case 8: case 15: case 16:
+		return true;
+	default:
+		return false;
+	}
+}
+
 /* 处理一条客户端请求: 返回 0 继续, <0 关闭连接 */
 static int handle_client(int client)
 {
@@ -167,6 +178,21 @@ static int handle_client(int client)
 
 	if (orig_unit_id != 0) {
 		req.unit_id = srv_unit_id;
+	}
+
+	/* 未知 FC / 残缺 PDU 库层会静默丢帧, 不拦截就只能等超时后误回
+	 * SERVER_DEVICE_FAILURE (0x04)。对齐移植版: 未知 FC 回 0x01,
+	 * 已知 FC 但 PDU <2B 静默丢弃 */
+	if (!fc_supported(req.fc)) {
+		resp = req;
+		resp.unit_id = orig_unit_id;
+		resp.fc |= 0x80;
+		resp.data[0] = 0x01;
+		resp.length = 1;
+		return reply_adu(client, &resp);
+	}
+	if (req.length < 2) {
+		return 0;
 	}
 
 	k_sem_reset(&g_resp_sem);
