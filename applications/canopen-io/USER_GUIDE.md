@@ -10,7 +10,7 @@ io_edge_f407vet6 上的纯 CANopen IO 计测节点（io-edge-hub 的 CANopen 版
 | NMT | 0x000 | 主站控制（01 启动 / 02 停止 / 81 复位节点 / 82 复位通信） |
 | 心跳 | 0x70A | 1s 周期，byte0=NMT 状态（05=Operational） |
 | SDO | 0x60A / 0x58A | 支持 expedited/分段/块传输（900B 缓冲） |
-| EMCY | 0x80A | 紧急报文 |
+| EMCY | 0x8A | 紧急报文（0x80 + 节点号） |
 | TPDO1 | 0x18A | AI1-4（8B），每次 AI 采样触发（默认 100ms） |
 | TPDO2 | 0x28A | DI 位图 + DO 回读（4B），变更触发（20ms inhibit）+ 1s 兜底 |
 | RPDO1 | 0x20A | DO 控制（2B），收到即写 |

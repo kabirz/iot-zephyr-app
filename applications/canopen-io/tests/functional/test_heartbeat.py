@@ -32,5 +32,7 @@ def test_heartbeat_survives_nmt_stop():
                             lambda msg: stamps.append(time.monotonic()))
         h.network.nmt.send_command(0x02)  # stop all nodes
         time.sleep(3.0)
+        h.network.nmt.send_command(0x01)  # 恢复 Operational, 避免影响后续测试
+        time.sleep(0.2)
 
     assert len(stamps) >= 2, "heartbeat stopped after NMT Stop (must continue)"

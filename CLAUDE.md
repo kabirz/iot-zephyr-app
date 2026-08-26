@@ -4,7 +4,7 @@
 
 ## 项目
 
-**iot-zephyr-app** — Zephyr RTOS west manifest 仓库，同时本身是一个 Zephyr module。包含三个应用、两块板子：
+**iot-zephyr-app** — Zephyr RTOS west manifest 仓库，同时本身是一个 Zephyr module。包含四个应用、两块板子：
 
 - `applications/angle-handler` — 激光测距手持控制器（角度采集 + OLED + CAN/nRF24 + OTA），STM32F103RCT6（板 `nrf24_f103rct6`）
 - `applications/n2e-gw` — 数据中转网关（nRF24 ↔ W5500 UDP），STM32F103RCT6（板 `nrf24_f103rct6`）
