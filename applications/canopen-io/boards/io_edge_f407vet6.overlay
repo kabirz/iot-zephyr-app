@@ -1,0 +1,116 @@
+/*
+ * canopen-io application overlay
+ *
+ * 应用专属外设 (板 DTS 仅含 MCUboot/flash 分区/can1/console):
+ *   - ADC1 四通道 (PC0-PC3, IN10-13): AI1/AI2 电流, AI3/AI4 电压
+ *   - 16 路 DI / 8 路 DO / 8 路 LED (zephyr,user 节点)
+ *   - CiA 303-3 绿色状态 LED (PE7, 兼 MCUboot 引导指示)
+ *   - settings FCB 落外部 W25Q128 storage_partition (64KB @0x0E0000)
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+
+/ {
+	chosen {
+		zephyr,settings-partition = &storage_partition;
+	};
+
+	aliases {
+		led0 = &status_led;
+		mcuboot-led0 = &status_led;
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+		/* CiA 303-3 绿色 LED: NMT/心跳状态指示 */
+		status_led: led_status {
+			gpios = <&gpioe 7 GPIO_ACTIVE_HIGH>;
+			label = "Status LED";
+		};
+	};
+
+	zephyr:user {
+		/* 16 路 DI (光耦隔离输入, 下拉): DI1-16 */
+		di-gpios = <&gpiod 3 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiod 4 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiod 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiod 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 7 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 8 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 9 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 10 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 11 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiod 2 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 0 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 1 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 3 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+			   <&gpiob 4 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+
+		/* 8 路 DO (驱动输出): PD7-PD14 */
+		do-gpios = <&gpiod 7 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 8 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 9 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 10 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 11 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 12 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 13 GPIO_ACTIVE_HIGH>,
+			   <&gpiod 14 GPIO_ACTIVE_HIGH>;
+
+		/* 8 路 LED (跟随 DO): PE8-PE15 */
+		led-gpios = <&gpioe 8 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 9 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 10 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 11 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 12 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 13 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 14 GPIO_ACTIVE_HIGH>,
+			    <&gpioe 15 GPIO_ACTIVE_HIGH>;
+
+		/* 4 路 AI (ADC1 IN10-13); ai-coeffs 放大 1e4 倍: 电流 7.414 / 电压 3.7037 */
+		io-channels = <&adc1 10>, <&adc1 11>, <&adc1 12>, <&adc1 13>;
+		ai-coeffs = <7414>, <7414>, <3704>, <3704>;
+	};
+};
+
+&adc1 {
+	status = "okay";
+	pinctrl-0 = <&adc1_in10_pc0 &adc1_in11_pc1
+		     &adc1_in12_pc2 &adc1_in13_pc3>;
+	pinctrl-names = "default";
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <2>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@a {
+		reg = <0xa>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+	channel@b {
+		reg = <0xb>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+	channel@c {
+		reg = <0xc>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+	channel@d {
+		reg = <0xd>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};

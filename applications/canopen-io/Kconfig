@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# canopen-io application configuration
+
+mainmenu "canopen-io"
+
+source "Kconfig.zephyr"
+
+# ==================== 采样线程 ====================
+config CANOPEN_IO_DI_STACK_SIZE
+	int "DI sampling thread stack size"
+	default 512
+
+config CANOPEN_IO_DI_PRIORITY
+	int "DI sampling thread priority"
+	default 2
+
+config CANOPEN_IO_ADC_STACK_SIZE
+	int "AI sampling thread stack size"
+	default 512
+
+config CANOPEN_IO_ADC_PRIORITY
+	int "AI sampling thread priority"
+	default 2
+
+config CANOPEN_IO_INIT_PRIORITY_IO
+	int "Digital/analog IO init priority"
+	default 12
+
+# ==================== 采样间隔钳位 ====================
+config CANOPEN_IO_SAMPLE_MIN_MS
+	int "Minimum sampling interval in ms"
+	default 10
+
+config CANOPEN_IO_SAMPLE_MAX_MS
+	int "Maximum sampling interval in ms"
+	default 5000
+
+# ==================== 固件下载 ====================
+config CANOPEN_IO_FW_REBOOT_DELAY_MS
+	int "Delay before reboot after firmware confirm (ms)"
+	default 500
+	help
+	  Grace period after writing 1 to OD 0x1F51 (firmware control),
+	  so the SDO response and pending CAN traffic can flush before
+	  the MCUboot swap reboot.
