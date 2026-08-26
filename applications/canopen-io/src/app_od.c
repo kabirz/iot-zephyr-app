@@ -22,7 +22,7 @@
 
 LOG_MODULE_REGISTER(canopen_io_od, LOG_LEVEL_INF);
 
-#define OD_SAVE_MAGIC 0x73617665U /* "save" (0x1010/0x1011 魔数, 小端) */
+#define OD_SAVE_MAGIC 0x65766173U /* "save" 的 ASCII 字节序 (CO_storage.c 比较值) */
 
 static ODR_t do_write(OD_stream_t *stream, const void *buf, OD_size_t count,
 		      OD_size_t *countWritten)
@@ -71,9 +71,14 @@ static ODR_t cfg_write(OD_stream_t *stream, const void *buf, OD_size_t count,
 			return ODR_DATA_DEV_STATE; /* 下载进行中, 拒绝存储 */
 		}
 		if (val == 1) {
-			(void)OD_set_u32(OD_ENTRY_H1010, 1, OD_SAVE_MAGIC, false);
-			(void)OD_set_u32(OD_ENTRY_H1010, 2, OD_SAVE_MAGIC, false);
-			LOG_INF("OD saved via 0x2004:5");
+			ODR_t ret1 = OD_set_u32(OD_ENTRY_H1010, 1, OD_SAVE_MAGIC, false);
+			ODR_t ret2 = OD_set_u32(OD_ENTRY_H1010, 2, OD_SAVE_MAGIC, false);
+
+			if (ret1 != ODR_OK || ret2 != ODR_OK) {
+				LOG_ERR("OD save failed (0x1010:1=%d, 0x1010:2=%d)", ret1, ret2);
+			} else {
+				LOG_INF("OD saved via 0x2004:5");
+			}
 		}
 		val = 0;
 		return OD_writeOriginal(stream, &val, sizeof(val), countWritten);

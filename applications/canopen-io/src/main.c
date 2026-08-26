@@ -21,6 +21,7 @@
 #include "fw_download.h"
 
 #if defined(CONFIG_CANOPENNODE_STORAGE)
+#include <zephyr/settings/settings.h>
 #include "storage/CO_storage.h"
 #include "canopen_storage.h"
 #endif
@@ -44,6 +45,14 @@ int main(void)
 		CONFIG_CANOPEN_NODE_ID);
 
 	bool first_boot = true;
+
+#if defined(CONFIG_CANOPENNODE_STORAGE)
+	/* settings/FCB 后端必须先于 canopen_storage_init 初始化, 否则
+	 * 0x1010 save 与启动加载都会静默失败 (写不进 FCB, 读不到数据) */
+	if (settings_subsys_init() != 0) {
+		LOG_ERR("settings subsystem init failed, OD persistence disabled");
+	}
+#endif
 
 	while (1) {
 		if (canopennode_init(CONFIG_CANOPEN_NODE_ID,
