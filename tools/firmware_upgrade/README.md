@@ -172,3 +172,22 @@ bootloader 模式 (`-b`, 仅 CAN): 在上述流程前加 `[0/4]` 引导握手,
 - **UDP 单次升级**: 工具不重传丢包, 网络不可靠时建议用 CAN 通道 (有 64B 流控 + CRC 最终校验)
 - **Python vs C 选择**: Python 版适合开发/调试 (异常信息更友好), C 版适合部署 (无 Python 环境的运维机)
 
+## CANopen 通道 (canopen-io, CiA 302-2)
+
+适用于 `applications/canopen-io`（及任何实现了 0x1F50/0x1F51 固件下载对象的
+CANopen 设备）。依赖 `python-canopen`（`pip install canopen`）。
+
+```shell
+# 查询版本 (读 OD 0x100A)
+python canopen_fw_upgrade.py version -c can0 --node-id 10
+
+# 升级 (SDO 块传输 -> slot1 -> MCUboot swap)
+python canopen_fw_upgrade.py upgrade -c can0 --node-id 10 \
+    -f build/canopen-io/canopen_io/zephyr/zephyr.signed.bin
+```
+
+流程：写 `0x1F51:1=0` 复位下载状态 → SDO 块下载镜像到 `0x1F50:1` →
+写 `0x1F51:1=1` 确认（设备 flush + `boot_request_upgrade` + 延迟重启）→
+轮询 `0x100A` 校验新版本。传输中断后重跑即可（设备端 `0x1F51=0` 复位重来）。
+退出码与 firmware_upgrade.py 一致：0 成功 / 1 镜像错误 / 2 通信失败 / 3 设备拒绝。
+
