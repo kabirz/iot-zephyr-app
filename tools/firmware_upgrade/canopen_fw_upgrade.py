@@ -14,6 +14,7 @@ Exit codes: 0=ok, 1=image error, 2=communication failure, 3=device rejected.
 """
 
 import argparse
+import struct
 import sys
 import time
 
@@ -40,7 +41,12 @@ def open_network(args):
 
 
 def read_version(node):
-    return node.sdo[0x100A].raw.decode(errors="replace").strip()
+    """读 0x100A 版本串. 无 EDS, 用 SdoClient 原始上传 (<=4B 返回 int,
+    字符串返回 bytes)."""
+    raw = node.sdo.upload(0x100A, 0)
+    if isinstance(raw, int):
+        raw = raw.to_bytes(4, "little")
+    return bytes(raw).decode(errors="replace").strip()
 
 
 def cmd_version(args):
@@ -87,7 +93,7 @@ def cmd_upgrade(args):
 
         print("[1/3] reset download state (0x1F51=0) ...")
         try:
-            node.sdo[0x1F51][1].raw = 0
+            node.sdo.download(0x1F51, 1, struct.pack("<I", 0))
         except SdoError as e:
             print(f"device rejected 0x1F51=0: {e}", file=sys.stderr)
             return EXIT_REJECT
@@ -98,14 +104,16 @@ def cmd_upgrade(args):
         except TypeError:
             # 老 python-canopen 无 block 参数, 退回分段传输 (慢但可用)
             try:
-                node.sdo[0x1F50][1].raw = blob
+                node.sdo.download(0x1F50, 1, blob)
             except SdoError as e:
                 print(f"SDO download (segmented fallback) aborted: {e}",
                       file=sys.stderr)
                 return EXIT_REJECT
         except SdoError as e:
             try:
-                state = node.sdo[0x1F51][1].raw
+                state = node.sdo.upload(0x1F51, 1)
+                if isinstance(state, (bytes, bytearray)):
+                    state = int.from_bytes(state, "little")
             except (SdoError, OSError):
                 state = "unknown"
             print(f"SDO download aborted: {e} (state={state})",
@@ -114,7 +122,7 @@ def cmd_upgrade(args):
 
         print("[3/3] confirm (0x1F51=1), device reboots for MCUboot swap ...")
         try:
-            node.sdo[0x1F51][1].raw = 1
+            node.sdo.download(0x1F51, 1, struct.pack("<I", 1))
         except SdoError as e:
             print(f"device rejected confirm: {e}", file=sys.stderr)
             return EXIT_REJECT
