@@ -13,7 +13,7 @@ manifest:
 
   projects:
     - name: zephyr
-      revision: a05e4ff3f834d7ea149d191d4165b501659d7063
+      revision: 81723ec3c4d492283fd0469f8dbedcfda903535b
       path: zephyr
       import:
         name-allowlist:
@@ -26,7 +26,7 @@ manifest:
 
     - name: canopen
       repo-path: canopen-zephyr
-      revision: 880165413ffae5724df6fd67b08ff8e8b8d40bd7
+      revision: 7e0a7f10c6aeb951ea82b2458611640351f41739
       path: modules/canopen-zephyr
       submodules:
         - path: CANopenNode
