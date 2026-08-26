@@ -18,6 +18,7 @@
 #include "OD.h"
 #include "fw_gitver.h"
 #include "app_od.h"
+#include "fw_download.h"
 
 #if defined(CONFIG_CANOPENNODE_STORAGE)
 #include "storage/CO_storage.h"
@@ -75,6 +76,7 @@ int main(void)
 #endif
 
 		app_od_init();
+		fw_download_init();
 
 #if defined(CONFIG_CANOPENNODE_LEDS)
 		CO_LEDs_t leds;

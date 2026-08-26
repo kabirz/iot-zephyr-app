@@ -18,6 +18,7 @@
 #include "OD.h"
 #include "io.h"
 #include "app_od.h"
+#include "fw_download.h"
 
 LOG_MODULE_REGISTER(canopen_io_od, LOG_LEVEL_INF);
 
@@ -66,6 +67,9 @@ static ODR_t cfg_write(OD_stream_t *stream, const void *buf, OD_size_t count,
 		}
 		return OD_writeOriginal(stream, &val, sizeof(val), countWritten);
 	case 5: /* 保存触发 */
+		if (fw_download_active()) {
+			return ODR_DATA_DEV_STATE; /* 下载进行中, 拒绝存储 */
+		}
 		if (val == 1) {
 			(void)OD_set_u32(OD_ENTRY_H1010, 1, OD_SAVE_MAGIC, false);
 			(void)OD_set_u32(OD_ENTRY_H1010, 2, OD_SAVE_MAGIC, false);
