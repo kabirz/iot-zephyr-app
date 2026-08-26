@@ -58,6 +58,9 @@ int main(void)
 			{ .addr = &OD_PERSIST_COMM, .len = sizeof(OD_PERSIST_COMM),
 			  .subIndexOD = 1, .attr = CO_storage_cmd | CO_storage_restore,
 			  .addrNV = NULL },
+			{ .addr = &OD_PERSIST_APP, .len = sizeof(OD_PERSIST_APP),
+			  .subIndexOD = 2, .attr = CO_storage_cmd | CO_storage_restore,
+			  .addrNV = NULL },
 		};
 		uint32_t storage_init_error = 0;
 
