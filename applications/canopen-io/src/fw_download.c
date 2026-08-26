@@ -88,17 +88,18 @@ static ODR_t fw_ctrl_write(OD_stream_t *stream, const void *buf, OD_size_t count
 	memcpy(&val, buf, sizeof(val));
 
 	if (val == 0) { /* 复位/进入下载模式 (中止在途传输也走这里) */
-		/* 整块预擦除 slot1 (对齐 libs/can_fw_upgrade 的成熟做法):
-		 * 尾部 trailer 扇区可能残留旧数据 (曾用其他固件升级过), 懒擦除
-		 * 覆盖不到, 会污染 boot_request_upgrade 写入的 trailer 导致
-		 * MCUboot 判定 no-swap。448KB 全擦约数秒, 上位机 SDO 超时需 >=10s */
+		/* 预擦除 slot1 尾部 trailer 区 (对齐 libs/can_fw_upgrade 的经验):
+		 * trailer 扇区可能残留旧数据 (曾用其他固件升级过), 镜像体的懒擦除
+		 * 覆盖不到, 残留会污染 boot_request_upgrade 写入的 trailer 导致
+		 * MCUboot 判定 no-swap。只擦尾部 8KB (约百毫秒), 不阻塞 SDO 应答 */
 		const struct flash_area *fa;
 
 		if (flash_area_open(PARTITION_ID(slot1_partition), &fa) != 0) {
 			fw_state = FW_DL_ERROR;
 			return ODR_HW;
 		}
-		int rc = flash_area_erase(fa, 0, fa->fa_size);
+		size_t trailer_sz = MIN(8192, fa->fa_size);
+		int rc = flash_area_erase(fa, fa->fa_size - trailer_sz, trailer_sz);
 
 		flash_area_close(fa);
 		if (rc != 0) {
