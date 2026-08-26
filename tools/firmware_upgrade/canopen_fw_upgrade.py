@@ -97,7 +97,12 @@ def cmd_upgrade(args):
             node.sdo.download(0x1F50, 1, blob, block=True, timeout=args.timeout)
         except TypeError:
             # 老 python-canopen 无 block 参数, 退回分段传输 (慢但可用)
-            node.sdo[0x1F50][1].raw = blob
+            try:
+                node.sdo[0x1F50][1].raw = blob
+            except SdoError as e:
+                print(f"SDO download (segmented fallback) aborted: {e}",
+                      file=sys.stderr)
+                return EXIT_REJECT
         except SdoError as e:
             try:
                 state = node.sdo[0x1F51][1].raw

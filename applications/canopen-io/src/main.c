@@ -55,8 +55,8 @@ int main(void)
 
 #if defined(CONFIG_CANOPENNODE_STORAGE)
 		/* 两组持久化条目: 0x1010:1 通信参数, 0x1010:2 应用参数 (0x2004) */
-		CO_storage_t storage;
-		CO_storage_entry_t storage_entries[] = {
+		static CO_storage_t storage;
+		static CO_storage_entry_t storage_entries[] = {
 			{ .addr = &OD_PERSIST_COMM, .len = sizeof(OD_PERSIST_COMM),
 			  .subIndexOD = 1, .attr = CO_storage_cmd | CO_storage_restore,
 			  .addrNV = NULL },

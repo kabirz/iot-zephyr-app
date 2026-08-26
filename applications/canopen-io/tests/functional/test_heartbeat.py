@@ -1,4 +1,4 @@
-"""心跳: 0x1017 默认 1000ms, 1s 周期帧可观测; NMT Stop 后心跳仍持续."""
+"""心跳: 0x1017 默认 1000ms, 1s 周期帧可观测; NMT Stop 后心跳仍持续、TPDO 停发."""
 import time
 
 import pytest
@@ -26,12 +26,19 @@ def test_heartbeat_period():
 
 def test_heartbeat_survives_nmt_stop():
     stamps = []
+    tpdo_frames = []
 
     with NodeHandle() as h:
         h.network.subscribe(0x700 + config.NODE_ID,
                             lambda msg: stamps.append(time.monotonic()))
+        h.network.subscribe(0x180 + config.NODE_ID,
+                            lambda msg: tpdo_frames.append(msg))
         h.network.nmt.send_command(0x02)  # stop all nodes
-        time.sleep(3.0)
+        time.sleep(0.5)
+        tpdo_after_stop = len(tpdo_frames)
+        time.sleep(2.0)
+        assert len(tpdo_frames) == tpdo_after_stop, \
+            "TPDO1 still transmitting after NMT Stop (must be silent)"
         h.network.nmt.send_command(0x01)  # 恢复 Operational, 避免影响后续测试
         time.sleep(0.2)
 

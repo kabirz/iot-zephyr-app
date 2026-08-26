@@ -36,7 +36,7 @@ io_edge_f407vet6 上的纯 CANopen IO 计测节点（io-edge-hub 的 CANopen 版
 ## 参数持久化
 
 写 `0x2004:5=1`（或标准 0x1010:1/:2 写 "save"）保存；断电不丢。
-0x1011:1/:2 写 "load" 恢复出厂（重启后生效）。存储位于外部 W25Q128
+0x1011:1/:2 写 "load" 重新加载最近一次保存的参数（并非恢复出厂默认值）。存储位于外部 W25Q128
 storage_partition（settings/FCB）。**固件下载进行中写 0x2004:5 会被拒绝
 （SDO abort 0x08000022）。**
 

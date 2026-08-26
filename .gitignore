@@ -20,3 +20,6 @@ applications/*/tools/firmware_upgrade
 # Kconfig saved configs / local state
 .config
 .sisyphus
+
+# ZCode agent local state
+.zcode/
