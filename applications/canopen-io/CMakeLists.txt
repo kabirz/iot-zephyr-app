@@ -9,6 +9,9 @@ target_include_directories(app PRIVATE include src)
 
 target_sources(app PRIVATE
   src/main.c
+  src/app_od.c
+  src/io/dio.c
+  src/io/adc.c
   objdict/OD.c
 )
 

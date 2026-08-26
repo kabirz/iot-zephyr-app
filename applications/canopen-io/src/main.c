@@ -17,6 +17,7 @@
 #include "canopennode.h"
 #include "OD.h"
 #include "fw_gitver.h"
+#include "app_od.h"
 
 #if defined(CONFIG_CANOPENNODE_STORAGE)
 #include "storage/CO_storage.h"
@@ -72,6 +73,8 @@ int main(void)
 				storage_init_error);
 		}
 #endif
+
+		app_od_init();
 
 #if defined(CONFIG_CANOPENNODE_LEDS)
 		CO_LEDs_t leds;

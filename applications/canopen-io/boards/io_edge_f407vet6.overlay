@@ -31,7 +31,7 @@
 		};
 	};
 
-	zephyr:user {
+	zephyr,user {
 		/* 16 路 DI (光耦隔离输入, 下拉): DI1-16 */
 		di-gpios = <&gpiod 3 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
 			   <&gpiod 4 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
