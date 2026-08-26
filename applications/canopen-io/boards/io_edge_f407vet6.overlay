@@ -19,6 +19,7 @@
 	aliases {
 		led0 = &status_led;
 		mcuboot-led0 = &status_led;
+		green-led = &status_led;
 	};
 
 	gpio-leds {
