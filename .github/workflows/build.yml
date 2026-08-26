@@ -7,6 +7,7 @@ on:
       - "v*-angle-handler"
       - "v*-n2e-gw"
       - "v*-io-edge-hub"
+      - "v*-canopen-io"
     paths:
       - applications/**
       - boards/**
@@ -55,19 +56,28 @@ jobs:
           build_ah=true
           build_gw=true
           build_ieh=true
+          build_cio=true
           if [[ "$REF" == refs/tags/*-angle-handler ]]; then
             build_gw=false
             build_ieh=false
+            build_cio=false
           elif [[ "$REF" == refs/tags/*-n2e-gw ]]; then
             build_ah=false
             build_ieh=false
+            build_cio=false
           elif [[ "$REF" == refs/tags/*-io-edge-hub ]]; then
             build_ah=false
             build_gw=false
+            build_cio=false
+          elif [[ "$REF" == refs/tags/*-canopen-io ]]; then
+            build_ah=false
+            build_gw=false
+            build_ieh=false
           fi
           echo "build_ah=$build_ah" >> "$GITHUB_OUTPUT"
           echo "build_gw=$build_gw" >> "$GITHUB_OUTPUT"
           echo "build_ieh=$build_ieh" >> "$GITHUB_OUTPUT"
+          echo "build_cio=$build_cio" >> "$GITHUB_OUTPUT"
 
       # ── angle-handler ──
 
@@ -201,3 +211,47 @@ jobs:
           to: ${{ vars.TOLISTS }}
           from: ${{ vars.MAIL_USERNAME }}
           attachments: workspace/build/io-edge-hub/io-edge-hub.zip
+
+      # ── canopen-io ──
+
+      - name: Build canopen-io
+        if: steps.apps.outputs.build_cio == 'true'
+        working-directory: workspace
+        shell: bash
+        run: |
+          set -e
+          west build -b io_edge_f407vet6 apps/applications/canopen-io --sysbuild -d build/canopen-io
+          west archive --no-rebuild -o canopen-io -d build/canopen-io
+
+      - name: Upload canopen-io
+        if: steps.apps.outputs.build_cio == 'true'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: canopen-io
+          path: workspace/build/canopen-io/output
+
+      - name: Release canopen-io
+        if: steps.apps.outputs.build_cio == 'true' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3.0.0
+        id: release_cio
+        with:
+          name: canopen-io ${{ github.ref_name }}
+          files: workspace/build/canopen-io/canopen-io.zip
+
+      - name: Email canopen-io release
+        if: steps.apps.outputs.build_cio == 'true' && startsWith(github.ref, 'refs/tags/')
+        uses: dawidd6/action-send-mail@v17
+        with:
+          server_address: smtp.126.com
+          server_port: 465
+          username: ${{ vars.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: Github Release zephyr APP ${{ github.ref_name }}
+          body: |
+            zephyr app Release: ${{ steps.release_cio.outputs.url }}
+
+            - Repository: ${{ github.repository }}
+            - Workflow: ${{ github.workflow }}
+          to: ${{ vars.TOLISTS }}
+          from: ${{ vars.MAIL_USERNAME }}
+          attachments: workspace/build/canopen-io/canopen-io.zip

@@ -9,6 +9,7 @@
 - `applications/angle-handler` — 激光测距手持控制器（角度采集 + OLED + CAN/nRF24 + OTA），STM32F103RCT6（板 `nrf24_f103rct6`）
 - `applications/n2e-gw` — 数据中转网关（nRF24 ↔ W5500 UDP），STM32F103RCT6（板 `nrf24_f103rct6`）
 - `applications/io-edge-hub` — 工业 IO 采集边缘网关（16DI/8DO/4AI + Modbus TCP/RTU + LittleFS/FTP + UDP+CAN 双通道固件升级 + MCUboot SWAP_SCRATCH），STM32F407VET6（板 `io_edge_f407vet6`）
+- `applications/canopen-io` —— 纯 CANopen IO 计测节点（16DI/8DO/4AI + OD/PDO + CiA 302-2 SDO 固件下载 + 心跳 + MCUboot SWAP_SCRATCH），STM32F407VET6（板 `io_edge_f407vet6`）
 
 ## 仓库布局
 
@@ -31,6 +32,7 @@ west build -b nrf24_f103rct6 applications/n2e-gw --sysbuild
 west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild "-Dmcuboot_EXTRA_CONF_FILE=$PWD/applications/io-edge-hub/sysbuild/mcuboot.conf;$PWD/libs/can_fw_upgrade/mcuboot_can.conf"   # 让 MCUboot 支持 CAN 固件升级
 west archive --no-rebuild -o angle-handler
 west flash --domain angle-handler
+west build -b io_edge_f407vet6 applications/canopen-io --sysbuild
 ```
 
 ## 关键约定
