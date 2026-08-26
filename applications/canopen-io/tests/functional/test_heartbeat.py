@@ -1,4 +1,7 @@
-"""心跳: 0x1017 默认 1000ms, 1s 周期帧可观测; NMT Stop 后心跳仍持续、TPDO 停发."""
+"""心跳: 0x1017 默认 1000ms, 1s 周期帧可观测; NMT Stop 后心跳仍持续且 TPDO 静默.
+
+python-canopen 的 Network.subscribe 回调签名为 (cob_id, data, timestamp).
+"""
 import time
 
 import pytest
@@ -15,7 +18,7 @@ def test_heartbeat_period():
 
     with NodeHandle() as h:
         h.network.subscribe(0x700 + config.NODE_ID,
-                            lambda msg: stamps.append(time.monotonic()))
+                            lambda cob_id, data, ts: stamps.append(time.monotonic()))
         time.sleep(6.0)
 
     assert len(stamps) >= 4, f"only {len(stamps)} heartbeats in 6s"
@@ -26,19 +29,22 @@ def test_heartbeat_period():
 
 def test_heartbeat_survives_nmt_stop():
     stamps = []
-    tpdo_frames = []
+    tpdo1 = []
 
     with NodeHandle() as h:
         h.network.subscribe(0x700 + config.NODE_ID,
-                            lambda msg: stamps.append(time.monotonic()))
+                            lambda cob_id, data, ts: stamps.append(time.monotonic()))
         h.network.subscribe(0x180 + config.NODE_ID,
-                            lambda msg: tpdo_frames.append(msg))
+                            lambda cob_id, data, ts: tpdo1.append(data))
+
         h.network.nmt.send_command(0x02)  # stop all nodes
         time.sleep(0.5)
-        tpdo_after_stop = len(tpdo_frames)
-        time.sleep(2.0)
-        assert len(tpdo_frames) == tpdo_after_stop, \
-            "TPDO1 still transmitting after NMT Stop (must be silent)"
+        tpdo_base = len(tpdo1)  # 进入 Stopped 后 TPDO 应静默
+        time.sleep(2.5)
+        assert len(tpdo1) == tpdo_base, (
+            f"TPDO1 still transmitting in NMT Stopped "
+            f"(+{len(tpdo1) - tpdo_base} frames)")
+
         h.network.nmt.send_command(0x01)  # 恢复 Operational, 避免影响后续测试
         time.sleep(0.2)
 
