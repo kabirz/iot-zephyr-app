@@ -1,2 +1,6 @@
 pytest>=7
 canopen>=1.0
+python-can>=4.0
+pymodbus>=3.5,<3.10
+pyserial>=3.5
+requests>=2.31
