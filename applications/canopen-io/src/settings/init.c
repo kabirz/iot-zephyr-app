@@ -5,10 +5,13 @@
  * 系统初始化: settings 加载 (移植自 io-edge-hub src/settings/init.c,
  * 去除 CAN 固件升级波特率注入; CiA 302 固件下载见 fw_download.c)
  *
- *   - settings_subsys_init + settings_load (priority 8): 从 FCB 恢复
- *     holding_reg[] 持久化参数 (IP/Modbus/采样/历史 等), 供后续 RTU/TCP/
- *     网络/CANopen OD 桥接读取。CANopenNode 自身 OD 参数 (0x1017 等) 由
- *     canopen_storage 在 main 内加载。
+ *   - settings_subsys_init + settings_load_subtree("modbus") (priority 8):
+ *     从 FCB 恢复 holding_reg[] 持久化参数 (IP/Modbus/采样/历史 等).
+ *
+ *   注意只加载 modbus/ 命名空间, 不能做全局 settings_load():
+ *   canopen/od/<n> 由 CANopenNode storage 在 main 内 canopen_storage_init
+ *   注册条目后自行加载; 全局加载会在条目注册前触发其 set 回调, 对未注册
+ *   条目打出 "set-value failure ... error(-2)" 报错.
  */
 
 #include <zephyr/kernel.h>
@@ -22,6 +25,40 @@
 
 LOG_MODULE_REGISTER(io_init, LOG_LEVEL_INF);
 
+/* ==================== 遗留记录清理 ==================== */
+/* 应用参数自合并版起由 modbus/ 命名空间持久化 (modbus/function.c), 旧版固件
+ * 遗留的 canopen/od/2 记录已无对应存储条目. 探测到即删除一次, 之后不再出现;
+ * settings_load_subtree_direct 不经 handler 分发, 探测本身无副作用. */
+static int od2_probe_cb(const char *name, size_t len, settings_read_cb read_cb,
+			void *cb_arg, void *param)
+{
+	ARG_UNUSED(name);
+	ARG_UNUSED(len);
+	ARG_UNUSED(read_cb);
+	ARG_UNUSED(cb_arg);
+
+	*(bool *)param = true;
+	return 0;
+}
+
+static void purge_legacy_canopen_app_params(void)
+{
+	static bool probed;
+	bool found = false;
+
+	if (probed) {
+		return;
+	}
+	probed = true;
+
+	settings_load_subtree_direct("canopen/od/2", od2_probe_cb, &found);
+	if (found) {
+		int rc = settings_delete("canopen/od/2");
+
+		LOG_INF("purged legacy canopen/od/2 record (rc=%d)", rc);
+	}
+}
+
 /* ==================== Settings 加载 ==================== */
 static int modbus_settings_init(void)
 {
@@ -32,11 +69,12 @@ static int modbus_settings_init(void)
 		return rc;
 	}
 
-	rc = settings_load();
+	rc = settings_load_subtree("modbus");
 	if (rc) {
-		LOG_ERR("settings_load failed: %d", rc);
+		LOG_ERR("settings_load(modbus) failed: %d", rc);
 		return rc;
 	}
+	purge_legacy_canopen_app_params();
 
 	/* 用当前 RTC 时间覆盖 timestamp 寄存器, 保证 Modbus 主站读到正确值 */
 	time_t now = time(NULL);
