@@ -5,15 +5,69 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(canopen_io)
 
-target_include_directories(app PRIVATE include src)
+target_include_directories(app PRIVATE
+  include
+  src
+  src/sys
+  src/storage
+  src/ftp_server
+  src/web
+)
 
 target_sources(app PRIVATE
   src/main.c
   src/app_od.c
   src/fw_download.c
+  src/fw_upgrade_state.c
   src/io/dio.c
   src/io/adc.c
+  src/history/history.c
+  src/settings/init.c
+  src/modbus/function.c
+  src/modbus/tcp.c
+  src/modbus/rtu.c
+  src/udp.c
+  src/storage/fs_littlefs.c
+  src/sys/time.c
+  src/sys/watchdog.c
+  src/ftp_server/ftpd.c
   objdict/OD.c
 )
+
+# 临时带宽测试端点: 仅在 CONFIG_CANOPEN_IO_BW_TEST 启用时编译
+target_sources_ifdef(CONFIG_CANOPEN_IO_BW_TEST app PRIVATE src/bwtest.c)
+
+# 应用调试 shell (io 命令), 依赖 SHELL (release 下自动裁剪)
+target_sources_ifdef(CONFIG_CANOPEN_IO_SHELL app PRIVATE src/shell.c)
+
+# Web 服务 (HTTP 页面 + REST + WebSocket), CONFIG_CANOPEN_IO_WEB 总开关
+if(CONFIG_CANOPEN_IO_WEB)
+  target_sources(app PRIVATE
+    src/web/httpd.c
+    src/web/ws_io.c
+  )
+
+  # Web UI: index.html → minify → gzip → .inc (编译进固件, HTTP 静态资源)
+  set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated)
+  set(min_html ${CMAKE_CURRENT_BINARY_DIR}/web_index_min.html)
+
+  add_custom_command(OUTPUT ${min_html}
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/minify_html.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/web/index.html > ${min_html}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/web/index.html
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/minify_html.py
+    COMMENT "Minifying index.html"
+  )
+  add_custom_target(web_index_min DEPENDS ${min_html})
+
+  generate_inc_file_for_target(app
+    ${min_html}
+    ${gen_dir}/web_index_html_gz.inc
+    --gzip
+  )
+
+  # HTTP 资源描述 iterable section (服务 canopen_web 对应的链接段)
+  zephyr_linker_sources(SECTIONS src/web/sections-rom.ld)
+endif()
 
 zephyr_include_directories(objdict)

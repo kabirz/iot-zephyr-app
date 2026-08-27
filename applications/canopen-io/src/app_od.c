@@ -3,15 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * OD 扩展回调: 计测器对象的写副作用与触发语义
+ * (参数源统一为 holding_reg[]/settings, 0x2004 成为寄存器的 OD 桥接视图)
  *   - 0x2000/0x2001: passthrough 扩展, 仅为启用 flagsPDO (采样线程
  *     OD_requestTPDO 触发事件型 TPDO 需要 entry->extension 存在)
- *   - 0x2002: 写后联动 DO GPIO/LED (SDO 写与 RPDO1 收包共路)
- *   - 0x2004:3/4 采样间隔钳位; :5 写 1 => 0x1010:1/2 "save" 整组持久化;
- *     :6 写 1 => 延迟冷重启. 触发子索引写后回读恒为 0
+ *   - 0x2002: 写后联动 DO GPIO/LED 并同步 holding_reg (SDO 写与 RPDO1
+ *     收包共路; Modbus/Web 写则反向经 mb_set_do 镜像回 0x2002)
+ *   - 0x2004: 应用参数桥接到 holding_reg (settings/FCB 持久化):
+ *     :1/:2 使能位图 → 0x01/0x02; :3/:4 采样间隔(钳位) → 0x03/0x04;
+ *     :5 写 1 → holding_reg_save(); :6 写 1 → 延迟冷重启.
+ *     触发子索引写后回读恒为 0。持久化不再走 CANopenNode storage 的
+ *     0x1010:2 (main 中仅保留通信参数条目), 改由 modbus/ settings 命名空间
+ *     统一存储。
  */
 #include <string.h>
 #include <zephyr/kernel.h>
-#include <zephyr/sys/reboot.h>
 #include <zephyr/logging/log.h>
 
 #include "CANopen.h"
@@ -19,10 +24,9 @@
 #include "io.h"
 #include "app_od.h"
 #include "fw_download.h"
+#include "init.h"
 
 LOG_MODULE_REGISTER(canopen_io_od, LOG_LEVEL_INF);
-
-#define OD_SAVE_MAGIC 0x65766173U /* "save" 的 ASCII 字节序 (CO_storage.c 比较值) */
 
 static ODR_t do_write(OD_stream_t *stream, const void *buf, OD_size_t count,
 		      OD_size_t *countWritten)
@@ -38,60 +42,70 @@ static ODR_t do_write(OD_stream_t *stream, const void *buf, OD_size_t count,
 	return ret;
 }
 
-static void app_reboot_handler(struct k_work *work)
+/* SDO 读前把寄存器当前值刷进 OD 缓冲 (触发子索引 :5/:6 恒 0) */
+static ODR_t cfg_read(OD_stream_t *stream, void *buf, OD_size_t count, OD_size_t *countRead)
 {
-	ARG_UNUSED(work);
-	LOG_INF("reboot requested (OD 0x2004:6)");
-	sys_reboot(SYS_REBOOT_COLD);
+	OD_PERSIST_APP.x2004_configParams[0] = get_holding_reg(HOLDING_DI_ENABLE_IDX);
+	OD_PERSIST_APP.x2004_configParams[1] = get_holding_reg(HOLDING_AI_ENABLE_IDX);
+	OD_PERSIST_APP.x2004_configParams[2] =
+		(uint16_t)get_holding_reg(HOLDING_DI_SAMPLE_MS_IDX);
+	OD_PERSIST_APP.x2004_configParams[3] =
+		(uint16_t)get_holding_reg(HOLDING_AI_SAMPLE_MS_IDX);
+	OD_PERSIST_APP.x2004_configParams[4] = 0;
+	OD_PERSIST_APP.x2004_configParams[5] = 0;
+	return OD_readOriginal(stream, buf, count, countRead);
 }
-
-static struct k_work_delayable app_reboot_work;
 
 static ODR_t cfg_write(OD_stream_t *stream, const void *buf, OD_size_t count,
 		       OD_size_t *countWritten)
 {
 	uint16_t val;
+	uint16_t sub = stream->subIndex;
 
 	if (count != sizeof(val)) {
 		return ODR_DATA_SHORT;
 	}
 	memcpy(&val, buf, sizeof(val));
 
-	switch (stream->subIndex) {
-	case 3: /* DI 采样间隔 */
-	case 4: /* AI 采样间隔 */
+	switch (sub) {
+	case 1: /* DI 使能 → holding_reg[0x01] */
+		update_holding_reg(HOLDING_DI_ENABLE_IDX, val);
+		break;
+	case 2: /* AI 使能 → holding_reg[0x02] */
+		update_holding_reg(HOLDING_AI_ENABLE_IDX, val);
+		break;
+	case 3: /* DI 采样间隔 → holding_reg[0x03] (钳位) */
+	case 4: /* AI 采样间隔 → holding_reg[0x04] (钳位) */
 		if (val < CONFIG_CANOPEN_IO_SAMPLE_MIN_MS) {
 			val = CONFIG_CANOPEN_IO_SAMPLE_MIN_MS;
 		} else if (val > CONFIG_CANOPEN_IO_SAMPLE_MAX_MS) {
 			val = CONFIG_CANOPEN_IO_SAMPLE_MAX_MS;
 		}
-		return OD_writeOriginal(stream, &val, sizeof(val), countWritten);
-	case 5: /* 保存触发 */
+		update_holding_reg(
+			sub == 3 ? HOLDING_DI_SAMPLE_MS_IDX : HOLDING_AI_SAMPLE_MS_IDX, val);
+		break;
+	case 5: /* 保存触发: 全量持久化 modbus/ 参数 */
 		if (fw_download_active()) {
 			return ODR_DATA_DEV_STATE; /* 下载进行中, 拒绝存储 */
 		}
 		if (val == 1) {
-			ODR_t ret1 = OD_set_u32(OD_ENTRY_H1010, 1, OD_SAVE_MAGIC, false);
-			ODR_t ret2 = OD_set_u32(OD_ENTRY_H1010, 2, OD_SAVE_MAGIC, false);
-
-			if (ret1 != ODR_OK || ret2 != ODR_OK) {
-				LOG_ERR("OD save failed (0x1010:1=%d, 0x1010:2=%d)", ret1, ret2);
-			} else {
-				LOG_INF("OD saved via 0x2004:5");
-			}
+			holding_reg_save();
+			LOG_INF("params saved via OD 0x2004:5");
 		}
-		val = 0;
-		return OD_writeOriginal(stream, &val, sizeof(val), countWritten);
-	case 6: /* 重启触发 */
+		val = 0; /* 回读恒为 0 */
+		break;
+	case 6: /* 重启触发: 延迟冷重启 (housekeeping 排空日志后执行) */
 		if (val == 1) {
-			k_work_schedule(&app_reboot_work,
-					K_MSEC(CONFIG_CANOPEN_IO_FW_REBOOT_DELAY_MS));
+			set_reboot_status(true);
 		}
-		val = 0;
-		return OD_writeOriginal(stream, &val, sizeof(val), countWritten);
+		val = 0; /* 回读恒为 0 */
+		break;
 	default:
+		/* 子索引 0 (highest sub-index) 等: 原样透传 */
 		return OD_writeOriginal(stream, buf, count, countWritten);
 	}
+
+	return OD_writeOriginal(stream, &val, sizeof(val), countWritten);
 }
 
 static OD_extension_t ext_2000 = {
@@ -101,12 +115,10 @@ static OD_extension_t ext_2001 = {
 static OD_extension_t ext_2002 = {
 	.object = NULL, .read = OD_readOriginal, .write = do_write};
 static OD_extension_t ext_2004 = {
-	.object = NULL, .read = OD_readOriginal, .write = cfg_write};
+	.object = NULL, .read = cfg_read, .write = cfg_write};
 
 void app_od_init(void)
 {
-	k_work_init_delayable(&app_reboot_work, app_reboot_handler);
-
 	OD_extension_init(OD_ENTRY_H2000, &ext_2000);
 	OD_extension_init(OD_ENTRY_H2001, &ext_2001);
 	OD_extension_init(OD_ENTRY_H2002, &ext_2002);

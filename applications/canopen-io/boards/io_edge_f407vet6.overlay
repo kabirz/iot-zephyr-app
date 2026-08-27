@@ -2,9 +2,11 @@
  * canopen-io application overlay
  *
  * 应用专属外设 (板 DTS 仅含 MCUboot/flash 分区/can1/console):
+ *   - SPI2 + W5500 以太网 (PB13/14/15, CS=PB12, RST=PD0, INT=PD1)
  *   - ADC1 四通道 (PC0-PC3, IN10-13): AI1/AI2 电流, AI3/AI4 电压
+ *   - USART2 + RS485 Modbus RTU (PA2/PA3, DE=PA1)
  *   - 16 路 DI / 8 路 DO / 8 路 LED (zephyr,user 节点)
- *   - CiA 303-3 绿色状态 LED (PE7, 兼 MCUboot 引导指示)
+ *   - RTC (LSI/LSE 驱动, 板 DTS 已启用) / IWDG 看门狗 / 状态 LED (PE7)
  *   - settings FCB 落外部 W25Q128 storage_partition (64KB @0x0E0000)
  */
 
@@ -13,6 +15,8 @@
 
 / {
 	chosen {
+		zephyr,ethernet = &eth0;
+		zephyr,entropy = &rng;
 		zephyr,settings-partition = &storage_partition;
 	};
 
@@ -20,11 +24,12 @@
 		led0 = &status_led;
 		mcuboot-led0 = &status_led;
 		green-led = &status_led;
+		watchdog0 = &iwdg;
 	};
 
 	gpio-leds {
 		compatible = "gpio-leds";
-		/* CiA 303-3 绿色 LED: NMT/心跳状态指示 */
+		/* 状态 LED: MCUboot 引导指示 + CiA 303-3 绿色 LED (NMT/心跳) */
 		status_led: led_status {
 			gpios = <&gpioe 7 GPIO_ACTIVE_HIGH>;
 			label = "Status LED";
@@ -76,6 +81,32 @@
 	};
 };
 
+/* ============================================================
+ * SPI2: W5500 以太网 (SCK=PB13, MISO=PB14, MOSI=PB15, CS=PB12)
+ * RST=PD0, INT=PD1 (MAC 运行时由 UID 派生, local-mac-address 仅默认)
+ * ============================================================ */
+&spi2 {
+	pinctrl-0 = <&spi2_sck_pb13 &spi2_miso_pb14 &spi2_mosi_pb15>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiob 12 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+	status = "okay";
+
+	eth0: w5500@0 {
+		compatible = "wiznet,w5500";
+		reg = <0>;
+		spi-max-frequency = <21000000>;
+		int-gpios = <&gpiod 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		reset-gpios = <&gpiod 0 GPIO_ACTIVE_LOW>;
+		local-mac-address = [00 08 DC 01 02 03];
+		status = "okay";
+	};
+};
+
+/* ============================================================
+ * ADC1: 4 通道模拟输入 (PC0-PC3 = IN10-13)
+ * AI1/AI2 电流 4-20mA, AI3/AI4 电压 0-10V。系数在
+ * /zephyr/user 的 ai-coeffs 中定义 (与 io-channels 顺序对应)。
+ * ============================================================ */
 &adc1 {
 	status = "okay";
 	pinctrl-0 = <&adc1_in10_pc0 &adc1_in11_pc1
@@ -114,4 +145,27 @@
 		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
 		zephyr,resolution = <12>;
 	};
+};
+
+/* ============================================================
+ * USART2: RS485 Modbus RTU (TX=PA2, RX=PA3, DE/RE=PA1)
+ * ============================================================ */
+&usart2 {
+	pinctrl-0 = <&usart2_tx_pa2 &usart2_rx_pa3>;
+	pinctrl-names = "default";
+	current-speed = <9600>;
+	status = "okay";
+
+	modbus0 {
+		compatible = "zephyr,modbus-serial";
+		status = "okay";
+		de-gpios = <&gpioa 1 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/* ============================================================
+ * IWDG: 独立看门狗
+ * ============================================================ */
+&iwdg {
+	status = "okay";
 };

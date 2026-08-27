@@ -5,6 +5,17 @@ mainmenu "canopen-io"
 
 source "Kconfig.zephyr"
 
+# ==================== Modbus 寄存器数量 ====================
+config MODBUS_HOLDING_REGISTER_NUMBERS
+	int "Number of Modbus holding registers"
+	default 16
+	help
+	  Size of the holding_reg[] array (16 holding registers, see include/init.h).
+
+config MODBUS_INPUT_REGISTER_NUMBERS
+	int "Number of Modbus input registers"
+	default 6
+
 # ==================== 采样线程 ====================
 config CANOPEN_IO_DI_STACK_SIZE
 	int "DI sampling thread stack size"
@@ -43,3 +54,162 @@ config CANOPEN_IO_FW_REBOOT_DELAY_MS
 	  Grace period after writing 1 to OD 0x1F51 (firmware control),
 	  so the SDO response and pending CAN traffic can flush before
 	  the MCUboot swap reboot.
+
+# ==================== SYS_INIT 优先级 ====================
+config CANOPEN_IO_INIT_PRIORITY_FW_UPGRADE
+	int "Firmware upgrade mutex init priority"
+	default 3
+
+config CANOPEN_IO_INIT_PRIORITY_HIST_WORKQ
+	int "History work queue init priority"
+	default 5
+
+config CANOPEN_IO_INIT_PRIORITY_SETTINGS
+	int "Settings subsystem init priority"
+	default 8
+
+config CANOPEN_IO_INIT_PRIORITY_RTU
+	int "Modbus RTU init priority"
+	default 13
+
+config CANOPEN_IO_INIT_PRIORITY_CLOCK
+	int "RTC clock init priority"
+	default 41
+
+config CANOPEN_IO_INIT_PRIORITY_WATCHDOG
+	int "Watchdog init priority"
+	default 50
+
+config CANOPEN_IO_INIT_PRIORITY_WS
+	int "WebSocket slots init priority"
+	default 60
+
+config CANOPEN_IO_INIT_PRIORITY_UDP
+	int "UDP app handler init priority"
+	default 80
+
+config CANOPEN_IO_INIT_PRIORITY_LITTLEFS
+	int "LittleFS init priority"
+	default 99
+
+# ==================== Modbus TCP ====================
+config CANOPEN_IO_MODBUS_TCP_STACK
+	int "Modbus TCP server thread stack size"
+	default 2048
+
+config CANOPEN_IO_MODBUS_TCP_PRIORITY
+	int "Modbus TCP server thread priority"
+	default 13
+
+config CANOPEN_IO_MODBUS_TCP_SESSION_TIMEOUT
+	bool "Close idle Modbus TCP client sessions"
+	default n
+	help
+	  Enable application-level session timeout: client connections
+	  idle for more than 60s are closed by the server. Disabled by
+	  default; idle connections are then only handled by TCP
+	  keepalive (SO_KEEPALIVE, ~45s probe cycle). Enable only if a
+	  master misbehaves and holds connections without keepalive
+	  support.
+
+# ==================== FTP ====================
+config CANOPEN_IO_FTP_STACK_SIZE
+	int "FTP server thread stack size"
+	default 4096
+
+config CANOPEN_IO_FTP_PRIORITY
+	int "FTP server thread priority"
+	default 13
+
+# ==================== Web 服务 (HTTP + WebSocket) ====================
+menuconfig CANOPEN_IO_WEB
+	bool "Enable web UI (HTTP server + REST API + WebSocket)"
+	default y
+	select HTTP_SERVER
+	select HTTP_SERVER_WEBSOCKET
+	help
+	  Web management interface: embedded SPA page, REST API
+	  (/api/*), WebSocket realtime push (/ws) and WebSocket firmware
+	  upgrade. Disable to shrink image/RAM (~100KB flash, ~30KB RAM).
+
+if CANOPEN_IO_WEB
+
+config CANOPEN_IO_WEB_PORT
+	int "Web server HTTP port"
+	default 80
+	help
+	  HTTP server listen port for the web UI and REST API.
+
+config CANOPEN_IO_WEB_WS_HANDLERS
+	int "Number of concurrent WebSocket connections"
+	default 1
+	range 1 2
+	help
+	  Note the HTTP server websocket resource uses one shared parsing
+	  buffer, so concurrent connections must be limited to 1.
+
+config CANOPEN_IO_WEB_WS_STACK_SIZE
+	int "WebSocket handler thread stack size"
+	default 2048
+	help
+	  websocket_send_msg/recv_msg call chain is deep (PSA SHA-1,
+	  TCP retry). 1152 causes stack canary fault -> warm reboot.
+
+# ---- Zephyr HTTP 服务器参数覆盖 (默认值偏大, 按本应用裁剪省 RAM) ----
+
+config HTTP_SERVER_VERSION_1
+	default y
+
+config HTTP_SERVER_VERSION_2
+	default n
+
+config HTTP_SERVER_MAX_CLIENTS
+	default 4
+
+config HTTP_SERVER_MAX_STREAMS
+	default 1
+
+config HTTP_SERVER_HUFFMAN_DECODE_BUFFER_SIZE
+	default 64
+
+config HTTP_SERVER_CLIENT_BUFFER_SIZE
+	default 512
+
+config HTTP_SERVER_CLIENT_INACTIVITY_TIMEOUT
+	default 120
+
+config HTTP_SERVER_STACK_SIZE
+	default 4096
+
+config HTTP_SERVER_MAX_URL_LENGTH
+	default 96
+
+config HTTP_SERVER_MAX_CONTENT_TYPE_LENGTH
+	default 48
+
+endif # CANOPEN_IO_WEB
+
+# ==================== 应用调试 shell ====================
+config CANOPEN_IO_SHELL
+	bool "Enable 'io' application shell commands"
+	depends on SHELL
+	default y
+	help
+	  Debug shell (root command 'io') for DI/DO/AI inspection,
+	  DO control, RS485/IP configuration, register access and
+	  basic device info. Writes share the same code path as
+	  Modbus/Web/UDP. Automatically disabled in release builds
+	  (CONFIG_SHELL=n).
+
+# ==================== 带宽测试 (临时, 测完移除) ====================
+config CANOPEN_IO_BW_TEST
+	bool "Enable temporary TCP echo bandwidth test endpoint"
+	default n
+	help
+	  Temporary raw-TCP throughput measurement (echo on port 9900).
+	  For measurement only, no auth; remove after use.
+
+config CANOPEN_IO_BW_TEST_PORT
+	int "BW test TCP port"
+	default 9900
+	depends on CANOPEN_IO_BW_TEST
