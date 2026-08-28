@@ -173,7 +173,7 @@ pyocd 探针目标名来自 CMSIS Pack（小写 `gd32h759im`，不带封装后�
 **PWM 占空比极性**：驱动使用 TIMER_OC_MODE_PWM1，占空比 100% 时引脚为低、0% 为高
 （与上游行为一致）；需要常规极性可在 DT 设 `PWM_POLARITY_INVERTED`。
 
-## 7.5 ADC（第三阶段）
+## 7.5 ADC 与 CAN（第三阶段）
 
 ### ADC ✅ 可用并已板上验证
 
@@ -187,6 +187,57 @@ pyocd 探针目标名来自 CMSIS Pack（小写 `gd32h759im`，不带封装后�
 - dtsi：adc0/1/2（0x40012400/2800/2C00，IRQ 18/18/127，APB2EN/RST 位 8/9/10）
 - 板上验证：`adc adc@40012400 resolution 12` + `read 0` 读 PA0_C 电位器（注意先设分辨率，
   shell 默认 resolution=0 会被驱动 -EINVAL 拒绝且无输出）
+
+### CAN ✅ 驱动可用并已回环验证（经典 CAN + CAN-FD 64 字节，@1Mbps/5Mbps）
+
+- 新驱动 `drivers/can/can_gd32fd.c`（`gd,gd32-can` 绑定 + `CONFIG_CAN_GD32FD`，select
+  `CAN_FD_MODE`）：
+  MB0=TX、MB1=RX（全收）、Message 中断驱动（IRQ 180/187/194）、软件过滤（最多
+  `CONFIG_CAN_GD32FD_MAX_FILTER`=8 条）、normal/loopback/listenonly/**fd** 四模式、
+  start/stop/set_mode/set_timing/**set_timing_data** 完整 Zephyr CAN API
+- **CAN-FD 支持**（`can mode <dev> fd` + `can send <dev> -f -b ...`）：
+  - `can_fd_config()` 在 start() 的 INACTIVE 窗口里配置：ISO FD、BRSEN、
+    **MDSZ=64 字节邮箱**、TDC（offset=数据段采样点位置 tq 数）、FDBT 数据段时序
+  - FDEN 置位后**消息 RAM 邮箱步长变为 payload+8**（厂商 `can_ram_address_get` 自动算，
+    但自己手搓地址时要小心）；非 FD 模式显式清 FDEN
+  - DLC 转换：TX 用 `data_bytes`（厂商库自动算 DLC 码）；RX 描述符 `data_bytes` 已是
+    字节数，Zephyr 帧要用 `can_bytes_to_dlc()` 回填 dlc 码（DLC 9-15 ↔ 12/16/20/24/32/48/64B）
+  - 数据段时序上下限（CAN_FDBT）：sjw 1-8、DPTS 0-31、DPBS1 1-8、DPBS2 2-8、
+    DBAUDPSC 1-1024；5Mbps@300MHz 可解（如 prescaler=2、30tq）
+  - shell 发 64 字节帧需 `CONFIG_SHELL_ARGC_MAX=80`（69 个参数，默认 12 不够）；
+    参数顺序：`can send <dev> -f -b <id> b0 ... b63`（选项在设备名后）
+- 板级：can2 okay（PD13 TX/PD12 RX AF5，接 SIT1042AQT 收发器 + J8 端子）、
+  bitrate 1M + bitrate-data 5M + can-transceiver max-bitrate 5M；
+  测试应用 `apps/applications/can-loopback`（经典回环 + FD 64 字节回环自测 + normal + CAN_SHELL）
+- 验证：
+  - FD 回环：shell `can send ... 456 <64字节>` → `B- 456 [64] 00..3f` 全字节回环一致
+    （FDF+BRS、DLC 15）；启动自测 last_rx（调试器读）id=0x456/dlc=0xf/flags=0xc 同样正确
+  - 经典回归：板→Linux（candump 收 `123 [8] DE AD...`）、Linux→板（`cansend` 后 shell
+    过滤器打印 `123 [8] 11 22...`）双向 OK
+  - **注意**：当前 Linux 侧 PCAN-USB（0c72:000c，`pcan_usb` 驱动，maxmtu 16）为经典版，
+    **不支持 CAN-FD**；FD 与外部互通需 PCAN-USB FD / Pro FD 等适配器
+    （`ip link set can0 type can fd on` 能成功即为支持）
+
+- **CAN 基地址**：APB2 基准！CAN0=0x4001A000、CAN1=0x4001B000、CAN2=0x4001C000
+  （CAN_BASE=APB2+0xA000；别按 APB1 算成 0x4000A000——寄存器读全 0 的元凶）
+- **时序**：CAN 时钟源 CK_APB2=300MHz；1Mbps 默认参数 prescaler=30、prop=2、seg1=5、
+  seg2=2（10tq、样本点 80%，厂商例程同款）；位域均"实际值-1"写入
+- **全收过滤的关键坑**（该 IP 特有）：
+  1. 过滤掩码寄存器（公有 RMPUBF/私有 MPFx）复位值**随机**（RAM 区），位=1 参与 ID 比较 →
+     不配置就是随机精确匹配，回环只偶合例程 id
+  2. 这些寄存器**仅暂停（INACTIVE/HALT）模式可写**，`can_init` 的 mb_public_filter 参数
+     实际写不进去 → start() 里先进 INACTIVE、显式 `RMPUBF=0`（全不关心）+ `MPF1=0` 再进目标模式
+- **驱动流程要点**：start() 每次完整重跑 can_init→(INACTIVE 写过滤+FD 配置)→进模式→
+  装 RX 邮箱→开中断（厂商 IP 要求一次性序列，分阶段配置不生效）；ISR/过滤锁必须用
+  spinlock（中断上下文）；RX 邮箱描述符的 data 指针必须指向真实缓冲（NULL 解引用→BusFault）
+
+- H7 的 CAN 是**新一代 CAN-FD 控制器**（非 bxCAN）：32 邮箱消息 RAM、6 级 RX FIFO
+  （支持 DMA）、公有+私有过滤器（104 扩展 ID/208 标准 ID）、CAN FD 数据段最高 8Mbps、
+  四种模式（正常/暂停/回环静默/监听），FlexCAN 类架构
+- 已完成：dtsi can0/1/2 节点（7 个命名中断：wkup/message/busoff/error/fasterror/tec/rec，
+  CAN0=179-185、CAN1=186-192、CAN2=193-199）、`gd,gd32-can` 绑定、时钟/复位 ID
+  （ADDAPB2EN/ADDAPB2RST bit 0-2，CAN 时钟源 CFG1 CANxSEL：HXTAL/APB2/...）、
+  板级 pinctrl 宏（CAN2 TX=PD13/RX=PD12，AF5）
 
 ## 8. 已知待办 / 后续
 

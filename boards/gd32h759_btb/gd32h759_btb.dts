@@ -110,6 +110,19 @@
 	status = "okay";
 };
 
+&can2 {
+	status = "okay";
+	pinctrl-0 = <&can2_default>;
+	pinctrl-names = "default";
+	bitrate = <1000000>;
+	bitrate-data = <5000000>;
+
+	/* SIT1042AQT CAN transceiver on J8 (R37 120-ohm jumper optional) */
+	can-transceiver {
+		max-bitrate = <5000000>;
+	};
+};
+
 &usart0 {
 	status = "okay";
 	current-speed = <115200>;
