@@ -89,6 +89,23 @@
 	status = "okay";
 };
 
+&dma0 {
+	status = "okay";
+};
+
+&timer0 {
+	/* TIMER0 is 16-bit: run the counter at CK_AHB/2/300 = 1MHz so that
+	 * typical periods (up to ~65ms) fit in the counter. */
+	prescaler = <299>;
+	status = "okay";
+
+	pwm {
+		status = "okay";
+		pinctrl-0 = <&timer0_default>;
+		pinctrl-names = "default";
+	};
+};
+
 &usart0 {
 	status = "okay";
 	current-speed = <115200>;

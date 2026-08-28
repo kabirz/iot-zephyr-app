@@ -13,3 +13,8 @@ CONFIG_UART_CONSOLE=y
 CONFIG_GPIO=y
 
 CONFIG_PINCTRL=y
+
+# On-board peripherals (flash0/dma0/timer0-pwm enabled in the board dts)
+CONFIG_FLASH=y
+CONFIG_DMA=y
+CONFIG_PWM=y

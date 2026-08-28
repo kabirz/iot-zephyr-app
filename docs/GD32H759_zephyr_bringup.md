@@ -143,7 +143,37 @@ pyocd 探针目标名来自 CMSIS Pack（小写 `gd32h759im`，不带封装后�
 丢字节、方向键 30/60 损坏；修复后 **0/30、0/20**。回显对比时注意剥离 shell 回显中的 ANSI
 控制序列和行宽换行。
 
-## 7. 已知待办 / 后续
+## 7. 常用外设状态（第二阶段）
+
+| 外设 | 状态 | 验证方式 |
+|------|------|----------|
+| GPIO | ✅ 可用 | shell `gpio set/get` 控制 LED1（PD11） |
+| Flash | ✅ 可用 | 新增 `flash_gd32_v4.c`（H7 FMC：按地址擦除 4KB 扇区、按字编程），shell `flash erase/write/read` 全流程验证 |
+| PWM | ✅ 可用 | TIMER0_CH0 → PA8（AF1，扩展排针），shell `pwm usec pwm 0 1000 500` 设置后 gpio get 采样翻转 |
+| DMA | ✅ 就绪 | dma0（8 通道）节点使能，驱动 READY；等 SPI/ADC 等消费者接入后做传输验证 |
+| SPI | ⚠️ 节点就绪 | dtsi 定义 spi0/1/2；BTB 板引脚 AF 未获权威数据（例程无 SPI2@PC10-12 覆盖），板级使能待引脚分配表 |
+| I2C | ⚠️ 节点就绪 | dtsi 定义 i2c0/1；同上，板上无硬件 I2C 焊盘（野火触摸为软件 I2C PH7/PH8） |
+
+第二阶段新增/改动：
+
+- `drivers/flash/flash_gd32_v4.c` + `dts/bindings/mtd/gd,gd32-nv-flash-v4.yaml`：
+  H7 FMC 后端（960 × 4KB 均匀扇区，`fmc_sector_erase` 按地址擦除，字编程带 DSb/ISb 屏障），
+  Kconfig/CMakeLists 注册 `GD32_NV_FLASH_V4`
+- `dts/arm/gd/gd32h7xx/gd32h7xx.dtsi`：dma0、timer0-2（含 pwm 子节点）、spi0-2、i2c0-1 节点；
+  flash0 切换到 `gd,gd32-nv-flash-v4`
+- `drivers/dma/dma_gd32.c`：H7 分支（INTF0/INTF1 双标志寄存器兜底宏、SDEIE/TAEIE 错误中断映射、
+  DMA_CHMADDR → DMA_CHM0ADDR 别名）
+- 时钟/复位绑定头：补 TIMER0-6、SPI0-2、I2C0-3、DMA0/1 的 RCU 位
+- 板级：dma0/timer0-pwm 使能（PWM 输出 PA8），defconfig 打开 FLASH/DMA/PWM 子系统，
+  prj.conf 打开 `PWM_SHELL`/`FLASH_SHELL`
+
+> **FIFO 说明**：H7 USART 的 RX/TX FIFO 已在驱动 init 中使能（`usart_fifo_enable`），
+> 否则单字节缓冲扛不住 87µs/字节的连续输入（方向键转义序列丢字节）。
+
+**PWM 占空比极性**：驱动使用 TIMER_OC_MODE_PWM1，占空比 100% 时引脚为低、0% 为高
+（与上游行为一致）；需要常规极性可在 DT 设 `PWM_POLARITY_INVERTED`。
+
+## 8. 已知待办 / 后续
 
 - [ ] flash 驱动：H7 FMC 需新的 `flash_gd32_v4` 变体（当前 flash 节点为普通 `soc-nv-flash`，
       Zephyr 的 GD32 flash 驱动未启用）
