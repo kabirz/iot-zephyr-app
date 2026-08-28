@@ -50,6 +50,10 @@ static uint32_t his_cur_size;
  * 空 = 尚未打开过 (开机走目录扫描复用最新文件) */
 static char his_cur_name[24];
 
+/* history_sync 刷盘请求标志: 置位后由工作队列 handler 消费,
+ * fs_sync 只在 hist 工作队列线程 (his_fp 唯一持有者) 执行 */
+static atomic_t his_sync_req;
+
 /* 删除最旧历史文件, 维持 <= HIST_MAX_FILES 个 */
 static void cleanup_old_files(void)
 {
@@ -259,6 +263,11 @@ static void his_flush(bool close_after)
 		/* disable: 关闭文件但记住名字, 下次 enable 续写同一文件 */
 		close_cur_file();
 	}
+	if (atomic_set(&his_sync_req, 0) && his_fp_open) {
+		/* history_sync 请求的刷盘: 必须消费标志 (即使文件未打开),
+		 * 否则 history_sync 的等待循环会空转 */
+		fs_sync(&his_fp);
+	}
 }
 
 static void his_work_handler(struct k_work *work)
@@ -290,9 +299,21 @@ void history_enable_write(bool en)
 
 void history_sync(void)
 {
-	if (his_fp_open) {
-		fs_sync(&his_fp);
+	struct k_work_sync sync;
+
+	if (!io_lfs_is_ready()) {
+		return;
 	}
+
+	/* 刷盘经 hist 工作队列执行 (his_fp 的唯一持有者), 避免跨线程直接
+	 * fs_sync 与写盘竞争 (littlefs 无内部锁); 提交 handler 顺带排空
+	 * msgq 中未落盘的采样, 重启前不再丢缓存记录.
+	 * handler 若恰好在置位前已过检查点, 标志会残留, 重试一轮消费它 */
+	atomic_set(&his_sync_req, 1);
+	do {
+		k_work_submit_to_queue(&hist_work_q, &his_work);
+		k_work_flush(&his_work, &sync);
+	} while (atomic_get(&his_sync_req) != 0);
 }
 
 void send_history_data(const struct his_data *data)
