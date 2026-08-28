@@ -173,6 +173,21 @@ pyocd 探针目标名来自 CMSIS Pack（小写 `gd32h759im`，不带封装后�
 **PWM 占空比极性**：驱动使用 TIMER_OC_MODE_PWM1，占空比 100% 时引脚为低、0% 为高
 （与上游行为一致）；需要常规极性可在 DT 设 `PWM_POLARITY_INVERTED`。
 
+## 7.5 ADC（第三阶段）
+
+### ADC ✅ 可用并已板上验证
+
+- H7 的 ADC 为新一代 IP：采样时间编码进 RSQ 序列条目（10 位、无独立 SAMPT 寄存器）、
+  通道配置函数改名 `adc_routine_channel_config`、时钟分频在 `ADC_SYNCCTL.ADCSCK`
+  （同步模式，0xB = HCLK/8 = 37.5MHz @600MHz，ADC0/1 上限 72MHz）、转换前需校准
+  （RSTCLB/CLB 流程，驱动已有实现兼容）
+- `adc_gd32.c` 增加分支：SYNCCTL 分频初始化、采样表（原始周期数）、RSQ 条目携带采样时间、
+  H7 输入走专用 `_C` 模拟焊盘无需 pinctrl（绑定中 pinctrl 改为可选，init 跳过引脚配置——
+  否则 `pinctrl_lookup_state` 返回负值导致设备 DISABLED）
+- dtsi：adc0/1/2（0x40012400/2800/2C00，IRQ 18/18/127，APB2EN/RST 位 8/9/10）
+- 板上验证：`adc adc@40012400 resolution 12` + `read 0` 读 PA0_C 电位器（注意先设分辨率，
+  shell 默认 resolution=0 会被驱动 -EINVAL 拒绝且无输出）
+
 ## 8. 已知待办 / 后续
 
 - [ ] flash 驱动：H7 FMC 需新的 `flash_gd32_v4` 变体（当前 flash 节点为普通 `soc-nv-flash`，
