@@ -6,8 +6,9 @@
  * (合并 io-edge-hub 与 canopen-io 两版: 数据源统一为 input 寄存器,
  *  同时镜像到 CANopen OD 0x2000 并按通道触发 TPDO1)
  *
- *   - 通道号与工程量转换系数 (ai-coeffs) 均来自设备树:
- *     /zephyr,user 的 io-channels 引用 &adc1 下 channel@a-d 子节点
+ *   - 通道号列表 (ai-channels) 与工程量转换系数 (ai-coeffs) 来自设备树
+ *     /zephyr,user; 各通道参数一致 (增益/基准/分辨率), 锚定 io-channels
+ *     首条 (&adc1 的 channel@a 模板), 仅通道号不同
  *   - AI0/AI1 (IN10/11): 电流 4-20mA, value = 7.414 * voltage / 10  (单位 0.01mA)
  *   - AI2/AI3 (IN12/13): 电压 0-10V,  value = 3.7037 * voltage / 10 (单位 0.01V)
  *
@@ -32,13 +33,16 @@ LOG_MODULE_REGISTER(io_adc, LOG_LEVEL_INF);
 
 #define ADC_NODE DT_PATH(zephyr_user)
 
-/* 通道配置 (device + channel_id + channel_cfg) 取自 /zephyr,user 的 io-channels */
-#define ADC_SPEC_FN(node_id, prop, idx) ADC_DT_SPEC_GET_BY_IDX(node_id, idx),
-static const struct adc_dt_spec adc_specs[] = {
-	DT_FOREACH_PROP_ELEM(ADC_NODE, io_channels, ADC_SPEC_FN)};
+/* 共用通道参数 (device + channel_cfg + 分辨率), 锚定 io-channels 首条
+ * (即 &adc1 的 channel@a 模板): 各 AI 通道参数一致, 仅通道号不同 */
+static const struct adc_dt_spec adc_spec = ADC_DT_SPEC_GET(ADC_NODE);
+
+/* AI 通道号列表: 与 ai-coeffs 顺序一一对应 */
+#define AI_CH_FN(node_id, prop, idx) DT_PROP_BY_IDX(node_id, prop, idx),
+static const uint8_t ai_channel[AI_NUM] = {DT_FOREACH_PROP_ELEM(ADC_NODE, ai_channels, AI_CH_FN)};
 
 /* 工程量转换系数 (放大 1e4 倍做整数运算): 从 /zephyr,user 的 ai-coeffs 读取,
- * 与 io-channels 顺序一一对应 */
+ * 与 ai-channels 顺序一一对应 */
 #define AI_COEFF_FN(node_id, prop, idx) DT_PROP_BY_IDX(node_id, prop, idx),
 static const uint32_t ai_coeff[AI_NUM] = {DT_FOREACH_PROP_ELEM(ADC_NODE, ai_coeffs, AI_COEFF_FN)};
 
@@ -69,30 +73,40 @@ static void adc_thread(void *p1, void *p2, void *p3)
 			si = CONFIG_CANOPEN_IO_SAMPLE_MAX_MS;
 		}
 
-		/* 采样循环上限取 min(adc_specs, AI_NUM), 防止 io-channels 配置过多时
-		 * 越界访问 ai_coeff[] (ai_coeff 固定 AI_NUM 大小) */
-		int ch_num = MIN(ARRAY_SIZE(adc_specs), AI_NUM);
+		/* 单次扫描采集全部使能通道: 一次 adc_read 走多通道序列,
+		 * 结果按通道号升序连续写入 ai_buffer (依赖 adc_init 的升序校验) */
+		uint32_t chan_mask = 0;
 
-		for (int i = 0; i < ch_num; i++) {
-			if (!(en & BIT(i))) {
-				continue;
+		for (int i = 0; i < AI_NUM; i++) {
+			if (en & BIT(i)) {
+				chan_mask |= BIT(ai_channel[i]);
 			}
+		}
+
+		if (chan_mask != 0) {
 			struct adc_sequence seq = {
-				.channels = BIT(adc_specs[i].channel_id),
-				.buffer = &ai_buffer[i],
-				.buffer_size = sizeof(ai_buffer[i]),
-				.resolution = adc_specs[i].resolution,
-				.oversampling = adc_specs[i].oversampling,
+				.channels = chan_mask,
+				.buffer = ai_buffer,
+				.buffer_size = sizeof(ai_buffer),
+				.resolution = adc_spec.resolution,
+				.oversampling = adc_spec.oversampling,
 				.calibrate = 0,
 			};
 
-			if (adc_read_dt(&adc_specs[i], &seq) == 0) {
-				uint16_t val = ai_convert(i, ai_buffer[i]);
+			if (adc_read(adc_spec.dev, &seq) == 0) {
+				int slot = 0;
 
-				update_input_reg(INPUT_AI0_IDX + i, val);
-				/* CANopen 镜像 + 按通道触发 TPDO1 */
-				OD_RAM.x2000_analogInput[i] = (int16_t)val;
-				OD_requestTPDO(OD_ENTRY_H2000, i + 1);
+				for (int i = 0; i < AI_NUM; i++) {
+					if (!(en & BIT(i))) {
+						continue;
+					}
+					uint16_t val = ai_convert(i, ai_buffer[slot++]);
+
+					update_input_reg(INPUT_AI0_IDX + i, val);
+					/* CANopen 镜像 + 按通道触发 TPDO1 */
+					OD_RAM.x2000_analogInput[i] = (int16_t)val;
+					OD_requestTPDO(OD_ENTRY_H2000, i + 1);
+				}
 			}
 		}
 
@@ -118,24 +132,37 @@ K_THREAD_DEFINE(adc_io, CONFIG_CANOPEN_IO_ADC_STACK_SIZE, adc_thread, NULL, NULL
 
 static int adc_init(void)
 {
-	if (ARRAY_SIZE(adc_specs) != AI_NUM) {
-		LOG_ERR("io-channels count mismatch (expect %d, got %d)", AI_NUM,
-			(int)ARRAY_SIZE(adc_specs));
+	if (DT_PROP_LEN(ADC_NODE, ai_channels) != AI_NUM) {
+		LOG_ERR("ai-channels count mismatch (expect %d, got %d)", AI_NUM,
+			DT_PROP_LEN(ADC_NODE, ai_channels));
 		return -EINVAL;
 	}
 
-	for (int i = 0; i < ARRAY_SIZE(adc_specs); i++) {
-		if (!device_is_ready(adc_specs[i].dev)) {
-			LOG_ERR("ADC device not ready");
-			return -ENODEV;
+	/* 扫描结果按通道号升序写入缓冲: 通道号必须严格升序 */
+	for (int i = 1; i < AI_NUM; i++) {
+		if (ai_channel[i] <= ai_channel[i - 1]) {
+			LOG_ERR("ai-channels must be in ascending order");
+			return -EINVAL;
 		}
-		if (adc_channel_setup_dt(&adc_specs[i])) {
-			LOG_ERR("ADC channel %u setup failed", adc_specs[i].channel_id);
+	}
+
+	if (!device_is_ready(adc_spec.dev)) {
+		LOG_ERR("ADC device not ready");
+		return -ENODEV;
+	}
+
+	/* 各通道共用参数模板, 仅通道号不同 */
+	for (int i = 0; i < AI_NUM; i++) {
+		struct adc_dt_spec spec = adc_spec;
+
+		spec.channel_id = ai_channel[i];
+		if (adc_channel_setup_dt(&spec)) {
+			LOG_ERR("ADC channel %u setup failed", ai_channel[i]);
 			return -EIO;
 		}
 	}
 
-	LOG_INF("ADC ready: %d channels", (int)ARRAY_SIZE(adc_specs));
+	LOG_INF("ADC ready: %d channels", AI_NUM);
 	return 0;
 }
 
