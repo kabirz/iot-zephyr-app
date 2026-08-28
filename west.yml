@@ -31,6 +31,12 @@ manifest:
       submodules:
         - path: CANopenNode
 
+    - name: hal_gigadevice
+      revision: main
+      path: modules/hal/gigadevice
+      groups:
+        - hal
+
   self:
     path: apps
     west-commands: scripts/west-commands.yml

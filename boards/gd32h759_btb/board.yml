@@ -1,0 +1,6 @@
+board:
+  name: gd32h759_btb
+  full_name: EmbedFire GD32H759IMK6 BTB Board
+  vendor: gd
+  socs:
+    - name: gd32h759

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_GD32H759_BTB
+	bool "EmbedFire GD32H759IMK6 BTB Board"
+	select SOC_GD32H759
