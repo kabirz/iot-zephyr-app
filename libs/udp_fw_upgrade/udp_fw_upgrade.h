@@ -111,4 +111,19 @@ void udp_fw_add_pre_reboot_hook(udp_fw_pre_reboot_hook_t hook);
 typedef bool (*udp_fw_pre_start_hook_t)(void);
 void udp_fw_add_pre_start_hook(udp_fw_pre_start_hook_t hook);
 
+/**
+ * @brief 注册固件升级会话失败钩子
+ *
+ * 库在下载会话以失败告终时调用 (FW_START 擦除/初始化失败, FW_DATA/V2
+ * 写入失败, FW_END 校验或 boot_request_upgrade 失败). 适用于释放
+ * pre_start 钩子申请的升级锁等会话资源.
+ *
+ * FW_END 成功后不调用: 镜像已校验待重启, 升级锁应保持占用直到重启,
+ * 防止其他通道在重启窗口内抢占擦除 slot1.
+ *
+ * @param hook 回调函数 (NULL 无操作)
+ */
+typedef void (*udp_fw_fail_hook_t)(void);
+void udp_fw_add_fail_hook(udp_fw_fail_hook_t hook);
+
 #endif /* __UDP_FW_UPGRADE_H__ */

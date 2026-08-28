@@ -19,10 +19,18 @@ static bool fw_pre_start_hook(void)
 	return fw_upgrade_try_lock(FW_UPGRADE_CHANNEL_UDP);
 }
 
+/* UDP 库会话失败 (擦除/写入/校验失败) 时释放锁; FW_END 成功不回调,
+ * 锁保持占用直到重启, 防其他通道在重启窗口内抢占擦 slot1 */
+static void fw_fail_hook(void)
+{
+	fw_upgrade_unlock(FW_UPGRADE_CHANNEL_UDP);
+}
+
 static int fw_upgrade_state_init(void)
 {
 	k_mutex_init(&lock);
 	udp_fw_add_pre_start_hook(fw_pre_start_hook);
+	udp_fw_add_fail_hook(fw_fail_hook);
 	can_fw_add_pre_start_hook(fw_pre_start_hook);
 	return 0;
 }

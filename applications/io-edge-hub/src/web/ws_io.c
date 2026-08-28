@@ -262,6 +262,7 @@ out:
 static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 {
 	int32_t index = 0, addr = 0, value = 0, ts = 0;
+	bool locked = false; /* 本命令获取的 WS 升级锁是否需归还 */
 	int n;
 
 	if (strncmp(cmd, "\"do\"", 4) == 0 && json_get_i32(cmd, len, "index", &index) &&
@@ -322,6 +323,8 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 			n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 				     "{\"ok\":false,\"err\":\"upgrade in progress\"}");
 		} else {
+			locked = true;
+
 			/* 解析客户端发送的 keyhash (可选, Base64 编码) */
 			char b64_keyhash[64];
 			const char *keyhash_ptr = NULL;
@@ -358,6 +361,7 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 						fw_upg.active = true;
 						fw_upg.total = (uint32_t)fw_size;
 						k_mutex_unlock(&fw_upg_lock);
+						locked = false; /* 成功启动: 锁保持到升级结束 */
 						LOG_INF("fw upgrade started (size=%d)", fw_size);
 						n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 							     "{\"ok\":true}");
@@ -378,6 +382,8 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 			uint32_t received = fw_upg.received;
 			uint32_t total = fw_upg.total;
 			k_mutex_unlock(&fw_upg_lock);
+			bool verified = false;
+
 			if (received == 0) {
 				n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 					     "{\"ok\":false,\"err\":\"no data\"}");
@@ -397,15 +403,30 @@ static void ws_handle_cmd(struct ws_slot *s, const char *cmd, size_t len)
 					     "{\"ok\":false,\"err\":\"boot_request\"}");
 			} else {
 				LOG_INF("fw upgrade verified, rebooting for swap");
-				fw_upg_reset();
+				history_sync();
 				n = snprintf(s->tx_buf, sizeof(s->tx_buf), "{\"ok\":true}");
 				set_reboot_status(true);
+				verified = true;
 			}
-			fw_upg_reset();
+			if (!verified) {
+				fw_upg_reset();
+			}
+			if (verified) {
+				/* 升级锁保持占用直到重启, 阻塞其他通道并发升级 */
+				websocket_send_msg(s->sock, s->tx_buf, n,
+						   WEBSOCKET_OPCODE_DATA_TEXT, false, true,
+						   1000);
+				return;
+			}
 		}
 	} else {
 		n = snprintf(s->tx_buf, sizeof(s->tx_buf),
 			     "{\"ok\":false,\"err\":\"unknown cmd\"}");
+	}
+
+	if (locked && !fw_upg.active) {
+		/* 未成功启动升级: 归还 WS 升级锁 */
+		fw_upgrade_unlock(FW_UPGRADE_CHANNEL_WS);
 	}
 	(void)websocket_send_msg(s->sock, s->tx_buf, n, WEBSOCKET_OPCODE_DATA_TEXT, false, true,
 				 1000);

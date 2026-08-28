@@ -88,6 +88,14 @@ void udp_fw_add_pre_start_hook(udp_fw_pre_start_hook_t hook)
 	pre_start_hook = hook;
 }
 
+/* 固件升级会话失败钩子 (应用释放升级锁等资源) */
+static udp_fw_fail_hook_t fw_fail_hook;
+
+void udp_fw_add_fail_hook(udp_fw_fail_hook_t hook)
+{
+	fw_fail_hook = hook;
+}
+
 /* 配置端口 socket + 发送方地址 (回复路由用) */
 static int config_sock = -1;
 static struct sockaddr_in config_remote_addr;
@@ -117,6 +125,16 @@ static uint32_t fw_size;        /* START 保存的固件大小 */
 static uint32_t fw_received;    /* 已接收字节数 (用于 DATA offset 回复) */
 
 #define FW_CRC_CHUNK 64         /* 读回 slot1 重算 CRC 的分块大小 */
+
+/* 会话以失败告终: 清状态并通知应用 (释放升级锁等资源)。
+ * FW_END 成功不调用 — 镜像已校验待重启, 升级锁保持占用直到重启 */
+static void fw_session_fail(void)
+{
+	fw_started = false;
+	if (fw_fail_hook != NULL) {
+		fw_fail_hook();
+	}
+}
 
 /* ================================================================
  * 子网判断 + 回复
@@ -276,11 +294,13 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 
 			if (flash_area_open(SLOT1_PARTITION_ID, &fa) != 0) {
 				LOG_ERR("FW_START: flash_area_open failed");
+				fw_session_fail();
 			} else {
 				flash_area_erase(fa, 0, ROUND_UP(fw_size, 4096));
 				flash_area_close(fa);
 				if (flash_img_init(&flash_img_ctx) != 0) {
 					LOG_ERR("FW_START: flash_img_init failed");
+					fw_session_fail();
 				} else {
 					fw_started = true;
 					fw_received = 0;
@@ -306,15 +326,15 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 	case FW_CMD_DATA: {
 		uint8_t off[4] = { 0 };
 
-		if (fw_started && len > 0) {
+			if (fw_started && len > 0) {
 			if (flash_img_buffered_write(&flash_img_ctx, data, len, false) == 0) {
-				fw_received += len;
-				sys_put_le32(fw_received, off);
+					fw_received += len;
+					sys_put_le32(fw_received, off);
+				} else {
+					LOG_ERR("FW_DATA: flash write failed");
+					fw_session_fail();
+				}
 			} else {
-				LOG_ERR("FW_DATA: flash write failed");
-				fw_started = false;
-			}
-		} else {
 			LOG_WRN("FW data before start");
 		}
 		udp_fw_reply(cmd, off, 4);
@@ -336,7 +356,7 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 					fw_received += len - 4;
 				} else {
 					LOG_ERR("FW_DATA_V2: flash write failed");
-					fw_started = false;
+					fw_session_fail();
 				}
 			}
 			sys_put_le32(fw_received, off);
@@ -361,15 +381,18 @@ static bool handle_fw_cmd(uint8_t cmd, const uint8_t *data, size_t len)
 
 				if (ret == 0) {
 					result = 1;
+					/* 成功: 会话结束但升级锁保持占用直到重启 */
+					fw_started = false;
 					LOG_INF("FW upgrade verified (test_mode=%d), waiting for reboot",
 						test_mode);
 				} else {
 					LOG_ERR("FW_END: boot_request_upgrade failed: %d", ret);
+					fw_session_fail();
 				}
 			} else {
 				LOG_ERR("FW_END: CRC mismatch, upgrade rejected");
+				fw_session_fail();
 			}
-			fw_started = false;
 		} else {
 			LOG_WRN("FW end before start");
 		}
