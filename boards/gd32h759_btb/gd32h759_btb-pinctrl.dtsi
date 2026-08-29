@@ -32,4 +32,17 @@
 				 <OSPIM_P0_IO2_PE2>, <OSPIM_P0_IO3_PA6>;
 		};
 	};
+
+	/* ENET0 RMII to the LAN8720A PHY plus the CK_OUT0 50MHz reference
+	 * clock the PHY needs on its CLKIN pin (driver programs RCU_CFG2) */
+	eth0_default: eth0_default {
+		group1 {
+			pinmux = <ENET0_RMII_REF_CLK_PA1>, <ENET0_MDIO_PA2>,
+				 <ENET0_RMII_CRS_DV_PA7>, <ENET0_MDC_PC1>,
+				 <ENET0_RMII_RXD0_PC4>, <ENET0_RMII_RXD1_PC5>,
+				 <ENET0_RMII_TX_EN_PB11>,
+				 <ENET0_RMII_TXD0_PG13>,
+				 <ENET0_RMII_TXD1_PG14>, <CK_OUT0_PA8>;
+		};
+	};
 };

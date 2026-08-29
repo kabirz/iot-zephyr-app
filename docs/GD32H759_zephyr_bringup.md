@@ -294,8 +294,47 @@ pyocd 探针目标名来自 CMSIS Pack（小写 `gd32h759im`，不带封装后�
 - 注意：普通 SPI（SPI0-2，`spi_gd32.c`）是另一组控制器，板上无外部器件；
   SPI2 可从 BTB 排针引出（PC10/PC11/PC12/PA15），待需要时再启用验证
 
+## 7.7 以太网（ENET0 + LAN8720A RMII）⚠️ 驱动可用、连通已验证，吞吐/延迟待调
+
+新增文件：`drivers/ethernet/eth_gd32.c`（寄存器级驱动，不用厂商库全局描述符）、
+`drivers/ethernet/Kconfig.gd32`、`dts/bindings/ethernet/gd,gd32-eth.yaml`；
+配套：`drivers/entropy/entropy_gd32_h7.c`（H7 TRNG，网络栈随机数必需）、
+dtsi 新增 `eth0@40028000`/`eth1@4002a000`/`trng@48021800` 节点、
+clock/reset ID（ENET0/TX/RX、TRNG）、pinctrl 引脚（RMII 全套 AF11 + CK_OUT0_PA8 AF0）、
+HAL shim `gd32_enet.h`。
+
+- **硬件**：LAN8720A PHY（MDIO 地址 0，ID 0x0007c0f1），MCU PA8 输出 50MHz
+  （RCU_CFG2：CKOUT0SEL=PLL0P、CKOUT0DIV=12 → 600/12=50MHz）→ PHY CLKIN，
+  REF_CLK 回 PA1；PF6 复位 PHY（驱动先开 CKOUT0 再复位，保证 strap 锁存正确）；
+  RMII 接口选择在 **SYSCFG_PMCFG bit23**（不在 MAC_CFG！）
+- **已验证**：PHY 自动扫描（0-31 扫 ID）、自协商、链路 100M 全双工、
+  ARP/ping/TCP echo 端到端全通（主机 enp3s0=192.168.12.100/24，
+  板子静态 192.168.12.200/24，示例 `apps/examples/eth-echo`，TCP 4242 回显）
+- **踩过的坑（都已修复进驱动）**：
+  1. **TX 描述符必须带 TERM（end of ring）**，且每次重武装都要带——否则 DMA
+     消费完一帧就走出环停在哪算哪（CTDADDR=TDTADDR+0x10 的野地址），后续全超时
+  2. **ISR 里 TBU 不要无条件 TPEN**——空链表时 poll demand 会立刻再挂 TBU，
+     ISR 死循环饿死整个系统（现象：shell 无响应、IRQ 一直 pending）
+  3. **这颗 MAC 的 RX 不剥 FCS**（APCD 对 RX 无效），驱动软件剥尾 4 字节
+  4. **ET/异常中断源要全清**，漏清一个（如 ET）就会中断风暴
+  5. **网络栈需要熵**：`CONFIG_ENTROPY_GENERATOR=y` + chosen `zephyr,entropy` +
+     H7 TRNG 驱动（F4 版驱动 API 不通用）
+- **诊断技巧**：RSTSTS（RCU+0x74）看复位原因；DEMCR=0x400 开 hard-fault 向量捕获；
+  attach 模式 pyocd 会话可不停机读内存；`verify` 必做——**HW-Link_LITE 烧写
+  静默失败概率不低，未 verify 的"成功"烧录会浪费一轮测量**
+- **⚠️ 开放问题：稀疏流量下收发延迟 ~N×包间隔**（-i 1s ping → RTT 3-6s；
+  -i 0.05 洪泛 → RTT 0.35s + 丢包；单包最快实测 4.1ms）。已排除：D-cache
+  （CCR 实测未开启）、流控（FCTL=0）、链路闪断、MDIO 轮询干扰。证据指向
+  RX 描述符环"批次化"处理（≈环深度 8 的滞后）——疑似 DMA 越过 CPU 未归还的
+  描述符时不挂起而是跳过，线程与 DMA 失步后只能等环回绕。锁步跟随 CRDADDR
+  的修复尝试引发了稳定问题（无 dump 的静默复位，SWRSTF），已回退到简单遍历。
+  下一步：两描述符最小化复现 + 读 Zephyr net_rx 线程调度 + 必要时换 DMA
+  chain 模式对照
+
 ## 8. 已知待办 / 后续
 
+- [ ] 以太网：稀疏流量延迟根因（见 §7.7 开放问题）——确认 DMA 跳过非持有
+      描述符的行为并修复线程/环失步；修复锁步版的无 dump 静默复位
 - [ ] flash 驱动：H7 FMC 需新的 `flash_gd32_v4` 变体（当前 flash 节点为普通 `soc-nv-flash`，
       Zephyr 的 GD32 flash 驱动未启用）
 - [ ] Cache（I/D-Cache）与 DWT 实测：当前 caches 未启用（`CONFIG_CACHE_MANAGEMENT` 未开）

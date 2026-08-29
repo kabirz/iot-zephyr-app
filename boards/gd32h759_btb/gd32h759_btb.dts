@@ -16,6 +16,7 @@
 		zephyr,console = &usart0;
 		zephyr,shell-uart = &usart0;
 		zephyr,flash-controller = &fmc;
+		zephyr,entropy = &trng;
 	};
 
 	leds {
@@ -132,6 +133,21 @@
 	pinctrl-names = "default";
 	size = <0x800000>;
 	jedec-id = [c8 40 17];
+};
+
+/* LAN8720A RMII PHY (U3, 10/100M).  The 50MHz reference clock comes from
+ * CK_OUT0 (PA8) into the PHY CLKIN, REF_CLK returns on PA1; PF6 resets
+ * the PHY (10K pullup, active low). */
+&eth0 {
+	status = "okay";
+	pinctrl-0 = <&eth0_default>;
+	pinctrl-names = "default";
+	local-mac-address = [02 0e 1f 75 90 01];
+	phy-reset-gpios = <&gpiof 6 GPIO_ACTIVE_LOW>;
+};
+
+&trng {
+	status = "okay";
 };
 
 / {
