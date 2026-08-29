@@ -322,19 +322,23 @@ HAL shim `gd32_enet.h`。
 - **诊断技巧**：RSTSTS（RCU+0x74）看复位原因；DEMCR=0x400 开 hard-fault 向量捕获；
   attach 模式 pyocd 会话可不停机读内存；`verify` 必做——**HW-Link_LITE 烧写
   静默失败概率不低，未 verify 的"成功"烧录会浪费一轮测量**
-- **⚠️ 开放问题：稀疏流量下收发延迟 ~N×包间隔**（-i 1s ping → RTT 3-6s；
-  -i 0.05 洪泛 → RTT 0.35s + 丢包；单包最快实测 4.1ms）。已排除：D-cache
-  （CCR 实测未开启）、流控（FCTL=0）、链路闪断、MDIO 轮询干扰。证据指向
-  RX 描述符环"批次化"处理（≈环深度 8 的滞后）——疑似 DMA 越过 CPU 未归还的
-  描述符时不挂起而是跳过，线程与 DMA 失步后只能等环回绕。锁步跟随 CRDADDR
-  的修复尝试引发了稳定问题（无 dump 的静默复位，SWRSTF），已回退到简单遍历。
-  下一步：两描述符最小化复现 + 读 Zephyr net_rx 线程调度 + 必要时换 DMA
-  chain 模式对照
+- **⚠️ 延迟根因：ENET 完成中断使能后中断线风暴（已解决）**。初版驱动
+  ping RTT 3-6s 且随包间隔缩放（洪泛 0.35s+丢包）。用厂商 ENET_LWIP 例程
+  （cmake+gcc 交叉编译烧同一块板）对比：RTT 0.13-0.5ms、0 丢包 → 硬件无问题。
+  逐项对齐厂商配置（描述符/缓冲放 **SRAM0 0x30000000**、chain 模式描述符、
+  存储转发），仍滞后；最终确认 **INTEN 使能完成中断后中断线反复重挂形成
+  风暴，RX 线程被饿死**。厂商 BSP 本来就纯轮询不用 ENET 中断。现驱动
+  `INTEN=0` 纯轮询（RX 线程 2ms 走环 + TX 轮询描述符 DAV），实测
+  ping RTT 4-10ms、洪泛 0 丢包、TCP echo 正常。中断风暴的确切机理
+  （多 bit 写清除 vs 单 bit？某中断源行为？）待后续定位
+- **SRAM0 放置**：ENET 描述符/帧缓冲必须放 0x30000000 外设 SRAM
+  （厂商 scatter 同样放置；`section("SRAM0")` 即可，DT 内存域已定义），
+  驱动用 BUILD_ASSERT 保证不超 16KB 预算
 
 ## 8. 已知待办 / 后续
 
-- [ ] 以太网：稀疏流量延迟根因（见 §7.7 开放问题）——确认 DMA 跳过非持有
-      描述符的行为并修复线程/环失步；修复锁步版的无 dump 静默复位
+- [ ] 以太网：ENET 中断风暴的确切机理（现驱动纯轮询已规避，性能够用；
+      若需中断驱动可先单 bit 写清除 + 逐个中断源二分定位）
 - [ ] flash 驱动：H7 FMC 需新的 `flash_gd32_v4` 变体（当前 flash 节点为普通 `soc-nv-flash`，
       Zephyr 的 GD32 flash 驱动未启用）
 - [ ] Cache（I/D-Cache）与 DWT 实测：当前 caches 未启用（`CONFIG_CACHE_MANAGEMENT` 未开）
