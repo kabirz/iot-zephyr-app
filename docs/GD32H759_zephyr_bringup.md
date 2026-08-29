@@ -208,7 +208,7 @@ pyocd 探针目标名来自 CMSIS Pack（小写 `gd32h759im`，不带封装后�
     参数顺序：`can send <dev> -f -b <id> b0 ... b63`（选项在设备名后）
 - 板级：can2 okay（PD13 TX/PD12 RX AF5，接 SIT1042AQT 收发器 + J8 端子）、
   bitrate 1M + bitrate-data 5M + can-transceiver max-bitrate 5M；
-  测试应用 `apps/applications/can-loopback`（经典回环 + FD 64 字节回环自测 + normal + CAN_SHELL）
+  测试应用 `apps/examples/can-loopback`（经典回环 + FD 64 字节回环自测 + normal + CAN_SHELL）
 - 验证：
   - FD 回环：shell `can send ... 456 <64字节>` → `B- 456 [64] 00..3f` 全字节回环一致
     （FDF+BRS、DLC 15）；启动自测 last_rx（调试器读）id=0x456/dlc=0xf/flags=0xc 同样正确
@@ -238,6 +238,61 @@ pyocd 探针目标名来自 CMSIS Pack（小写 `gd32h759im`，不带封装后�
   CAN0=179-185、CAN1=186-192、CAN2=193-199）、`gd,gd32-can` 绑定、时钟/复位 ID
   （ADDAPB2EN/ADDAPB2RST bit 0-2，CAN 时钟源 CFG1 CANxSEL：HXTAL/APB2/...）、
   板级 pinctrl 宏（CAN2 TX=PD13/RX=PD12，AF5）
+
+## 7.6 OSPI NOR Flash ✅ 可用并已板上验证（GD25Q64 8MB，间接模式 1-1-1）
+
+- 板载 U7 **GD25Q64ESIGR（64Mbit=8MB）挂 OSPI0**（OCTOSPI 类控制器，AHB3），
+  不是普通 SPI——OSPI0=0x52005000、OSPI1=0x5200A000、OSPIM=0x5200B400；
+  时钟 AHB3EN bit4(OSPIM)/5(OSPI0)/6(OSPI1)
+- **引脚 AF 号（数据手册 AF 表 + EVAL 例程锚点校准）**：
+  SCK=PA3 **AF12**、CSN=PB10 **AF9**、IO0=PF8 **AF10**、IO1=PF9 **AF10**、
+  IO2=PE2 **AF9**、IO3=PA6 **AF6**。每个引脚的 OSPI AF 都不一样！
+  （校准法：EVAL 例程已证实 PB2=SCK@AF9、PB6=CSN@AF10，与目标引脚同页
+  的 AF 表用这两个作列锚点定列边缘）
+- **必须配置 OSPIM 互联**：时钟开启后要 `ospim_port_sck/csn/io3_0_config()`
+  使能端口 0 信号 + `*_source_select()` 选 OSPI0 源，否则引脚完全不通
+- 新驱动 `drivers/flash/flash_gd32_ospi.c`（`gd,gd32-ospi` 绑定 +
+  `CONFIG_FLASH_GD32_OSPI`，select USE_GD32_OSPI）：间接模式标准 SPI 命令
+  （WREN 06 / READ 03 / PP 02 / SE 20 / RDSR 05 / RDID 9F），借厂商
+  `ospi_command_config`+`ospi_transmit/receive`；节点属性 size + jedec-id；
+  init 读 JEDEC 校验（无响应→ENODEV，不匹配→WARN 继续）；4KB 扇区布局
+- prescaler=9（内核时钟/10，EVAL 同款保守值），GD25Q64 远未跑满
+- 验证：`jedec id: c8 40 17` ✓；4KB 擦除+4096 字节写入+回读全对 ✓
+  （测试应用 `apps/examples/ospi-flash-test`，含 `flashid`/`flashtest`/
+  `mmtest`/`mpudump` shell 命令）
+
+### Memory-Mapped（XIP 窗口）✅ 可用，但必须非缓存属性
+
+- OSPI0 MM 窗口 = **0x90000000**（OSPI1=0x70000000），驱动 API
+  `flash_gd32_ospi_mm_enable()/mm_disable()`（include/zephyr/drivers/flash/gd32_ospi.h）：
+  首次使能会置 flash QE 位（SR2 bit1，0x35/0x31）并把 MM 读命令配成
+  **quad fast read 0x6B**（1-1-4+8 dummy）；擦/写等 flash API 调用会自动切回
+  间接模式，之后可再切回 MM。板级 dts 在 reserved-memory 声明窗口
+  （`ospi0-mm@90000000`，含 linker region OSPI0_MM）
+- **⚠️ 大坑一：D-Cache 行填充会挂死总线**。窗口若为可缓存属性（默认映射
+  0x80000000-0x9FFFFFFF 就是 WT-cacheable），M7 读未命中会产生 **WRAP 突发
+  行填充**，OSPI 的 AHB 从机不应答 → 单字节读都能把系统挂死（lockup，SWD
+  halt 都停不住，只能 reset halt）。**必须** 用 `zephyr,memory-attr =
+  <(DT_MEM_ARM(ATTR_MPU_RAM_NOCACHE) | DT_MEM_NON_VOLATILE)>` 把窗口编成
+  非缓存 MPU 区域（需 `CONFIG_MEM_ATTR=y`；注意**没有 compatible 的节点
+  不会生成属性宏**，必须 `compatible = "zephyr,memory-region"` + 必需的
+  `zephyr,memory-region = "OSPI0_MM"` 字符串属性）
+- **⚠️ 怪癖二：`CONFIG_CACHE_MANAGEMENT=y`（哪怕从不启用 cache）影响间接
+  读速度 8 倍**：有=y → 3582 KB/s，=n → 438 KB/s（同代码路径，A/B 三轮
+  复现；cache 驱动 init 为空，疑为代码布局/取指对齐次生效应，待查）。
+  测试应用保持 =y
+- **⚠️ 怪癖三：开启 D-Cache 后间接 FIFO 轮询路径也慢 8 倍**（439 KB/s），
+  机理未明——所以当前配置 dcache 保持关闭
+- 实测（64KB，SCK=内核/10）：**间接读 3582 KB/s**（≈1-1-1 30MHz 线速上限），
+  **MM 指针读 590 KB/s**（非缓存单拍，每笔访问都带完整命令+地址+dummy 开销），
+  数据逐字节一致。**结论：大批量读用 flash_read()（间接流式）；MM 适合随机
+  小读/零拷贝/不用驱动直接寻址**。要把 MM 提速需要 cache 行填充突发支持
+  （本 IP 似不支持，见坑一）
+- 后续优化：间接读换成 0x6B quad（QE 已置位）可到 ~12MB/s；prescaler 降到
+  1/2 可再翻倍（GD25Q64 支持 104MHz+ SCK）
+
+- 注意：普通 SPI（SPI0-2，`spi_gd32.c`）是另一组控制器，板上无外部器件；
+  SPI2 可从 BTB 排针引出（PC10/PC11/PC12/PA15），待需要时再启用验证
 
 ## 8. 已知待办 / 后续
 

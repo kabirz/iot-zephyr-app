@@ -14,8 +14,9 @@ CONFIG_GPIO=y
 
 CONFIG_PINCTRL=y
 
-# On-board peripherals (flash0/dma0/timer0-pwm/adc0/can2 enabled in the board dts)
+# On-board peripherals (flash0/ospi0-flash/dma0/timer0-pwm/adc0/can2 enabled in the board dts)
 CONFIG_FLASH=y
+CONFIG_FLASH_GD32_OSPI=y
 CONFIG_DMA=y
 CONFIG_PWM=y
 CONFIG_ADC=y

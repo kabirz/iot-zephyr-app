@@ -3,6 +3,8 @@
 #include <gd/gd32h7xx/gd32h759xx.dtsi>
 #include "gd32h759_btb-pinctrl.dtsi"
 #include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/memory-attr/memory-attr.h>
+#include <zephyr/dt-bindings/memory-attr/memory-attr-arm.h>
 
 / {
 	model = "EmbedFire GD32H759IMK6 BTB Board";
@@ -120,6 +122,34 @@
 	/* SIT1042AQT CAN transceiver on J8 (R37 120-ohm jumper optional) */
 	can-transceiver {
 		max-bitrate = <5000000>;
+	};
+};
+
+/* on-board GD25Q64ESIGR NOR flash (U7, 8MB) on OSPI0 port 0 */
+&ospi0 {
+	status = "okay";
+	pinctrl-0 = <&ospi0_default>;
+	pinctrl-names = "default";
+	size = <0x800000>;
+	jedec-id = [c8 40 17];
+};
+
+/ {
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		/* OSPI0 memory-mapped read window (quad fast read): direct
+		 * pointer reads only, erase/program stay indirect. Kept
+		 * non-cacheable: the OSPI AHB slave hangs on the D-cache
+		 * line-fill (wrapping burst) reads a cacheable attribute
+		 * would generate. */
+		ospi0_mm: ospi0-mm@90000000 {
+			compatible = "zephyr,memory-region";
+			reg = <0x90000000 0x800000>;
+			zephyr,memory-region = "OSPI0_MM";
+			zephyr,memory-attr = <(DT_MEM_ARM(ATTR_MPU_RAM_NOCACHE) | DT_MEM_NON_VOLATILE)>;
+		};
 	};
 };
 

@@ -23,4 +23,13 @@
 			pinmux = <CAN2_TX_PD13>, <CAN2_RX_PD12>;
 		};
 	};
+
+	/* OSPI0 port 0 to the on-board GD25Q64 NOR flash (U7) */
+	ospi0_default: ospi0_default {
+		group1 {
+			pinmux = <OSPIM_P0_SCK_PA3>, <OSPIM_P0_CSN_PB10>,
+				 <OSPIM_P0_IO0_PF8>, <OSPIM_P0_IO1_PF9>,
+				 <OSPIM_P0_IO2_PE2>, <OSPIM_P0_IO3_PA6>;
+		};
+	};
 };
