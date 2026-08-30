@@ -1,5 +1,48 @@
 # 数据采集卡 变更记录
 
+## v2.0.0（2026-08-30）
+
+- 发布标签：`v2.0.0-io-edge-hub`
+- 发布提交：`ee43979`
+- 提交时间：`2026-08-30 20:25:31 +0800`
+
+### 自 v0.2.1-io-edge-hub 以来的改动
+
+> 注：`v0.2.3-io-edge-hub` 是一次未完成的发版尝试（其 tag 指向的提交不在主干上，未产出镜像与文档），本版本直接承接 v0.2.1 之后的全部主干改动。
+
+- `c926cb2` RTC 时钟源由内部 LSI 改为 HSE/16 分频，提高走时精度（`applications/io-edge-hub/boards/io_edge_f407vet6.overlay`）
+- `1e07225` 新增可选 Web 管理界面：内置 HTTP 服务器 + WebSocket 实时通道，网页查看/控制 IO、修改配置，网页资源压缩后存放于 ROM 专用段（`applications/io-edge-hub/src/web/`）
+- `4afba83` 新增 `io` 调试 shell 命令组，可在线查看 DI/DO/AI 状态并修改采样配置（`applications/io-edge-hub/src/shell.c`）
+- `1129095` 源码目录按功能域重构拆分（history/io/settings/sys/web 等），设计文档更新至 v3.5（`applications/io-edge-hub/src/`）
+- `5b25bc2` Modbus TCP 会话超时改为 Kconfig 可选项且默认关闭，避免误踢长连接主站（`applications/io-edge-hub/Kconfig`、`src/modbus/tcp.c`）
+- `067d70c` 切换到个人 Zephyr fork 以获得 DTCM 网络内存池与 UART 修复，网络缓冲配置随之调整（`applications/io-edge-hub/prj.conf`、`boards/io_edge_f407vet6/`）
+- `39cf7fc` 历史记录写入效率优化，新增重启前数据同步；CAN 升级库配合增加同步接口（`applications/io-edge-hub/src/history/history.c`、`libs/can_fw_upgrade/`）
+- `a956b2a` Web 固件升级从 HTTP 迁移到 WebSocket 通道，Web UI 整体打磨，新增网页资源压缩脚本（`applications/io-edge-hub/src/web/`）
+- `a16e65c` UDP 固件升级新增 FW_DATA_V2 窗口化传输协议，升级更快更可靠，固件与主机工具两侧同步实现（`applications/io-edge-hub/prj.conf`、`tools/firmware_upgrade/`）
+- `54d9c72` CAN 固件升级支持双槽（dual-slot）MCUboot 布局，主机升级工具同步改进（`libs/can_fw_upgrade/can_fw_upgrade.c`、`tools/firmware_upgrade/`）
+- `0d17877` Web 升级前校验镜像 keyhash，新增网页端恢复出厂设置（`applications/io-edge-hub/src/web/`、`src/shell.c`）
+- `8c29b46` 修复 bootloader CAN 救援模式 START 帧超时问题（`libs/can_fw_upgrade/`）
+- `c390b3f` CAN 升级通道波特率改从持久化设置读取，与运行配置一致（`libs/can_fw_upgrade/`、`applications/io-edge-hub/src/settings/init.c`）
+- `5045fe7` 修复 CAN 波特率不匹配时 MCUboot 卡死的问题（`libs/can_fw_upgrade/`）
+- `c43db20` WebSocket OTA 在擦除 Flash 前先校验镜像 keyhash，校验失败不再破坏现有固件（`applications/io-edge-hub/src/web/ws_io.c`）
+- `ba50f94` 日志时间戳改用 RTC 时间并统一 UTC+8 时区（`applications/io-edge-hub/src/sys/time.c`）
+- `c81d7b3` 全部初始化顺序与线程优先级改为可通过 Kconfig 配置（`applications/io-edge-hub/Kconfig`）
+- `49d8759` 新增 UDP/CAN/WebSocket 三通道固件升级互斥锁，防止并发升级冲突（`applications/io-edge-hub/src/fw_upgrade_state.c`、`libs/can_fw_upgrade/`）
+- `1cb6878` 取消 Modbus TCP 客户端数量上限（`applications/io-edge-hub/src/modbus/tcp.c`）
+- `4ec10bf` 代码审查集中修复 7 项问题（历史记录、UDP 配置、WebSocket 通道等）（`applications/io-edge-hub/src/`）
+- `d0fe948` 全部 C 源码统一应用 clang-format 代码风格（`applications/io-edge-hub/src/` 全部源文件）
+- `e3f9133` 清理编译警告：删除死代码，板级 dts 补充 erase-block-size（`applications/io-edge-hub/src/modbus/tcp.c`、`boards/io_edge_f407vet6/`）
+- `4c57a2b` 历史记录重新使能时续写同一文件而不是新建文件（`applications/io-edge-hub/src/history/history.c`）
+- `aeb2bbf` 修复 FTP 大文件传输损坏，Web/Modbus/UDP 行为与 FreeRTOS 移植版对齐（`applications/io-edge-hub/src/ftp_server/ftpd.c` 等）
+- `d1e659e` 新增 CANopen 固件升级主机工具（CiA 302-2 协议，基于 python-canopen）（`tools/firmware_upgrade/canopen_fw_upgrade.py`）
+- `8e64206` 修复 CANopen 升级工具 CLI、异常处理与版本检查缺陷（`tools/firmware_upgrade/canopen_fw_upgrade.py`）
+- `8c717dc` CANopen 升级工具最终审查修复：回退逻辑、静态存储、测试排序（`tools/firmware_upgrade/canopen_fw_upgrade.py`）
+- `0425b37` CANopen 升级工具改用原始 SDO 访问，无需 EDS 文件即可工作（`tools/firmware_upgrade/canopen_fw_upgrade.py`）
+- `01b3636` CANopen 升级工具对 0x1F50/0x1F51 对象按 VAR（子索引 0）寻址，兼容更多从站实现（`tools/firmware_upgrade/canopen_fw_upgrade.py`）
+- `848a7f8` ADC 改为单次扫描读取，设备树改用共享通道模板简化配置（`applications/io-edge-hub/src/io/adc.c`、`boards/io_edge_f407vet6.overlay`）
+- `766959f` 修复固件升级锁的生命周期管理，Modbus 触发的重启延后到响应发送之后执行（`applications/io-edge-hub/src/fw_upgrade_state.c`、`src/modbus/function.c`、`src/web/ws_io.c`）
+- `425750d` history_sync 改经历史工作队列执行，避免阻塞调用线程（`applications/io-edge-hub/src/history/history.c`）
+
 ## v0.2.1（2026-08-16）
 
 - 发布标签：`v0.2.1-io-edge-hub`

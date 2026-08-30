@@ -150,7 +150,7 @@ class Archive(WestCommand):
             output_name = args.output
             if not output_name.endswith('.zip'):
                 output_name = f'{output_name}.zip'
-        self.zip_files(images_path.parent, build_dir/output_name)
+        self.zip_files(images_path, build_dir/output_name)
 
     def zip_files(self, paths: Path, out_zip_file: Path) -> None:
         self.inf(f'Files compressed into {out_zip_file}, List:')
