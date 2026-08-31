@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+# j1939-demo application configuration
+
+mainmenu "j1939-demo"
+
+source "Kconfig.zephyr"
+
+config J1939_DEMO_PREFERRED_ADDRESS
+	int "Preferred source address (SA)"
+	range 0 253
+	default 128
+	help
+	  J1939/81 首选源地址。0~253 中部分地址有行业约定
+	  (如 0=发动机 #1、3=变速箱 #1、40=仪表簇 #1),
+	  演示节点使用自由地址避免与真实 ECU 冲突。
+
+config J1939_DEMO_TX_PERIOD_MS
+	int "IO status broadcast period (ms)"
+	range 20 60000
+	default 1000
+
+config J1939_DEMO_BAM_EVERY_N
+	int "Send BAM extended status every N basic frames"
+	range 1 10000
+	default 5
+	help
+	  每发送 N 帧单帧 IO 状态 (PGN 65280) 后, 额外用
+	  J1939 TP BAM 发送一帧 16 字节扩展状态 (PGN 65281),
+	  演示 J1939/21 多包传输。
