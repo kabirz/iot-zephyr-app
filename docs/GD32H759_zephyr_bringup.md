@@ -366,12 +366,18 @@ HAL shim `gd32_enet.h`。
   （raw PPB 写 `ICIALLU`/`CCR.IC`，CMSIS 头在该 TU 不可靠）：
   **ping 4.7ms→0.6ms、TCP 下行 2.0→17.3Mbit/s、UDP 上行 2.0→15.2Mbit/s，
   全部 ~8 倍提升**，进入厂商 lwIP 同区间
-- **D-cache 实验失败 x2（待办）**：① 逐描述符缓存维护（RX 读前 invalidate/
-  写回 flush、TX 武装后 flush、start() 全环 flush）→ 链路建立后致命复位循环；
-  ② 驱动手写 MPU 非缓存区域（扫描空闲区域号 + D-cache）→ 同样复位循环。
-  主要嫌疑：**Zephyr 自身 MPU 管理（栈保护/线程域切换）运行时重写区域，
-  覆盖手写映射**。正确路径：`soc.c` 里经 arm_mpu 框架声明 SoC 级静态区域，
-  留待后续。描述符维护代码保留（无 D-cache 时为空操作）
+- **D-cache 实验失败 x3（已永久关闭）**：① 逐描述符缓存维护（RX 读前
+  invalidate/写回 flush、TX 武装后 flush、start() 全环 flush）→ 链路建立后
+  致命复位循环；② 驱动手写 MPU 非缓存区域（扫描空闲区域号 + D-cache）→
+  同样复位循环；③ **正规方案**（`soc_mpu_regions.c` 经
+  `CPU_HAS_CUSTOM_FIXED_SOC_MPU_REGIONS` 走 arm_mpu 框架声明 0x30000000
+  32KB 非缓存静态区域 + `SYS_INIT(POST_KERNEL)` 在 MPU 编程后开 I/D-cache）
+  → **直接硬砖**：SWD 无法连接（WAIT ACK），须 BOOT0 恢复。
+  ③ 的失败推翻了"MPU 区域被运行时覆盖"假设——框架区域确认被编程后仍砖，
+  根因另有其处（嫌疑：厂商完整 MPU 布局覆盖更多区域 / Zephyr 在本芯片上
+  开 D-cache 的其他前置未满足）。**结论：本板 D-cache 不再尝试**，
+  以 I-cache-only（ping 0.63ms / TCP 20.1Mbit/s / 全零丢包）为交付基线。
+  描述符维护代码保留（无 D-cache 时为空操作）
 - **TCP 窗口结论**：`NET_TCP_MAX_*_WINDOW_SIZE` 用默认 0（按缓冲池自动
   计算）最优——实测 18.8 Mbit/s；写死 16K=17.3，写死 64K 反而崩到 6.7
   （0 丢包 0 重传，纯窗口抖动病理，无 window scale 时 64K 上限也无意义）
