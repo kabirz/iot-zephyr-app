@@ -366,20 +366,24 @@ HAL shim `gd32_enet.h`。
   （raw PPB 写 `ICIALLU`/`CCR.IC`，CMSIS 头在该 TU 不可靠）：
   **ping 4.7ms→0.6ms、TCP 下行 2.0→17.3Mbit/s、UDP 上行 2.0→15.2Mbit/s，
   全部 ~8 倍提升**，进入厂商 lwIP 同区间
-- **D-cache 实验失败（待办）**：D-cache + 逐描述符缓存维护（RX 读前
-  invalidate/写回 flush、TX 武装后 flush、start() 全环 flush）仍会在链路
-  建立后硬错误复位循环。厂商做法是 **MPU 把 0x30000000 描述符区设为
-  非缓存映射**再开 D-cache——需要 board 层 MPU 配置，留待后续。描述符维护
-  代码已保留（无 D-cache 时为空操作）
+- **D-cache 实验失败 x2（待办）**：① 逐描述符缓存维护（RX 读前 invalidate/
+  写回 flush、TX 武装后 flush、start() 全环 flush）→ 链路建立后致命复位循环；
+  ② 驱动手写 MPU 非缓存区域（扫描空闲区域号 + D-cache）→ 同样复位循环。
+  主要嫌疑：**Zephyr 自身 MPU 管理（栈保护/线程域切换）运行时重写区域，
+  覆盖手写映射**。正确路径：`soc.c` 里经 arm_mpu 框架声明 SoC 级静态区域，
+  留待后续。描述符维护代码保留（无 D-cache 时为空操作）
+- **TCP 窗口结论**：`NET_TCP_MAX_*_WINDOW_SIZE` 用默认 0（按缓冲池自动
+  计算）最优——实测 18.8 Mbit/s；写死 16K=17.3，写死 64K 反而崩到 6.7
+  （0 丢包 0 重传，纯窗口抖动病理，无 window scale 时 64K 上限也无意义）
 - **带宽实测汇总**（I-cache 使能后；bench 工具：`apps/examples/eth-echo/
   src/bwtest.c` TCP 双模式端点 + `src/bench_shell.c` UDP 基准 shell，
   分别移植自 io-edge-hub 和 n2e-gw）：
   - **ICMP**：56B RTT 0.65-1.5ms / 1400B 0.9-1.7ms，0 丢包
-  - **TCP 下行（sink 模式，板只收）**：**17.3 Mbit/s**（2.06 MB/s），8MB 零断连
-  - **TCP 双向 echo**：**7.0 Mbit/s 单向**（合计 14），8MB 零丢失 0 重传
+  - **TCP 下行（sink 模式，板只收）**：**18.8 Mbit/s**（2.24 MB/s），8MB 零断连
+  - **TCP 双向 echo**：**7.1 Mbit/s 单向**，8MB 零丢失 0 重传
     （⚠️ echo 应用线程必须低于栈优先级：prio 0 的 main 线程收发死循环会把栈
     饿死、TX 池耗尽 send 返回 ENOBUFS 断连；bwtest 用 prio 15 跑 8MB 稳定）
-  - **UDP 上行（`bench tx`）**：1024B **1855 pps（15.2 Mbit/s）**，1000 包
+  - **UDP 上行（`bench tx`）**：1024B **1872 pps（15.3 Mbit/s）**，1000 包
     0 丢包 0 乱序（seq 校验）
   - **UDP 下行（`bench rx` 限速）**：1000pps 输入实收 787pps（6.4 Mbit/s）；
     线速 94Mbps 洪泛仍接近全丢（栈 UDP 投递层饱和，非驱动）
