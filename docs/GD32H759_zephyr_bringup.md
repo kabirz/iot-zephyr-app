@@ -355,6 +355,36 @@ HAL shim `gd32_enet.h`。
      突发时逐帧循环永不阻塞会把栈饿死（0.06Mbps）。驱动加了 `ETH_GD32_RX_BATCH`
      （默认 8）限批排水。**注意 `k_yield()` 救不了饿死**：它只让给同优先级线程，
      prio 4 的排水循环期间 prio 5 的栈依然拿不到 CPU；必须靠阻塞（信号量）让出
+- **⚠️ 坑六（性能根因）：从未使能 I-cache，全系统慢 ~10 倍**。初期实测
+  ping RTT 4-5ms、TCP 只有 ~2Mbit/s，一度误判为"Zephyr 栈每包 ~4ms 成本的
+  天花板"——**错误结论**。自包含分段计时插装（`gdeth stat` 的
+  alloc/copy/recv 字段）发现 `net_pkt` 池分配要 368µs、98B 拷贝 3.4µs/字节、
+  ICMP echo 构造 1.35ms——全是代码密集路径；pyocd 采样 78% 落在
+  `arch_cpu_idle`（CPU 闲着）+ 分段总和超过 RTT（TC 线程内联抢占）→ 定位到
+  **600MHz M7 无缓存跑 flash 取指全在吃 wait states**（此前 CCR 读出 cache
+  一直是关的；厂商 BSP 明确使能 I/D-cache）。驱动 init 里使能 I-cache 后
+  （raw PPB 写 `ICIALLU`/`CCR.IC`，CMSIS 头在该 TU 不可靠）：
+  **ping 4.7ms→0.6ms、TCP 下行 2.0→17.3Mbit/s、UDP 上行 2.0→15.2Mbit/s，
+  全部 ~8 倍提升**，进入厂商 lwIP 同区间
+- **D-cache 实验失败（待办）**：D-cache + 逐描述符缓存维护（RX 读前
+  invalidate/写回 flush、TX 武装后 flush、start() 全环 flush）仍会在链路
+  建立后硬错误复位循环。厂商做法是 **MPU 把 0x30000000 描述符区设为
+  非缓存映射**再开 D-cache——需要 board 层 MPU 配置，留待后续。描述符维护
+  代码已保留（无 D-cache 时为空操作）
+- **带宽实测汇总**（I-cache 使能后；bench 工具：`apps/examples/eth-echo/
+  src/bwtest.c` TCP 双模式端点 + `src/bench_shell.c` UDP 基准 shell，
+  分别移植自 io-edge-hub 和 n2e-gw）：
+  - **ICMP**：56B RTT 0.65-1.5ms / 1400B 0.9-1.7ms，0 丢包
+  - **TCP 下行（sink 模式，板只收）**：**17.3 Mbit/s**（2.06 MB/s），8MB 零断连
+  - **TCP 双向 echo**：**7.0 Mbit/s 单向**（合计 14），8MB 零丢失 0 重传
+    （⚠️ echo 应用线程必须低于栈优先级：prio 0 的 main 线程收发死循环会把栈
+    饿死、TX 池耗尽 send 返回 ENOBUFS 断连；bwtest 用 prio 15 跑 8MB 稳定）
+  - **UDP 上行（`bench tx`）**：1024B **1855 pps（15.2 Mbit/s）**，1000 包
+    0 丢包 0 乱序（seq 校验）
+  - **UDP 下行（`bench rx` 限速）**：1000pps 输入实收 787pps（6.4 Mbit/s）；
+    线速 94Mbps 洪泛仍接近全丢（栈 UDP 投递层饱和，非驱动）
+  - 结论：驱动层（0 丢包 0 重传）不是瓶颈；当前上限是栈逐包处理 + 单核
+    软中断模型，D-cache/MPU 是下一个提升点
 - **⚠️ NAPI 式 RX 中断屏蔽实验（已否决，数据留档）**：曾把 ISR 改成 RS 时屏蔽
   RIE/RBUIE、RX 线程排空后重挂（每批一次中断而非每帧一次）。洪泛时中断数确实
   大降（RBU 4.2万→607），但 **大帧延迟恒定 +10ms**（1400B ping 4.9→14.9ms，
