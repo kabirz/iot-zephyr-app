@@ -375,6 +375,15 @@ HAL shim `gd32_enet.h`。
 - **TCP 窗口结论**：`NET_TCP_MAX_*_WINDOW_SIZE` 用默认 0（按缓冲池自动
   计算）最优——实测 18.8 Mbit/s；写死 16K=17.3，写死 64K 反而崩到 6.7
   （0 丢包 0 重传，纯窗口抖动病理，无 window scale 时 64K 上限也无意义）
+- **同硬件厂商固件对比（定标）**：厂商 ENET_LWIP 例程（gcc 交叉编译 + 我加的
+  sink 端点，其余保持原版：I/D-cache + MPU 非缓存 SRAM + lwIP 原版参数——
+  窗口仅 2×MSS、堆 15KB 在非缓存 SRAM1）：**ping 0.13ms、TCP 下行 63.8 Mbit/s**
+  （8MB 零丢失，板端精确对账）。即本板硬件上限 ~64 Mbit/s，Zephyr 当前 20.1
+  为其 1/3；差距主因 **D-cache 未开**（厂商靠 MPU 分区后全速开），次因
+  Zephyr 栈逐包成本（线程/锁/net_pkt vs lwIP raw 轮询）。驱动 DMA 层不是
+  瓶颈（同一套 MAC+描述符，厂商能到 63.8）。
+  ⚠️ 厂商 lwIP 堆必须待在 0x30004000 非缓存 SRAM1——挪到缓存 .bss 立即
+  DMA 一致性崩溃（教科书案例：靠内存分区而非缓存维护解决一致性）
 - **带宽实测汇总**（I-cache 使能后；bench 工具：`apps/examples/eth-echo/
   src/bwtest.c` TCP 双模式端点 + `src/bench_shell.c` UDP 基准 shell，
   分别移植自 io-edge-hub 和 n2e-gw）：
