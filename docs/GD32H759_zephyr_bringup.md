@@ -389,6 +389,19 @@ HAL shim `gd32_enet.h`。
 - **TCP 窗口结论**：`NET_TCP_MAX_*_WINDOW_SIZE` 用默认 0（按缓冲池自动
   计算）最优——实测 18.8 Mbit/s；写死 16K=17.3，写死 64K 反而崩到 6.7
   （0 丢包 0 重传，纯窗口抖动病理，无 window scale 时 64K 上限也无意义）
+- **缓存 A/B/C 定标矩阵（厂商固件同协议实测）**：
+  | 配置 | ping 56B | TCP 下行 |
+  |---|---|---|
+  | I+D 全开 | 0.204ms | 63.88 Mbit/s |
+  | 仅 I-cache | 0.204ms | 63.88 Mbit/s |
+  | 双关 | 1.17ms | 14.71 Mbit/s |
+  结论：**I-cache 是 600MHz 下必需品**（无它 lwIP 也掉 4.3 倍，证实 Zephyr
+  侧 8-10 倍惩罚为真且方向一致）；**D-cache 对网络吞吐贡献为零**（推翻
+  "Zephyr 差距主因是 D-cache"的归因）。**Zephyr(20.1) vs 厂商(63.9) 的
+  3.2 倍差距在两者都有 I-cache 的公平对比下 = 100% 协议栈/驱动架构成本**
+  （lwIP raw 轮询 vs Zephyr net_pkt/线程/socket 层）。Zephyr 侧常规优化
+  （零拷贝 RX、硬件校验和卸载、缓冲精调）预期 30-40 Mbit/s；63.8 需要
+  lwIP raw 级栈架构。
 - **同硬件厂商固件对比（定标）**：厂商 ENET_LWIP 例程（gcc 交叉编译 + 我加的
   sink 端点，其余保持原版：I/D-cache + MPU 非缓存 SRAM + lwIP 原版参数——
   窗口仅 2×MSS、堆 15KB 在非缓存 SRAM1）：**ping 0.13ms、TCP 下行 63.8 Mbit/s**
