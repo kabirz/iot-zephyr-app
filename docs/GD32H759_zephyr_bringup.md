@@ -373,11 +373,19 @@ HAL shim `gd32_enet.h`。
   `CPU_HAS_CUSTOM_FIXED_SOC_MPU_REGIONS` 走 arm_mpu 框架声明 0x30000000
   32KB 非缓存静态区域 + `SYS_INIT(POST_KERNEL)` 在 MPU 编程后开 I/D-cache）
   → **直接硬砖**：SWD 无法连接（WAIT ACK），须 BOOT0 恢复。
-  ③ 的失败推翻了"MPU 区域被运行时覆盖"假设——框架区域确认被编程后仍砖，
-  根因另有其处（嫌疑：厂商完整 MPU 布局覆盖更多区域 / Zephyr 在本芯片上
-  开 D-cache 的其他前置未满足）。**结论：本板 D-cache 不再尝试**，
-  以 I-cache-only（ping 0.63ms / TCP 20.1Mbit/s / 全零丢包）为交付基线。
-  描述符维护代码保留（无 D-cache 时为空操作）
+  ③ 的失败推翻了"MPU 区域被运行时覆盖"假设——框架区域确认被编程后仍砖。
+  ④ `CONFIG_MPU_STACK_GUARD=n` + 运行时开关（`gdeth dcache on`）：
+  **空闲完美存活，ping 0.231ms**（达到厂商延迟水平！），但突发流量下
+  渐进性死亡（先串口/printk 冻结，后网络）——证明栈保护的动态 MPU 改写
+  是 lockup 的一个根因，但不是全部；⑤ 厂商内存模型完整移植（描述符+TX
+  缓冲 SRAM0、RX 缓冲 SRAM1、全 DMA 流量进非缓存窗口、零缓存维护、
+  双缓存启动使能）→ 启动后 2 秒内同样静默死亡。
+  **八轮实验结论：D-cache 只要系统有真实活动（初始化风暴/网络突发）就会
+  在数秒内静默死亡，与内存模型/MPU 配置/使能时机/维护策略无关；空闲时
+  完美（0.23ms ping 证明潜力）。根因在本驱动配置之外**（硅 errata /
+  fork 架构层 / 未知前置条件），需专门调查（J-Link 跟踪、逐优先级心跳
+  转储），不再以换配置方式尝试。**以 I-cache-only（ping 0.63ms /
+  TCP 20.1Mbit/s / 全零丢包）为交付基线**
 - **TCP 窗口结论**：`NET_TCP_MAX_*_WINDOW_SIZE` 用默认 0（按缓冲池自动
   计算）最优——实测 18.8 Mbit/s；写死 16K=17.3，写死 64K 反而崩到 6.7
   （0 丢包 0 重传，纯窗口抖动病理，无 window scale 时 64K 上限也无意义）
