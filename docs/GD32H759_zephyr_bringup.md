@@ -322,26 +322,64 @@ HAL shim `gd32_enet.h`。
 - **诊断技巧**：RSTSTS（RCU+0x74）看复位原因；DEMCR=0x400 开 hard-fault 向量捕获；
   attach 模式 pyocd 会话可不停机读内存；`verify` 必做——**HW-Link_LITE 烧写
   静默失败概率不低，未 verify 的"成功"烧录会浪费一轮测量**
-- **⚠️ 延迟根因：ENET 完成中断使能后中断线风暴（已解决）**。初版驱动
-  ping RTT 3-6s 且随包间隔缩放（洪泛 0.35s+丢包）。用厂商 ENET_LWIP 例程
-  （cmake+gcc 交叉编译烧同一块板）对比：RTT 0.13-0.5ms、0 丢包 → 硬件无问题。
-  逐项对齐厂商配置（描述符/缓冲放 **SRAM0 0x30000000**、chain 模式描述符、
-  存储转发），仍滞后；最终确认 **INTEN 使能完成中断后中断线反复重挂形成
-  风暴，RX 线程被饿死**。厂商 BSP 本来就纯轮询不用 ENET 中断。现驱动
-  `INTEN=0` 纯轮询（RX 线程 2ms 走环 + TX 轮询描述符 DAV），实测
-  ping RTT 4-10ms、洪泛 0 丢包、TCP echo 正常。中断风暴的确切机理
-  （多 bit 写清除 vs 单 bit？某中断源行为？）待后续定位
-- **SRAM0 放置**：ENET 描述符/帧缓冲必须放 0x30000000 外设 SRAM
-  （厂商 scatter 同样放置；`section("SRAM0")` 即可，DT 内存域已定义），
-  驱动用 BUILD_ASSERT 保证不超 16KB 预算
+- **⚠️ 延迟根因（两阶段定位，均已修复）**：
+  - **第一阶段（SRAM0 + 轮询规避）**：初版驱动 ping RTT 3-6s 且随包间隔缩放。
+    厂商 ENET_LWIP 例程（cmake+gcc 交叉编译烧同板）RTT 0.13-0.5ms → 硬件无问题。
+    对齐厂商配置（描述符/缓冲放 **SRAM0 0x30000000**、chain 描述符、存储转发）后
+    仍滞后，当时改为 `INTEN=0` 纯轮询规避，RTT 4-10ms。
+  - **第二阶段（风暴根因 = TBU）**：借 `gdeth` 诊断 shell（`CONFIG_ETH_GD32_IRQ_TEST`，
+    运行时改 INTEN + ISR 按位计数）+ pyocd 挂起采样 **IPSR=77（IRQ61）实锤 CPU 卡死在
+    ENET ISR 内循环**；挂起态读 `DMA_STAT=0x00670404`：置位的只有 **TBU(bit2)+ET**，
+    **NI/AI 汇总位都没置**。结论：这颗 IP 的中断线是 **(STAT & INTEN) 逐位相或**，
+    汇总位只是摆设不是闸门；且 **TBU 属于 NORMAL 汇总**（STM32F4 语义里是 abnormal，
+    惯性思维坑）。单描述符 TX 链表每发完一帧 DMA 必报一次 TBU（本 IP 的正常行为），
+    旧 ISR 只在 AI 分支清 TBU → AI 永不置位 → **TBU 永远清不掉 → 中断线永久挂起 →
+    ISR 无限重入**。修复：ISR 对每个已使能源**无条件清除**（TBU 只清不发 TPEN），
+    MSC/WUM/TST 镜像位去 MAC/MSC 源寄存器清。修复后中断驱动全开：
+    200 ping 全收 0 丢包、每 ping 恰好 RS+TS/TBU/ET（计数完全对称）、residual=0。
+  - **附加发现**：MSC 统计中断源复位默认不屏蔽（RINTMSK 复位值 0x20060），
+    驱动 start 时用 RMW 全部屏蔽；MSC/MAC 标志寄存器疑似只认单 bit 写清除
+    （厂商库 `enet_interrupt_flag_clear` 也是单 bit 写）。
+- **SRAM0 放置（修正）**：**描述符**必须在 0x30000000 外设 SRAM（`section("SRAM0")`），
+  但**帧缓冲不必**——当年"缓冲也必须 SRAM0"的结论实为 TBU 风暴的误诊：D-cache 开启后
+  只要做缓存维护（`CONFIG_CACHE_MANAGEMENT=y`，驱动 RX invalidate/TX flush），
+  缓冲放普通 RAM 即可，16KB SRAM0 限制解除后 RX 环可扩到 32 描述符
+- **Zephyr 网络栈 TCP 调优（与驱动无关但很坑）**：
+  1. `NET_BUF_DATA_SIZE` 默认 128B → 1460B 段要 12 个 buf，RX 池 36 个只够 3 段
+     在途，**≥4KB 传输必卡**（表象与驱动丢包一模一样！）。调 512B/1536B + 池扩容
+  2. **echo 类应用板端要关 Nagle**（`TCP_NODELAY`），否则逐段等 ACK 串行化（~20ms/段）
+  3. **收发双向大流量会把 Zephyr 栈缓冲池耗尽**（板端 send 返回 ENOBUFS=105 主动断连，
+     主机表象为固定字节处断开），且半死连接会把单线程 echo 服务卡住——测试客户端
+     一定要干净关闭、测前复位板子
+  4. RX 线程优先级必须高于栈线程（否则环溢出丢 ACK），但**不能只高不睡**——
+     突发时逐帧循环永不阻塞会把栈饿死（0.06Mbps）。驱动加了 `ETH_GD32_RX_BATCH`
+     （默认 8）限批排水。**注意 `k_yield()` 救不了饿死**：它只让给同优先级线程，
+     prio 4 的排水循环期间 prio 5 的栈依然拿不到 CPU；必须靠阻塞（信号量）让出
+- **⚠️ NAPI 式 RX 中断屏蔽实验（已否决，数据留档）**：曾把 ISR 改成 RS 时屏蔽
+  RIE/RBUIE、RX 线程排空后重挂（每批一次中断而非每帧一次）。洪泛时中断数确实
+  大降（RBU 4.2万→607），但 **大帧延迟恒定 +10ms**（1400B ping 4.9→14.9ms，
+  线性 ~7.4µs/字节，与帧长成正比）、TCP echo 吞吐减半（0.84→0.35Mbps）。
+  A/B 复测确认元凶就是 **RS 时写 INTEN 的 RMW**（本 IP 上该写法会拖慢 DMA 管线，
+  机理未深究）。最终驱动**不做 RS 屏蔽**，保留每帧一次 RS + **RBU 连发退避**
+  （连续 16 次 RBU 无 RS 则临时屏蔽 RBUIE，排水后重挂）：洪泛中断 4.2万→5千，
+  延迟/吞吐与无退避版持平。`gdeth stat`（`CONFIG_ETH_GD32_IRQ_TEST`）可查
+  `isr->thread` 唤醒延迟和 `copy_cyc` 每字节拷贝成本（实测 ~55 cyc/byte）
 
 ## 8. 已知待办 / 后续
 
-- [ ] 以太网：ENET 中断风暴的确切机理（现驱动纯轮询已规避，性能够用；
-      若需中断驱动可先单 bit 写清除 + 逐个中断源二分定位）
+- [x] 以太网：ENET 中断风暴根因已定位（TBU 属 NORMAL 汇总且未被 ISR 清除，
+      中断线 = STAT & INTEN 逐位相或，汇总位不是闸门），已修复并恢复中断驱动
+- [x] 以太网：终版驱动实测（中断驱动 + 每帧 RS + RBU 退避 + 批处理排水 prio 4
+      + 32 描述符 + 缓冲出 SRAM0 + CACHE_MANAGEMENT + 1536B net_buf）：
+      ping 56B 4.2ms / 1400B 5.2ms 均 0 丢包；TCP echo 64KB 0.84Mbps；
+      洪泛中断 5k/5s。NAPI 屏蔽方案已否决（见上文）
+- [ ] 以太网：TCP echo 256KB+ 在板端 TX 池耗尽处（49 个未 ACK 段）板端 send
+      返回 ENOBUFS 主动断连——Zephyr 栈 send 不阻塞的问题，待应用层重试或
+      `NET_PKT_TX_COUNT` 加大验证
+- [x] Cache：`CONFIG_CACHE_MANAGEMENT` 已开（ENET DMA 缓冲维护用）；整体
+      I/D-cache 性能收益待测
 - [ ] flash 驱动：H7 FMC 需新的 `flash_gd32_v4` 变体（当前 flash 节点为普通 `soc-nv-flash`，
       Zephyr 的 GD32 flash 驱动未启用）
-- [ ] Cache（I/D-Cache）与 DWT 实测：当前 caches 未启用（`CONFIG_CACHE_MANAGEMENT` 未开）
 - [ ] GPIO J/K 端口（H7 最多到 PK，当前设备树只挂了 A-H，本板 BGA176 用不到 J/K）
 - [ ] 其余外设驱动逐个启用：SPI/I2C/TIMER/PWM/DMA/ADC/TRNG（时钟 ID 已在 `gd32h7xx-clocks.h`
       预置了 TIMER0-6/SPI0/I2C0/1）

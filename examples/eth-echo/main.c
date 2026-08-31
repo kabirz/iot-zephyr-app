@@ -53,7 +53,7 @@ int main(void)
 
 	while (true) {
 		int client = zsock_accept(srv, NULL, 0);
-		uint8_t buf[512];
+		uint8_t buf[1400];
 
 		if (client < 0) {
 			LOG_WRN("zsock_accept() failed: %d", errno);
@@ -62,13 +62,22 @@ int main(void)
 		}
 
 		LOG_INF("client connected");
+		/* No Nagle: the echo loop writes one segment per recv, and a
+		 * Nagle pause per segment serialises the whole transfer. */
+		int nodelay = 1;
+		(void)zsock_setsockopt(client, IPPROTO_TCP, TCP_NODELAY,
+				       &nodelay, sizeof(nodelay));
 		while (true) {
 			int n = zsock_recv(client, buf, sizeof(buf), 0);
 
 			if (n <= 0) {
+				if (n < 0) {
+					LOG_ERR("recv failed: %d", errno);
+				}
 				break;
 			}
 			if (zsock_send(client, buf, n, 0) < 0) {
+				LOG_ERR("send failed: %d", errno);
 				break;
 			}
 		}
