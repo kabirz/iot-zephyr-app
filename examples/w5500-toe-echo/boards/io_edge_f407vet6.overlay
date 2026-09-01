@@ -1,5 +1,7 @@
-/* W5500 TOE example: SPI2 (SCK=PB13, MISO=PB14, MOSI=PB15, CS=PB12), RST=PD0.
- * The INT pin (PD1) is unused: the driver polls socket readiness. */
+/* W5500 TOE example: SPI2 (SCK=PB13, MISO=PB14, MOSI=PB15, CS=PB12),
+ * RST=PD0, INT=PD1 (active low: drives microsecond readiness wakeups,
+ * listener promotion/re-arm and blocked-op wakeups; falls back to the
+ * 4 ms poll when absent). */
 
 &spi2 {
 	pinctrl-0 = <&spi2_sck_pb13 &spi2_miso_pb14 &spi2_mosi_pb15>;
@@ -12,6 +14,7 @@
 		reg = <0>;
 		spi-max-frequency = <21000000>;
 		reset-gpios = <&gpiod 0 GPIO_ACTIVE_LOW>;
+		int-gpios = <&gpiod 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 		local-mac-address = [00 08 DC 01 02 03];
 		local-ip = "192.168.12.200";
 		netmask = "255.255.255.0";
@@ -19,3 +22,4 @@
 		status = "okay";
 	};
 };
+

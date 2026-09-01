@@ -36,10 +36,11 @@ config W5500_TOE_POLL_PERIOD_MS
 	default 4
 	depends on W5500_TOE
 	help
-	  Period of the delayed-work notifier that raises poll signals
-	  and wakes blocked socket operations. Blocking operations are
-	  correct regardless of this value (bounded slice re-checks);
-	  it only affects wakeup latency and poll() responsiveness.
+	  Period of the delayed-work notifier, used ONLY when the
+	  devicetree node has no int-gpios wired. When the W5500 INTn
+	  pin is wired, readiness is purely interrupt-driven (the
+	  Sn_IR_CON/RECV/DISCON/TIMEOUT events wake everything in
+	  microseconds) and no recurring work runs at all.
 
 config W5500_TOE_LOG_LEVEL
 	int "Log level"

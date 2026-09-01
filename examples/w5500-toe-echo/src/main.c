@@ -72,7 +72,7 @@ int main(void)
 		}
 
 		inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
-		LOG_INF("connected: %s:%u", ip, ntohs(peer.sin_port));
+		LOG_DBG("connected: %s:%u", ip, ntohs(peer.sin_port));
 
 		while ((n = recv(conn, buf, sizeof(buf), 0)) > 0) {
 			int off = 0;
@@ -91,7 +91,7 @@ int main(void)
 			}
 		}
 
-		LOG_INF("peer gone (recv=%d errno=%d), closing", n, n < 0 ? errno : 0);
+		LOG_DBG("peer gone (recv=%d errno=%d), closing", n, n < 0 ? errno : 0);
 		close(conn); /* hard close: instantly re-accept the next client */
 	}
 

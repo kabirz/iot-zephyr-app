@@ -22,6 +22,14 @@ properties:
     description: |
       Reset pin (active low). When absent the chip is soft-reset through
       the MR register instead.
+  int-gpios:
+    type: phandle-array
+    required: false
+    description: |
+      INTn pin (active low). When wired, socket events (connect, data,
+      disconnect, timeout) drive readiness through interrupts with no
+      periodic polling; when absent the driver falls back to a delayed-
+      work poll (CONFIG_W5500_TOE_POLL_PERIOD_MS).
   local-mac-address:
     type: uint8-array
     required: false
