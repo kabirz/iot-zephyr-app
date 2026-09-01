@@ -150,6 +150,18 @@
 	status = "okay";
 };
 
+/* USBHS0 (DesignWare DWC2 OTG core) wired to the USB OTG connector.
+ * The embedded full-speed PHY uses the dedicated DP/DM pins; no pinctrl.
+ * CDC ACM class instance for the host side. */
+zephyr_udc0: &usbhs0 {
+	status = "okay";
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "CDC_ACM_0";
+	};
+};
+
 / {
 	reserved-memory {
 		#address-cells = <1>;
