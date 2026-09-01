@@ -1,0 +1,48 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Wiznet W5500 Ethernet controller driven in hardware TCP/IP offload (TOE)
+  mode: the chip's 8 hardware sockets run ARP/ICMP/TCP/UDP in silicon and
+  are exposed through Zephyr's socket offload API (native IP stack unused).
+
+  Mutually exclusive with the in-tree MACRAW driver ("wiznet,w5500" in
+  zephyr/drivers/ethernet/eth_w5500.c): a board picks exactly one compatible
+  for its W5500 node, and Kconfig (W5500_TOE depends on !ETH_W5500) keeps
+  the two drivers from being enabled together.
+
+compatible: "wiznet,w5500-toe"
+
+include: [spi-device.yaml]
+
+properties:
+  reset-gpios:
+    type: phandle-array
+    required: false
+    description: |
+      Reset pin (active low). When absent the chip is soft-reset through
+      the MR register instead.
+  local-mac-address:
+    type: uint8-array
+    required: false
+    description: |
+      6-byte MAC address. When absent the driver generates one from the
+      Wiznet OUI (00:08:DC) plus random node bytes.
+  local-ip:
+    type: string
+    required: false
+    description: |
+      Static IPv4 address programmed into the chip (SIPR). Defaults to
+      CONFIG_W5500_TOE_DEFAULT_IP.
+  netmask:
+    type: string
+    required: false
+    description: |
+      Subnet mask programmed into the chip (SUBR). Defaults to
+      CONFIG_W5500_TOE_DEFAULT_NETMASK.
+  gateway:
+    type: string
+    required: false
+    description: |
+      Gateway programmed into the chip (GAR). Defaults to
+      CONFIG_W5500_TOE_DEFAULT_GATEWAY.

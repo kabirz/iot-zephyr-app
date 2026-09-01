@@ -1,0 +1,49 @@
+# W5500 hardware TCP/IP offload (TOE) socket driver
+
+config W5500_TOE
+	bool "W5500 hardware TCP/IP offload (TOE) socket driver"
+	depends on DT_HAS_WIZNET_W5500_TOE_ENABLED
+	depends on SPI
+	depends on !ETH_W5500
+	depends on NET_SOCKETS
+	select NET_SOCKETS_OFFLOAD
+	select NET_SOCKETS_OFFLOAD_DISPATCHER
+	help
+	  Drive the W5500 with its on-chip TCP/IP engine (8 hardware
+	  sockets, ARP/ICMP/TCP/UDP in silicon) through the socket
+	  offload API, bypassing the native Zephyr IP stack entirely.
+
+	  Mutually exclusive with the in-tree MACRAW driver
+	  (ETH_W5500): both bind the same chip, one via the
+	  "wiznet,w5500" compatible (MACRAW + native stack), the other
+	  via "wiznet,w5500-toe" (hardware stack). Only one of the two
+	  can be enabled in a build.
+
+	  Limitations: IPv4 only, no TLS, 8 sockets total, static IP
+	  from devicetree (local-ip/netmask/gateway) or Kconfig
+	  defaults.
+
+config W5500_TOE_INIT_PRIORITY
+	int "Init priority"
+	default 70
+	depends on W5500_TOE
+	help
+	  Device init priority. Must run after the SPI and GPIO
+	  controllers (POST_KERNEL).
+
+config W5500_TOE_POLL_PERIOD_MS
+	int "Socket readiness poll period (ms)"
+	default 4
+	depends on W5500_TOE
+	help
+	  Period of the delayed-work notifier that raises poll signals
+	  and wakes blocked socket operations. Blocking operations are
+	  correct regardless of this value (bounded slice re-checks);
+	  it only affects wakeup latency and poll() responsiveness.
+
+config W5500_TOE_LOG_LEVEL
+	int "Log level"
+	default 3
+	depends on W5500_TOE
+	help
+	  0=none 1=err 2=wrn 3=inf 4=dbg.

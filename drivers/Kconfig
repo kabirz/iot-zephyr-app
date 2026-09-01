@@ -1,5 +1,6 @@
 menu "Custom Device Drivers"
 
 rsource "nrf24l01p/Kconfig"
+rsource "w5500_toe/Kconfig"
 
 endmenu
