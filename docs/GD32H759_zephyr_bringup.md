@@ -472,12 +472,40 @@ HAL shim `gd32_enet.h`。
 - 设备域寄存器是标准 DCFG@0x800/DCTL@0x804/DSTAT@0x808（与厂商结构体一致），
   调试工具用错偏移（STM32 旧式 0x80C/0x810）会得出"寄存器写不进"的错误结论
 
-### 实测结果
+### 实测结果（device_next / USBD 栈，当前方案）
 
-- 主机 xhci 枚举：`28e9:0575` "EmbedFire GD32H759 BTB"（序列号来自 hwinfo UID），
+> legacy `usb/device` 栈（`usb_dc_dw` + 提交 87f6a63c94e 的适配）曾先行打通并验证，
+> 但该栈已废弃、Zephyr 4.5 将移除；现行方案为 `usb/device_next`（USBD/UDC），
+> 见提交 2abd830a435。legacy 驱动适配保留在树中供其他板使用。
+
+- 主机 xhci 枚举：`28e9:0575` "EmbedFire GD32H759 BTB CDC ACM"（序列号来自 hwinfo UID），
   `cdc_acm` 绑定出 `/dev/ttyACM1`
 - DTR 握手 + 回环：16 × 1040B 往返零丢失
-- 调试入口：app 里 `gdusb dump|fs|pwron|dev|connect`（usb_dump.c）
+- 示例：`apps/examples/usb-cdc-acm`（USBD_DEVICE_DEFINE + FS 配置 + 中断驱动回环）
+
+### device_next（UDC DWC2 驱动）额外踩的坑（都已修复在提交 2abd830a435）
+
+- **GHWCFGn 硬件读零时回退 DT 值**：UDC 驱动运行时大量读 GHWCFG1-4（端点方向/DMA/
+  FIFO 模式/深度），全零会直接 -ENOTSUP；绑定加了 `ghwcfg3` 可选属性 + 驱动回退逻辑，
+  dtsi 写入推导值（0x500 / 0x1506 / 0x04000024 / 0x16200000）
+- **GHWCFG2 位算错一位 = 无上拉**：0x1566 里 bit6 使 HSPHYTYPE=UTMI+，驱动走 HS 分支
+  时 `PHYSEL_USB20` 会主动清 bit6（EMBPHY_FS）→ FS PHY 关闭 → 主机完全看不到设备。
+  正确值 0x1506（FSPHYTYPE=1、HSPHYTYPE=0）
+- **PWRCLKCTL 必须在控制器 init 前清零**（quirk pre_enable）：否则端点激活路径里的
+  FIFO 冲刷会永久挂起（等 RXFFLSH 自清）
+- **RXFFLSH/TXFFLSH 不自清**：两个冲刷等待都加了 1000µs 有界等待（FIFO 本来为空，
+  冲刷未完成无碍，legacy 同样处理）
+- **TRDT(USBTNR) 被通用 init 清零**：`udc_dwc2_init_controller` 整体重写 GUSBCS，
+  厂商库用 `|=` 保留复位默认值 TRDT=5；quirk post_enable 恢复，否则主机报
+  `error -71`（EPROTO）
+- **INEPNAKEFF 是电平黏滞位**：bus reset 时驱动把 DIEPINT_INEPNAKEFF 开进 diepmsk，
+  而 EP0 空闲 NAK 生效是常态 → GINTSTS.IEPINT 永久置位 → ISR 活锁（整机冻死，
+  GDB 抓到 PC 卡在 `udc_dwc2_isr_handler` 读 DAINT 循环）。修复：diepmsk 去掉
+  INEPNAKEFF（厂商库只开 XFERCOMPL），IEPINT/OEPINT 处理改为清全部挂起位
+- **调试工具**：probe-rs 的 gdb stub 只能读 RAM/Flash 不能读外设；pyocd 停机后可以
+  （`pyocd cmd -t gd32h759im -c halt -c "read32 <addr>"`）。SWD 楔死（WAIT response）
+  时用 `pyocd cmd -t gd32h759im --connect under-reset -c quit` 恢复
+
 
 ## 8. 已知待办 / 后续
 
