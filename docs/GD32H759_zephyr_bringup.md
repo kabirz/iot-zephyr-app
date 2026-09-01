@@ -435,6 +435,50 @@ HAL shim `gd32_enet.h`。
   延迟/吞吐与无退避版持平。`gdeth stat`（`CONFIG_ETH_GD32_IRQ_TEST`）可查
   `isr->thread` 唤醒延迟和 `copy_cyc` 每字节拷贝成本（实测 ~55 cyc/byte）
 
+## 7.8 USB（USBHS0 CDC ACM）✅ 可用并已板上验证（设备枚举 + 回环）
+
+### 硬件与资源
+
+- USBHS0 @ `0x40040000`，IRQ 77（global）；DWC2 OTG 核（GLOBAL/HOST/DEVICE/PWRCLK 四段布局，
+  同 STM32H7 OTG_HS）。LQFP144 上 `USBHS0_DM/DP` = pin 130/131（数据手册 Rev1.6，
+  USB 专用脚不需要 GPIO AF 配置）；板上 OTG 座接 USBHS0（已实测确认）
+- **GD32 没有实现 GHWCFG1/2/4 只读 ID 寄存器（读出恒 0，SVD 也不列）**——Zephyr 的
+  `usb_dc_dw` 驱动依赖 GHWCFG4 判专用 FIFO 模式、GHWCFG2 数端点，为此新增
+  `gd,gd32-usbhs` 绑定 + DTS 静态端点参数（6 IN / 4 OUT，SVD 的 DIEP0..5TFLEN 佐证），
+  驱动内按 compat 回退到 DT 值
+
+### 上电顺序（照 GigaDevice V1.6.0 USBHS 库，落在 `usb_dc_dw_gd32.h` quirk）
+
+1. RCU 开 PMU 时钟，PMU_CTL2 置 `USBSEN|VUSB33DEN`，**等 USB33RF**（PMU @
+   `0x58005800`，注意 GD32 的 APB4 基址是 `0x58000000` 而非 STM32H7 的 `0x48000000`——
+   写错总线段=总线错误整板挂死，实测踩坑）
+2. IRC48M 起振（ADDCTL0.16/17），USBCLKCTL 的 USBHS048MSEL(bits5-6)=3 选 IRC48M
+3. AHB1EN bit14 开 USBHS0 总线时钟
+4. GUSBCS.6（EMBPHY_FS）选片上 FS PHY，**必须在核软复位之前**（复位握手需要核时钟）
+5. pwr_on 钩子：清 GOTGINTF 挂起、PWRCLKCTL(0xE00)=0 重启 PHY 时钟、
+   GOTGCS.6/7（GD32 的 BVOE/BVOV 位，**不是 STM32 的位位置**）强置 B-session valid、
+   GCCFG(0x38).16 PWRON 给收发器上电
+
+### 关键坑（都已修复在提交 87f6a63c94e）
+
+- **DevSpd 必须写 1 不是 3**：这是带片上 FS PHY 的 HS 核，厂商库 FS 模式用
+  `DCFG_DS=1`；Zephyr 通用驱动写 3（FS 核语义）会导致 EP0 对主机请求完全无响应
+  （主机 `device descriptor read error -110`）
+- **总线复位时必须冲刷 RX/TX FIFO**：主机放弃控制传输后会复位总线，此时 IN FIFO
+  残留数据永远不会排空；下一次 SETUP 到来时 `usb_dw_tx()` 在 ISR 里等 FIFO 清空，
+  `k_yield()` 在 ISR 中不能阻塞 → CPU 活锁 → console/整机冻死（可复现，与
+  ENET TBU 风暴同症状）。修复：`usb_dw_handle_reset()` 里 RXFFLSH + TXFFLSH
+  （TXFNUM=0x10 全部），另给 `usb_dw_tx()` 的 FIFO 等待加了 10000 次护栏返回 -EIO
+- 设备域寄存器是标准 DCFG@0x800/DCTL@0x804/DSTAT@0x808（与厂商结构体一致），
+  调试工具用错偏移（STM32 旧式 0x80C/0x810）会得出"寄存器写不进"的错误结论
+
+### 实测结果
+
+- 主机 xhci 枚举：`28e9:0575` "EmbedFire GD32H759 BTB"（序列号来自 hwinfo UID），
+  `cdc_acm` 绑定出 `/dev/ttyACM1`
+- DTR 握手 + 回环：16 × 1040B 往返零丢失
+- 调试入口：app 里 `gdusb dump|fs|pwron|dev|connect`（usb_dump.c）
+
 ## 8. 已知待办 / 后续
 
 - [x] 以太网：ENET 中断风暴根因已定位（TBU 属 NORMAL 汇总且未被 ISR 清除，
