@@ -77,12 +77,10 @@
 			    <&gpioe 14 GPIO_ACTIVE_HIGH>,
 			    <&gpioe 15 GPIO_ACTIVE_HIGH>;
 
-		/* 4 路 AI (ADC1 IN10-13): ai-channels 通道号列表 + ai-coeffs 每路
-		 * 工程量转换系数 (放大 1e4 倍, 电流 7.414 / 电压 3.7037),
-		 * 两列表顺序一一对应;
-		 * io-channels 仅锚定首通道, 提供共用通道参数 (&adc1 channel@a 模板) */
-		io-channels = <&adc1 10>;
-		ai-channels = <10 11 12 13>;
+		/* 4 路 AI (ADC1 IN10-13, 对应 &adc1 下 channel@a-d 子节点);
+		 * ai-coeffs: 每路工程量转换系数 (放大 1e4 倍, 电流 7.414 / 电压 3.7037),
+		 * 与 io-channels 顺序一一对应 */
+		io-channels = <&adc1 10>, <&adc1 11>, <&adc1 12>, <&adc1 13>;
 		ai-coeffs = <7414>, <7414>, <3704>, <3704>;
 	};
 };
@@ -110,8 +108,8 @@
 
 /* ============================================================
  * ADC1: 4 通道模拟输入 (PC0-PC3 = IN10-13)
- * AI0/AI1 电流 4-20mA, AI2/AI3 电压 0-10V。通道号列表与每路
- * 系数在 /zephyr,user 的 ai-channels/ai-coeffs 中定义。
+ * AI0/AI1 电流 4-20mA, AI2/AI3 电压 0-10V。各通道 st,coeff 系数
+ * 在 /zephyr,user 的 ai-coeffs 中定义 (与 io-channels 顺序对应)。
  * ============================================================ */
 &adc1 {
 	status = "okay";
@@ -123,9 +121,29 @@
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	/* 通道参数模板: 各 AI 通道共用 (增益/基准/采集时间/分辨率), 仅通道号不同 */
 	channel@a {
 		reg = <0xa>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+	channel@b {
+		reg = <0xb>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+	channel@c {
+		reg = <0xc>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+	channel@d {
+		reg = <0xd>;
 		zephyr,gain = "ADC_GAIN_1";
 		zephyr,reference = "ADC_REF_INTERNAL";
 		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
