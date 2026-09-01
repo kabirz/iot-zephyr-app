@@ -1,0 +1,40 @@
+# Copyright (c) 2026 GD32H7xx Zephyr bring-up
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "USB CDC ACM example"
+
+source "Kconfig.zephyr"
+
+menu "USB CDC ACM example options"
+	depends on USB_DEVICE_STACK_NEXT
+
+config USB_CDC_ACM_EXAMPLE_VID
+	hex "USB device vendor ID"
+	default 0x28e9
+	help
+	  USB device vendor ID (default: GigaDevice).
+
+config USB_CDC_ACM_EXAMPLE_PID
+	hex "USB device product ID"
+	default 0x0575
+	help
+	  USB device product ID.
+
+config USB_CDC_ACM_EXAMPLE_MANUFACTURER
+	string "USB device manufacturer string"
+	default "EmbedFire"
+
+config USB_CDC_ACM_EXAMPLE_PRODUCT
+	string "USB device product string"
+	default "GD32H759 BTB CDC ACM"
+
+config USB_CDC_ACM_EXAMPLE_SELF_POWERED
+	bool "Self-powered attribute"
+	default y
+
+config USB_CDC_ACM_EXAMPLE_MAX_POWER
+	int "bMaxPower value in 2 mA units"
+	default 125
+	range 0 250
+
+endmenu
