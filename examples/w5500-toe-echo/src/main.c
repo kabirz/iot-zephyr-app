@@ -32,7 +32,7 @@ int main(void)
 		.sin_port = htons(ECHO_PORT),
 		.sin_addr = { .s_addr = htonl(INADDR_ANY) },
 	};
-	uint8_t buf[512];
+	uint8_t buf[2048]; /* match the W5500 2 KiB socket buffers */
 	int srv;
 	int ret;
 

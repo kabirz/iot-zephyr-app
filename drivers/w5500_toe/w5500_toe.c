@@ -99,6 +99,8 @@ LOG_MODULE_REGISTER(w5500_toe, CONFIG_W5500_TOE_LOG_LEVEL);
 #define W5500_Sn_RX_RSR				0x0026 /* 2B */
 #define W5500_Sn_RX_RD				0x0028 /* 2B */
 #define W5500_Sn_IMR				0x0016 /* per-socket int mask, CON|DISCON|RECV|TIMEOUT */
+#define W5500_Sn_RXMEM_SIZE			0x001E /* RX buffer size config */
+#define W5500_Sn_TXMEM_SIZE			0x001F /* TX buffer size config */
 
 #define Sn_IR_CON				BIT(0)
 #define Sn_IR_DISCON				BIT(1)
@@ -203,6 +205,7 @@ struct w5500_toe_data {
 	/* hardware sockets whose command engine is dead (some compatible
 	 * parts ship with defective sockets): skipped by hw_alloc */
 	uint8_t hw_broken;
+	uint8_t hw_fail[W5500_NUM_SOCKETS];
 };
 
 /* ---------------- SPI register access (data->lock held) ---------------- */
@@ -279,12 +282,13 @@ static uint32_t sock_reg(int8_t hw, uint16_t reg)
 static int w5500_cmd(const struct device *dev, int8_t hw, uint8_t cmd)
 {
 	w5500_wr8(dev, sock_reg(hw, W5500_Sn_CR), cmd);
-	/* compatible chips can be slow to clear the command register */
+	/* always called with data->lock held in thread context: a busy-wait
+	 * keeps the command overhead in the microseconds range */
 	for (int i = 0; i < 300; i++) {
 		if (w5500_rd8(dev, sock_reg(hw, W5500_Sn_CR)) == 0) {
 			return 0;
 		}
-		k_usleep(10);
+		k_busy_wait(10);
 	}
 	return -EIO;
 }
@@ -304,6 +308,83 @@ static uint16_t sock_fsr(const struct device *dev, int8_t hw)
 	return w5500_rd16(dev, sock_reg(hw, W5500_Sn_TX_FSR));
 }
 
+/* Fast data streaming: the generic SPI polled path costs ~1.4 us per
+ * byte (spi_context layering), which caps a 2 KiB transfer at ~3.7 ms.
+ * For buffer-sized moves the command frame still goes through the
+ * framework (it owns CS framing), but the data phase is streamed with a
+ * tight full-duplex register loop: wire time (~0.4 us/byte at 21 MHz)
+ * becomes the only limit. CS is kept asserted across both phases; the
+ * W5500 delimits frames with CS edges, not by clock continuity. */
+#include <stm32_ll_spi.h>
+
+#define W5500_SPI	((SPI_TypeDef *)DT_REG_ADDR(DT_INST_BUS(0)))
+#define W5500_FAST_MIN	32U
+
+static void w5500_spi_stream(SPI_TypeDef *spi, const uint8_t *cmd, size_t cmd_len,
+			     const uint8_t *tx, uint8_t *rx, size_t len)
+{
+	LL_SPI_Enable(spi);
+
+	for (size_t i = 0; i < cmd_len; i++) {
+		while (!LL_SPI_IsActiveFlag_TXE(spi)) {
+		}
+		LL_SPI_TransmitData8(spi, cmd[i]);
+		while (!LL_SPI_IsActiveFlag_RXNE(spi)) {
+		}
+		(void)LL_SPI_ReceiveData8(spi);
+	}
+	for (size_t i = 0; i < len; i++) {
+		while (!LL_SPI_IsActiveFlag_TXE(spi)) {
+		}
+		LL_SPI_TransmitData8(spi, tx != NULL ? tx[i] : 0x00);
+		while (!LL_SPI_IsActiveFlag_RXNE(spi)) {
+		}
+		uint8_t b = LL_SPI_ReceiveData8(spi);
+
+		if (rx != NULL) {
+			rx[i] = b;
+		}
+	}
+	while (LL_SPI_IsActiveFlag_BSY(spi)) {
+	}
+	LL_SPI_Disable(spi);
+	if (LL_SPI_IsActiveFlag_OVR(spi)) {
+		LL_SPI_ClearFlag_OVR(spi);
+	}
+}
+
+static int w5500_read_fast(const struct device *dev, uint32_t addr,
+			   uint8_t *data, size_t len)
+{
+	const struct w5500_toe_config *cfg = dev->config;
+	uint8_t cmd[3] = {
+		addr >> 8,
+		addr,
+		(addr >> 16) << 3, /* BSB, read */
+	};
+
+	gpio_pin_set_dt(&cfg->spi.config.cs.gpio, 1);
+	w5500_spi_stream(W5500_SPI, cmd, sizeof(cmd), NULL, data, len);
+	gpio_pin_set_dt(&cfg->spi.config.cs.gpio, 0);
+	return 0;
+}
+
+static int w5500_write_fast(const struct device *dev, uint32_t addr,
+			    const uint8_t *data, size_t len)
+{
+	const struct w5500_toe_config *cfg = dev->config;
+	uint8_t cmd[3] = {
+		addr >> 8,
+		addr,
+		((addr >> 16) << 3) | BIT(2), /* BSB, write */
+	};
+
+	gpio_pin_set_dt(&cfg->spi.config.cs.gpio, 1);
+	w5500_spi_stream(W5500_SPI, cmd, sizeof(cmd), data, NULL, len);
+	gpio_pin_set_dt(&cfg->spi.config.cs.gpio, 0);
+	return 0;
+}
+
 /* Read/Write socket buffers splitting at the 2 KiB wrap. */
 static int sock_buf_read(const struct device *dev, int8_t hw, bool tx,
 			 uint16_t ptr, uint8_t *buf, size_t len)
@@ -313,9 +394,20 @@ static int sock_buf_read(const struct device *dev, int8_t hw, bool tx,
 	size_t first = MIN(len, (size_t)(mask + 1) - (ptr & mask));
 	int ret;
 
-	ret = w5500_read(dev, base + (ptr & mask), buf, first);
-	if (ret < 0 || first == len) {
-		return ret;
+	if (first >= W5500_FAST_MIN) {
+		w5500_read_fast(dev, base + (ptr & mask), buf, first);
+	} else {
+		ret = w5500_read(dev, base + (ptr & mask), buf, first);
+		if (ret < 0) {
+			return ret;
+		}
+	}
+	if (first == len) {
+		return 0;
+	}
+	if (len - first >= W5500_FAST_MIN) {
+		w5500_read_fast(dev, base, buf + first, len - first);
+		return 0;
 	}
 	return w5500_read(dev, base, buf + first, len - first);
 }
@@ -328,9 +420,20 @@ static int sock_buf_write(const struct device *dev, int8_t hw, uint16_t ptr,
 	size_t first = MIN(len, (size_t)(mask + 1) - (ptr & mask));
 	int ret;
 
-	ret = w5500_write(dev, base + (ptr & mask), buf, first);
-	if (ret < 0 || first == len) {
-		return ret;
+	if (first >= W5500_FAST_MIN) {
+		w5500_write_fast(dev, base + (ptr & mask), buf, first);
+	} else {
+		ret = w5500_write(dev, base + (ptr & mask), buf, first);
+		if (ret < 0) {
+			return ret;
+		}
+	}
+	if (first == len) {
+		return 0;
+	}
+	if (len - first >= W5500_FAST_MIN) {
+		w5500_write_fast(dev, base, buf + first, len - first);
+		return 0;
 	}
 	return w5500_write(dev, base, buf + first, len - first);
 }
@@ -473,19 +576,29 @@ static void sock_release(struct w5500_sock *s)
  * parts) is black-listed and the next one is tried. */
 static void listener_fill(const struct device *dev, struct w5500_sock *ls)
 {
+	struct w5500_toe_data *data = ls->data;
 	int attempts = W5500_NUM_SOCKETS;
 
 	while (ls->lsn_count < W5500_LISTEN_KEEP && attempts-- > 0) {
-		int8_t hw = hw_alloc(ls->data);
+		int8_t hw = hw_alloc(data);
 
 		if (hw < 0) {
 			break; /* pool exhausted: retried on the next pass */
 		}
 		if (tcp_open_listen(dev, hw, ls->bind_port) < 0) {
-			LOG_WRN("hw=%d refuses commands, blacklisting", hw);
-			ls->data->hw_broken |= BIT(hw);
+			/* A socket just Sn_CR_CLOSEd may still be transmitting
+			 * its RST: re-opening it immediately is ignored by the
+			 * chip. That recovers within microseconds, while a
+			 * genuinely dead command engine never recovers - so
+			 * only blacklist after repeated independent failures. */
+			if (++data->hw_fail[hw] >= 3) {
+				LOG_WRN("hw=%d dead after %d attempts, blacklisting",
+					hw, data->hw_fail[hw]);
+				data->hw_broken |= BIT(hw);
+			}
 			continue;
 		}
+		data->hw_fail[hw] = 0;
 		ls->lsn_hw[ls->lsn_count++] = hw;
 	}
 }
@@ -1132,12 +1245,29 @@ static ssize_t w5500_sendto(void *obj, const void *buf, size_t len, int flags,
 			}
 		}
 
+		/* TX space frees when the peer ACKs the previous chunk, i.e.
+		 * within ~1 RTT. Busy-poll briefly (each 10 ms slice wait
+		 * otherwise adds a fixed quantum to every send and caps the
+		 * echo throughput), then fall back to sliced sleeping. */
+		int polls = 30; /* 30 x 100 us = 3 ms */
+
 		while (sock_fsr(dev, s->hw) < chunk) {
 			bool wait_ok;
 
 			if (nonblock) {
 				errno = EAGAIN;
 				goto out_partial;
+			}
+			if (polls > 0) {
+				k_mutex_unlock(&s->data->lock);
+				k_busy_wait(100);
+				k_mutex_lock(&s->data->lock, K_FOREVER);
+				polls--;
+				if (s->zombie) {
+					errno = EBADF;
+					goto out_partial;
+				}
+				continue;
 			}
 			/* sleep without the lock so the IRQ/poll worker can run */
 			k_mutex_unlock(&s->data->lock);
@@ -1296,11 +1426,22 @@ static ssize_t w5500_recvfrom(void *obj, void *buf, size_t max_len, int flags,
 			uint8_t sr = sock_sr(dev, s->hw);
 
 			if (sr == SR_CLOSE_WAIT) {
+				static uint8_t eof_logs;
+
+				if (eof_logs++ < 5) {
+					LOG_WRN("rx EOF (peer FIN) hw=%d rsr=%u",
+						s->hw, rsr);
+				}
 				sock_notify_drain(s);
 				recvd = 0; /* orderly EOF */
 				goto out;
 			}
 			if (sr == SR_CLOSED) {
+				static uint8_t rst_logs;
+
+				if (rst_logs++ < 5) {
+					LOG_WRN("rx RST hw=%d rsr=%u", s->hw, rsr);
+				}
 				sock_notify_drain(s);
 				s->err = ECONNRESET;
 				errno = ECONNRESET;
@@ -1816,6 +1957,16 @@ static int w5500_toe_init(const struct device *dev)
 		LOG_ERR("W5500 not detected (RTR=0x%04x VERSIONR=0x%02x)",
 			rtr, w5500_rd8(dev, W5500_BSB(BSB_COMMON, W5500_VERSIONR)));
 		return -ENODEV;
+	}
+
+	/* Buffer sizes: keep the chip defaults (2 KiB TX + 2 KiB RX per
+	 * socket). Writing them explicitly is required in the field: this
+	 * board's part comes up with the MEM_SIZE registers not at their
+	 * documented reset values, and with a smaller effective RX buffer
+	 * the chip RSTs connections whose in-flight data exceeds it. */
+	for (int i = 0; i < W5500_NUM_SOCKETS; i++) {
+		w5500_wr8(dev, sock_reg(i, W5500_Sn_RXMEM_SIZE), 0x02);
+		w5500_wr8(dev, sock_reg(i, W5500_Sn_TXMEM_SIZE), 0x02);
 	}
 
 	/* MAC: devicetree property or Wiznet OUI + random node id */
