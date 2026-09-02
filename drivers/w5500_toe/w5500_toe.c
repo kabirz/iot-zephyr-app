@@ -60,15 +60,15 @@ LOG_MODULE_REGISTER(w5500_toe, CONFIG_W5500_TOE_LOG_LEVEL);
 
 /* ---------------- W5500 register map ---------------- */
 
-/* 32-bit packed address: [20:16] block select, [15:0] register offset.
- * The W5500 gives each socket THREE consecutive blocks — registers, TX
- * buffer, RX buffer (socket 0 regs = BSB 1, socket 0 TX = BSB 2, socket
- * 0 RX = BSB 3, socket 1 regs = BSB 4, ...). */
+/* 32-bit packed address: [20:16] block select, [15:0] register offset. */
 #define W5500_BSB(bsb, reg)		(((uint32_t)(bsb) << 16) | (reg))
 #define BSB_COMMON				0x00
-#define BSB_SOCK(n)				(0x01 + (n) * 3)
-#define BSB_TXBUF(n)			(0x02 + (n) * 3)
-#define BSB_RXBUF(n)			(0x03 + (n) * 3)
+/* Socket n's blocks are 4 BSB slots apart: registers at 1+4n, TX buffer
+ * at 2+4n, RX buffer at 3+4n (slot 4n+4 is reserved). The BSB field is
+ * only 5 bits wide, so socket 7's RX block is the last one (0x1F). */
+#define BSB_SOCK(n)				(0x01 + (n) * 4)
+#define BSB_TXBUF(n)			(0x02 + (n) * 4)
+#define BSB_RXBUF(n)			(0x03 + (n) * 4)
 
 #define W5500_MR				0x0000
 #define W5500_MR_RST				0x80 /* soft reset */
@@ -121,6 +121,8 @@ LOG_MODULE_REGISTER(w5500_toe, CONFIG_W5500_TOE_LOG_LEVEL);
 #define SR_CLOSED				0x00
 #define SR_INIT					0x13
 #define SR_LISTEN				0x14
+#define SR_SYNSENT				0x15
+#define SR_SYNRECV				0x16
 #define SR_ESTABLISHED				0x17
 #define SR_CLOSE_WAIT				0x1C
 #define SR_UDP					0x22
@@ -686,8 +688,12 @@ static void w5500_service(struct w5500_toe_data *data)
 				if (sr == SR_ESTABLISHED) {
 					listener_promote(dev, s, i);
 					/* pool compacted, entry i replaced */
-				} else if (sr != SR_LISTEN && sr != SR_INIT) {
-					/* listener died (link reset): re-arm */
+				} else if (sr != SR_LISTEN && sr != SR_INIT &&
+					   sr != SR_SYNRECV) {
+					/* listener died (link reset): re-arm.
+					 * SOCK_SYNRECV is a listener halfway
+					 * through a handshake: closing it
+					 * there would RST the peer. */
 					hw_close(dev, s->lsn_hw[i]);
 					listener_pool_remove(s, i);
 				} else {

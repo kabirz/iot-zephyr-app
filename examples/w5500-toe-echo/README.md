@@ -40,6 +40,14 @@ receive buffer with an RST instead of dropping it, so keep client-side
 in-flight data at or below the 2 KiB socket buffer (window depths of
 more than one 2 KiB chunk can trip this on a fresh connection).
 
+Concentrating the W5500's 16 KiB RX memory on one socket (8 KiB window)
+does **not** raise throughput: measured rates at 2 KiB and 8 KiB of
+in-flight data are identical (~0.5 MB/s). The limit is the serial echo
+pipeline — every 2 KiB chunk costs one RX read plus one TX write over
+SPI, and this board's wiring tops out at 21 MHz on SPI2 (already ~80 %
+line efficiency). The TCP window is not the bottleneck, so the buffers
+stay split evenly at 2 KiB per socket.
+
 ## Driver notes
 
 - Backlog: a pool of two hardware sockets stays in LISTEN; when one
@@ -58,6 +66,14 @@ more than one 2 KiB chunk can trip this on a fresh connection).
   black-listed after three independent failures (a socket just closed
   may transiently ignore OPEN while its RST is still going out — that
   recovers by itself and is not black-listed).
+- The socket blocks in the SPI block-select field are 4 slots apart
+  (socket n: registers 1+4n, TX 2+4n, RX 3+4n), not 3: with the wrong
+  stride every socket beyond 0 (and 3) reads garbage status and only
+  two of the eight hardware sockets ever work, which starves the
+  listener pool and makes rapid reconnects hit RST.
+- A pool listener halfway through a handshake reads SOCK_SYNRECV
+  (0x16); the service loop must leave it alone there — closing it
+  mid-handshake makes the chip RST the peer.
 - Presence check uses the RTR reset value (0x07D0): VERSIONR reads 0x04
   only on genuine parts and 0x00 on compatible clones, which work fine.
   The per-socket 2 KiB buffer sizes are written explicitly at init:
