@@ -4,6 +4,7 @@ config PHY_MOTORCOMM_YT8512
 	bool "Motorcomm YT8512 Ethernet PHY driver"
 	default y
 	depends on DT_HAS_MOTORCOMM_YT8512_ENABLED
+	depends on ETH_STM32_HAL
 	select MDIO
 	help
 	  Motorcomm YT8512/YT8512C 10/100 Ethernet PHY driver, ported from
@@ -15,3 +16,6 @@ config PHY_MOTORCOMM_YT8512
 	  select / RGMII delay / SYNCE) are not touched. reset-gpios is
 	  supported (the Apollo V2 board routes PHY reset through a PCF8574
 	  I2C IO expander).
+
+	  Depends on ETH_STM32_HAL: 无网络配置的应用 (MDIO 控制器不编译)
+	  不应拉入本驱动, 否则链接失败 (mdio 设备符号未定义)。

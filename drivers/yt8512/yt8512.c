@@ -28,6 +28,18 @@
 #include <zephyr/net/mii.h>
 
 #include <zephyr/logging/log.h>
+
+/* 非 networking 应用 (无 CONFIG_NETWORKING) 下 ETH_PHY 菜单不出现,
+ * 这些符号未定义 —— 按上游默认值回退, 使驱动可独立编译 */
+#ifndef CONFIG_PHY_LOG_LEVEL
+#define CONFIG_PHY_LOG_LEVEL 3		/* INF */
+#endif
+#ifndef CONFIG_PHY_AUTONEG_TIMEOUT_MS
+#define CONFIG_PHY_AUTONEG_TIMEOUT_MS 4000
+#endif
+#ifndef CONFIG_PHY_MONITOR_PERIOD
+#define CONFIG_PHY_MONITOR_PERIOD 500
+#endif
 LOG_MODULE_REGISTER(phy_motorcomm_yt8512, CONFIG_PHY_LOG_LEVEL);
 
 #include "phy_mii.h"
