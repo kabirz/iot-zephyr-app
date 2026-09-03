@@ -23,6 +23,7 @@ manifest:
           - mbedtls
           - mcuboot
           - tf-psa-crypto
+          - lvgl
 
     - name: canopen
       repo-path: canopen-zephyr

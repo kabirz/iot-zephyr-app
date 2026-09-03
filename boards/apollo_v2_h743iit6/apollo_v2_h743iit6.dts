@@ -22,6 +22,7 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/dt-bindings/memory-controller/stm32-fmc-nor-psram.h>
 #include <zephyr/dt-bindings/memory-attr/memory-attr.h>
+#include <zephyr/dt-bindings/display/panel.h>
 
 / {
 	model = "Alientek Apollo V2 STM32H743IIT6";
@@ -30,6 +31,8 @@
 	chosen {
 		zephyr,console = &usart1;
 		zephyr,shell-uart = &usart1;
+		zephyr,display = &lcd_ili9341;
+		zephyr,touch = &touch_xpt2046;
 		zephyr,sram = &sram0;
 		zephyr,dtcm = &dtcm;
 		zephyr,flash = &flash0;
@@ -54,6 +57,36 @@
 		zephyr,memory-region = "LCD";	/* 仅 linker 声明, 不放置段 */
 		zephyr,memory-attr = <DT_MEM_ARM_MPU_IO>;
 	};
+
+/* ============ 电阻触摸 XPT2046 (TFTLCD 排座, 5 线 GPIO 位拆 SPI) ============
+ * T_CLK=PH6  T_DIN=PI3  T_DO=PG3  T_CS=PI8  T_PEN(中断)=PH7
+ * 引脚分散无硬件 SPI 覆盖, 使用 zephyr bitbang SPI 控制器 */
+touch_spi: touch-spi {
+	compatible = "zephyr,spi-bitbang";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	clk-gpios = <&gpioh 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+	mosi-gpios = <&gpioi 3 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+	miso-gpios = <&gpiog 3 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+	cs-gpios = <&gpioi 8 GPIO_ACTIVE_LOW>;
+
+	touch_xpt2046: xpt2046@0 {
+		compatible = "xptek,xpt2046";
+		reg = <0>;
+		spi-max-frequency = <100000>;
+		int-gpios = <&gpioh 7 GPIO_ACTIVE_LOW>;	/* T_PEN, 按下拉低 */
+		touchscreen-size-x = <240>;
+		touchscreen-size-y = <320>;
+		/* 原始 12 位 ADC 校准边界, 按实测微调 */
+		min-x = <200>;
+		max-x = <3900>;
+		min-y = <200>;
+		max-y = <3900>;
+		z-threshold = <300>;
+		reads = <8>;
+	};
+};
 
 	leds {
 		compatible = "gpio-leds";
@@ -317,6 +350,29 @@
 				      STM32_FMC_WRITE_FIFO_DISABLE
 				      STM32_FMC_PAGE_SIZE_NONE>;
 			st,timing = <15 3 100 15 2 2 STM32_FMC_ACCESS_MODE_A>;
+
+			/* TFTLCD 总线抽象 (MIPI DBI Type B / Intel 8080 16 位):
+			 * RS=register-select-pin=18 -> 数据口 0x60080000
+			 * 背光独立接 PB5 (见应用侧), 复位接系统复位, 无需 GPIO */
+			fmc_mipi_dbi: fmc-mipi-dbi {
+				compatible = "st,stm32-fmc-mipi-dbi";
+				bank-address = <0x60000000>;	/* NE1, 绕过 fork 缺失的 FMC_BANK1_x 宏 */
+				register-select-pin = <18>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				lcd_ili9341: lcd-panel@0 {
+					compatible = "ilitek,ili9341";
+					reg = <0>;
+					mipi-mode = "MIPI_DBI_MODE_8080_BUS_16_BIT";
+					mipi-max-frequency = <15000000>;
+					width = <240>;
+					height = <320>;
+					pixel-format = <PANEL_PIXEL_FORMAT_RGB_565>;
+					rotation = <0>;
+					h-mirror;	/* 实测此模块需要 MX 位, 否则左右镜像 */
+				};
+			};
 		};
 	};
 };
@@ -371,6 +427,7 @@
 	pinctrl-names = "default";
 	bus-width = <4>;
 };
+
 
 /* ============ RTC, 32.768kHz LSE (PC14/PC15) ============ */
 &clk_lse {
