@@ -1,0 +1,17 @@
+# Motorcomm YT8512 Ethernet PHY
+
+config PHY_MOTORCOMM_YT8512
+	bool "Motorcomm YT8512 Ethernet PHY driver"
+	default y
+	depends on DT_HAS_MOTORCOMM_YT8512_ENABLED
+	select MDIO
+	help
+	  Motorcomm YT8512/YT8512C 10/100 Ethernet PHY driver, ported from
+	  the upstream phy_motorcomm_yt8521.c (same MII register layout,
+	  specific status register 0x11).
+
+	  The PHY ID check accepts MII register 0x03 Type_No 0x12 (YT8512
+	  family); the YT8521-specific extended registers (0xA000 space
+	  select / RGMII delay / SYNCE) are not touched. reset-gpios is
+	  supported (the Apollo V2 board routes PHY reset through a PCF8574
+	  I2C IO expander).

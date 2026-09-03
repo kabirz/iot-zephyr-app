@@ -1,2 +1,3 @@
 add_subdirectory_ifdef(CONFIG_NRF24L01P nrf24l01p)
 add_subdirectory_ifdef(CONFIG_W5500_TOE w5500_toe)
+add_subdirectory_ifdef(CONFIG_PHY_MOTORCOMM_YT8512 yt8512)

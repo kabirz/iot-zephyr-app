@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+description: Motorcomm YT8512 10/100 Ethernet PHY
+
+compatible: "motorcomm,yt8512"
+
+include:
+  - name: ethernet-phy-common.yaml
+  - name: ethernet-phy-reset-gpios.yaml
+
+properties:
+  default-speeds:
+    default: ["10BASE Half-Duplex", "10BASE Full-Duplex",
+              "100BASE Half-Duplex", "100BASE Full-Duplex"]
