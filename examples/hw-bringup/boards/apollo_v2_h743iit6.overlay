@@ -1,0 +1,32 @@
+/*
+ * 阿波罗 V2 全硬件自检 overlay
+ *
+ * 板载固定外设 (QSPI/SDRAM/24C02/ADC/DAC/PWM/TF 卡/RTC) 已在板 DTS 使能,
+ * 本 overlay 只做应用相关的差异:
+ *  - 关闭以太网 MAC/MDIO/PHY (本 app 不测网络, 见 eth-bwtest; 关掉可
+ *    避免拉起网络驱动并省 RAM)
+ *  - 使能 FDCAN1 (PA11/PA12): 与 USB OTG FS 共用引脚, 底板 P9 二选一,
+ *    板级不默认开; 自检用回环模式, 不依赖 P9 位置
+ */
+
+&mac {
+	status = "disabled";
+};
+
+&mdio {
+	status = "disabled";
+};
+
+&eth_phy {
+	status = "disabled";
+};
+
+&fdcan1 {
+	clocks = <&rcc STM32_CLOCK(APB1_2, 8)>,
+		 <&rcc STM32_SRC_HSE FDCAN_SEL(0)>;
+	pinctrl-0 = <&fdcan1_rx_pa11 &fdcan1_tx_pa12>;
+	pinctrl-names = "default";
+	bitrate = <500000>;
+	sample-point = <875>;	/* per-mille */
+	status = "okay";
+};
