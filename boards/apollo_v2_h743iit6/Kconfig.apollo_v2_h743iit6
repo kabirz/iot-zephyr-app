@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_APOLLO_V2_H743IIT6
+	bool "Alientek Apollo V2 STM32H743IIT6 Board"
+	select SOC_STM32H743XX

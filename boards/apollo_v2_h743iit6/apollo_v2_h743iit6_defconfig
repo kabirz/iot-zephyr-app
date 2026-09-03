@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Cortex-M7 MPU: 启用硬件栈溢出保护
+CONFIG_ARM_MPU=y
+CONFIG_HW_STACK_PROTECTION=y
+
+# UART + 控制台
+CONFIG_SERIAL=y
+CONFIG_CONSOLE=y
+CONFIG_UART_CONSOLE=y
+
+# GPIO
+CONFIG_GPIO=y

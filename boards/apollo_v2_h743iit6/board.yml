@@ -1,0 +1,6 @@
+board:
+  name: apollo_v2_h743iit6
+  full_name: Alientek Apollo V2 STM32H743IIT6
+  vendor: st
+  socs:
+    - name: stm32h743xx

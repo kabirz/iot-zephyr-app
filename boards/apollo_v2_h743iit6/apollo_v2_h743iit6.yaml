@@ -1,0 +1,15 @@
+identifier: apollo_v2_h743iit6
+name: Alientek Apollo V2 STM32H743IIT6
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+ram: 1024
+flash: 2048
+supported:
+  - gpio
+  - uart
+  - i2c
+  - ethernet
+  - watchdog
+vendor: st
