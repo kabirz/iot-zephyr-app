@@ -1,0 +1,23 @@
+/*
+ * apollo-v2 USB 变体 (P9 跳线置 USB 侧)
+ *
+ * 构建时用本文件整体替换默认板级 overlay (不使能 FDCAN1):
+ *   west build -b apollo_v2_h743iit6 apps/applications/apollo-v2 \
+ *       -DEXTRA_CONF_FILE=usb.conf -DDTC_OVERLAY_FILE=usb.overlay
+ * 见 README.md "双变体构建"。
+ *
+ * 仅接 DM/DP: VBUS 检测脚 PA9 与 USART1_TX (控制台) 冲突, 不用;
+ * ID 脚 PA10 仅 host 模式需要, 不用。
+ */
+
+/ {
+	chosen {
+		zephyr_udc0 = &usbotg_fs;
+	};
+};
+
+&usbotg_fs {
+	pinctrl-0 = <&usb_otg_fs_dm_pa11 &usb_otg_fs_dp_pa12>;
+	pinctrl-names = "default";
+	status = "okay";
+};

@@ -4,18 +4,19 @@
 
 ## 项目
 
-**iot-zephyr-app** — Zephyr RTOS west manifest 仓库，同时本身是一个 Zephyr module。包含四个应用、两块板子：
+**iot-zephyr-app** — Zephyr RTOS west manifest 仓库，同时本身是一个 Zephyr module。包含五个应用、四块板子：
 
 - `applications/angle-handler` — 激光测距手持控制器（角度采集 + OLED + CAN/nRF24 + OTA），STM32F103RCT6（板 `nrf24_f103rct6`）
 - `applications/n2e-gw` — 数据中转网关（nRF24 ↔ W5500 UDP），STM32F103RCT6（板 `nrf24_f103rct6`）
 - `applications/io-edge-hub` — 工业 IO 采集边缘网关（16DI/8DO/4AI + Modbus TCP/RTU + LittleFS/FTP + UDP+CAN 双通道固件升级 + MCUboot SWAP_SCRATCH），STM32F407VET6（板 `io_edge_f407vet6`）
 - `applications/canopen-io` —— 纯 CANopen IO 计测节点（16DI/8DO/4AI + OD/PDO + CiA 302-2 SDO 固件下载 + 心跳 + MCUboot SWAP_SCRATCH），STM32F407VET6（板 `io_edge_f407vet6`）
+- `applications/apollo-v2` — 阿波罗 V2 H743 应用底座（P0：CAN/USB 双变体 + shell/板载 IO + QSPI/SDRAM/ETH/TF/RTC/FDCAN 实测底座，路线图见 `Apollo_V2_STM32H743_Application_Plan.md`），STM32H743IIT6（板 `apollo_v2_h743iit6`）
 
 ## 仓库布局
 
 - `west.yml` — manifest，Zephyr v4.4.0，import 上游 mcuboot / cmsis / hal_stm32 / mbedtls / fatfs 等。
 - `zephyr/module.yml` — 本仓库作为 Zephyr module 的声明（`name: iot_zephyr_app`，board_root / dts_root，build cmake/kconfig）。
-- `boards/` — board_root：`nrf24_f103rct6`（F103）与 `io_edge_f407vet6`（F407）。
+- `boards/` — board_root：`nrf24_f103rct6`（F103）、`io_edge_f407vet6`（F407）、`apollo_v2_h743iit6`（H743 阿波罗 V2）、`gd32h759_btb`。
 - `dts/` — dts_root，自定义 binding（`nordic,nrf24l01p.yaml`）。
 - `libs/` — 固件升级库（`can_fw_upgrade`、`udp_fw_upgrade`）+ 配置头生成（`gen_gitver.py`、`gen_keyhash.py`）。**只有一个顶层 `CMakeLists.txt`**，子模块源码直接在此用 `zephyr_sources_ifdef` / `zephyr_include_directories_ifdef` 汇总。
 - `drivers/` — 自定义驱动（`nrf24l01p`）。
@@ -33,6 +34,9 @@ west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild "-Dmcuboot_EX
 west archive --no-rebuild -o angle-handler
 west flash --domain angle-handler
 west build -b io_edge_f407vet6 applications/canopen-io --sysbuild
+west build -b apollo_v2_h743iit6 applications/apollo-v2 -d build/apollo_v2                 # 阿波罗 CAN 变体 (默认)
+west build -b apollo_v2_h743iit6 applications/apollo-v2 -d build/apollo_v2_usb \
+    -DEXTRA_CONF_FILE=usb.conf -DDTC_OVERLAY_FILE=usb.overlay                              # 阿波罗 USB 变体
 ```
 
 ## 关键约定

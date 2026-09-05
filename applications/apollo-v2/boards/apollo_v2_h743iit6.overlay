@@ -1,0 +1,16 @@
+/*
+ * apollo-v2 CAN 变体 (默认构建)
+ *
+ * P9 跳线置 CAN 侧。USB OTG FS 与 FDCAN1 共用 PA11/PA12, 同一镜像
+ * 不可共存 —— USB 变体见 usb.overlay (DTC_OVERLAY_FILE 整体替换本文件)。
+ */
+
+&fdcan1 {
+	clocks = <&rcc STM32_CLOCK(APB1_2, 8)>,
+		 <&rcc STM32_SRC_HSE FDCAN_SEL(0)>;
+	pinctrl-0 = <&fdcan1_rx_pa11 &fdcan1_tx_pa12>;
+	pinctrl-names = "default";
+	bitrate = <500000>;
+	sample-point = <875>;	/* per-mille */
+	status = "okay";
+};

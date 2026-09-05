@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: Apache-2.0
+# apollo-v2 应用配置
+
+mainmenu "apollo-v2"
+
+source "Kconfig.zephyr"
+
+menu "apollo-v2 application"
+
+config APOLLO_DISPLAY
+	bool "LCD status screen (LVGL + ILI9341 via FMC 8080)"
+	default y
+	depends on LVGL
+	help
+	  Status screen on the 2.8" TFTLCD: fw version, uptime, local time,
+	  IP address, storage and CAN counters, refreshed once a second.
+	  Touch (XPT2046) is wired to the LVGL pointer input.
+
+config APOLLO_STATUS_PERIOD
+	int "Status log period in seconds (0 disables)"
+	default 10
+	help
+	  Period of the periodic status line on the console (uptime, heap,
+	  network, storage, CAN counters).
+
+config APOLLO_STORAGE
+	bool "Storage bring-up (TF FAT mount with retry, QSPI/SDRAM probe)"
+	default y
+	select DISK_ACCESS
+	help
+	  Mounts the TF card (/SD:, FAT) in a background thread with retry,
+	  and probes QSPI W25Q256 and FMC SDRAM at boot.
+
+config APOLLO_NET
+	bool "Ethernet with DHCP and static fallback"
+	default y
+	depends on NET_L2_ETHERNET
+	help
+	  Starts DHCPv4 on the RMII interface; if no lease is obtained
+	  within the timeout, falls back to the static address in
+	  APOLLO_NET_FALLBACK_ADDR for direct cable use.
+
+config APOLLO_NET_FALLBACK_ADDR
+	string "Static fallback IPv4 address"
+	default "192.168.12.200"
+	depends on APOLLO_NET
+
+config APOLLO_NET_DHCP_TIMEOUT
+	int "DHCP timeout in seconds before static fallback"
+	default 20
+	depends on APOLLO_NET
+
+config APOLLO_NET_STACK_SIZE
+	int "Network bring-up thread stack size"
+	default 2048
+	depends on APOLLO_NET
+
+config APOLLO_NET_PRIORITY
+	int "Network bring-up thread priority"
+	default 9
+	depends on APOLLO_NET
+
+config APOLLO_STORAGE_STACK_SIZE
+	int "Storage thread stack size"
+	default 4096
+	depends on APOLLO_STORAGE
+
+config APOLLO_STORAGE_PRIORITY
+	int "Storage thread priority"
+	default 10
+	depends on APOLLO_STORAGE
+
+config APOLLO_CAN
+	bool "FDCAN1 support (CAN variant)"
+	default y
+	depends on CAN
+	help
+	  Starts FDCAN1 in normal mode, logs received frames and exposes
+	  the 'apollo cansend' shell command. Requires the fdcan1 node to
+	  be enabled by the CAN variant overlay (default build).
+
+config APOLLO_CAN_RX_STACK_SIZE
+	int "CAN RX thread stack size"
+	default 1536
+	depends on APOLLO_CAN
+
+config APOLLO_USB
+	bool "USB OTG FS CDC ACM (USB variant)"
+	default n
+	depends on USB_DEVICE_STACK_NEXT
+	help
+	  Enumerates the OTG FS controller as a CDC ACM device. Requires
+	  the usbotg_fs node enabled by the USB variant overlay
+	  (usb.overlay + usb.conf, P9 jumper on USB).
+
+config APOLLO_USB_VID
+	hex "USB vendor ID"
+	default 0x1209
+	depends on APOLLO_USB
+
+config APOLLO_USB_PID
+	hex "USB product ID"
+	default 0xA002
+	depends on APOLLO_USB
+
+config APOLLO_USB_MANUFACTURER
+	string "USB manufacturer string"
+	default "Alientek Apollo V2"
+	depends on APOLLO_USB
+
+config APOLLO_USB_PRODUCT
+	string "USB product string"
+	default "Apollo V2 H743 CDC ACM"
+	depends on APOLLO_USB
+
+endmenu
