@@ -19,11 +19,13 @@ manifest:
         name-allowlist:
           - cmsis_6
           - hal_stm32
+          - fatfs
           - littlefs
           - mbedtls
           - mcuboot
           - tf-psa-crypto
           - lvgl
+          - zcbor
 
     - name: canopen
       repo-path: canopen-zephyr
