@@ -36,6 +36,9 @@
 		zephyr,sram = &sram0;
 		zephyr,dtcm = &dtcm;
 		zephyr,flash = &flash0;
+		/* MCUboot 布局: 应用链入内部 slot0 (mcuboot 域构建时该 chosen
+		 * 被忽略, MCUboot 本体仍在 0x08000000) */
+		zephyr,code-partition = &slot0_partition;
 	};
 
 	/* FMC SDRAM bank1 内存区 (32MB, 控制器配置见 &fmc) */
@@ -88,16 +91,23 @@ touch_spi: touch-spi {
 	};
 };
 
+	/* 阿波罗 V2 LED 低电平点亮 (V1 实测, 见应用计划 §10.2 修复 #3) */
 	leds {
 		compatible = "gpio-leds";
 
 		red_led: led_0 {	/* DS0 红, 核心板 PB1 */
-			gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpiob 1 GPIO_ACTIVE_LOW>;
 			label = "DS0 Red";
 		};
 		green_led: led_1 {	/* DS1 绿, 底板 PB0 */
-			gpios = <&gpiob 0 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpiob 0 GPIO_ACTIVE_LOW>;
 			label = "DS1 Green";
+		};
+
+		/* TFTLCD 背光 PB5, 高电平点亮 (正点原子阿波罗 V2) */
+		lcd_bl: lcd-backlight {
+			gpios = <&gpiob 5 GPIO_ACTIVE_HIGH>;
+			label = "LCD Backlight";
 		};
 	};
 
@@ -106,22 +116,22 @@ touch_spi: touch-spi {
 
 		key_up: button_0 {	/* WK_UP, 按下接 3.3V, 可做待机唤醒 */
 			label = "KEY_UP";
-			gpios = <&gpioa 0 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpioa 0 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
 			zephyr,code = <INPUT_KEY_0>;
 		};
 		key_0: button_1 {	/* KEY0, 按下接地 */
 			label = "KEY0";
-			gpios = <&gpioh 3 GPIO_ACTIVE_LOW>;
+			gpios = <&gpioh 3 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 			zephyr,code = <INPUT_KEY_1>;
 		};
 		key_1: button_2 {	/* KEY1, 按下接地 */
 			label = "KEY1";
-			gpios = <&gpioh 2 GPIO_ACTIVE_LOW>;
+			gpios = <&gpioh 2 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 			zephyr,code = <INPUT_KEY_2>;
 		};
 		key_2: button_3 {	/* KEY2, 按下接地 */
 			label = "KEY2";
-			gpios = <&gpioc 13 GPIO_ACTIVE_LOW>;
+			gpios = <&gpioc 13 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 			zephyr,code = <INPUT_KEY_3>;
 		};
 	};
@@ -142,6 +152,32 @@ touch_spi: touch-spi {
 &clk_hse {
 	clock-frequency = <DT_FREQ_M(25)>;
 	status = "okay";
+};
+
+/* ============ MCUboot Flash 分区 (跨 Flash: 内部 slot0 + QSPI slot1) ============
+ * 布局 (实测教训: slot0 不得跨 H7 双 bank!):
+ *   - MCUboot 常驻 bank1 前部 (0x08000000, 256KB = 2 扇区)
+ *   - slot0 完全落在 bank2 (0x08100000, 1MB = 8 扇区): H7 仅支持跨 bank
+ *     读写 (RWW), swap 擦除 slot0 时 MCUboot 在 bank1 取指不受影响;
+ *     slot0 横跨 bank1 时 swap 擦除会卡死取指总线 (实测死锁)
+ *   - 升级镜像落 QSPI slot1 (与 slot0 等大), SWAP_SCRATCH 交换 */
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 0x00040000>;	/* 256KB = bank1 扇区 0-1 */
+			read-only;
+		};
+
+		slot0_partition: partition@100000 {
+			label = "slot0";
+			reg = <0x00100000 0x00100000>;	/* 1MB = bank2 整体 (8 扇区) */
+		};
+	};
 };
 
 /* PLL: 25MHz / 5(M) = 5MHz * 192(N) = 960MHz; / 2(P) = 480MHz SYSCLK,
@@ -271,6 +307,36 @@ touch_spi: touch-spi {
 		spi-bus-width = <4>;
 		writeoc = "PP_1_1_4";
 		status = "okay";
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/* MCUboot Secondary Slot: 与内部 slot0 等大 (swap 要求) */
+			slot1_partition: partition@0 {
+				label = "slot1";
+				reg = <0x00000000 0x00100000>;	/* 1MB */
+			};
+
+			/* SWAP_SCRATCH 暂存: >= 内部 slot0 单扇区 128KB */
+			scratch_partition: partition@100000 {
+				label = "scratch";
+				reg = <0x00100000 0x00040000>;	/* 256KB */
+			};
+
+			/* settings/配置区 (计划 §三, 暂未使用) */
+			storage_partition: partition@140000 {
+				label = "storage";
+				reg = <0x00140000 0x00200000>;	/* 2MB */
+			};
+
+			/* Web 静态资源/字库区 (计划 §三, 暂未使用) */
+			resources_partition: partition@340000 {
+				label = "resources";
+				reg = <0x00340000 0x00400000>;	/* 4MB */
+			};
+		};
 	};
 };
 
@@ -417,7 +483,11 @@ touch_spi: touch-spi {
 	};
 };
 
-/* ============ SDMMC1 TF 卡 (4 位) ============ */
+/* ============ SDMMC1 TF 卡 (4 位) ============
+ * 注意: 不加 idma (IT 模式)。本 fork 驱动 idma 路径按 32 字节缓存行做
+ * flush/invalidate, FATFS 内部 win[] 缓冲无对齐保证, 实测读到随机数据
+ * (MBR 签名时有时无 -> 挂载 -19)。IT 模式读取稳定 (hw-bringup 实测);
+ * V1 计划 §10.2 修复 #1 的 idma 待高负载写场景时重新评估 */
 &sdmmc1 {
 	status = "okay";
 	disk-name = "SD";
