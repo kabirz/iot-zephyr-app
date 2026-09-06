@@ -149,7 +149,6 @@ int main(void)
 	for (;;) {
 		k_msleep(500);
 		half_sec++;
-		board_io_led_toggle(0);	/* DS0 红心跳 */
 
 		if (status_half > 0 && (half_sec % status_half) == 0) {
 			status_line();

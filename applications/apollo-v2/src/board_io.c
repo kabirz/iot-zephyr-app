@@ -45,16 +45,6 @@ BUILD_ASSERT(ARRAY_SIZE(key_codes) == 4);
 static uint32_t key_counts[ARRAY_SIZE(key_codes)];
 static bool key_down[ARRAY_SIZE(key_codes)];
 
-/* WK_UP 提示音经独立 work 执行: input 回调可能运行在 system workqueue,
- * 不在其中做 I2C 传输/阻塞等待 */
-static struct k_work beep_work;
-
-static void beep_work_handler(struct k_work *work)
-{
-	ARG_UNUSED(work);
-	board_io_beep(50);
-}
-
 bool board_io_key_count(unsigned idx, uint32_t *count)
 {
 	if (idx >= ARRAY_SIZE(key_counts) || count == NULL) {
@@ -164,9 +154,7 @@ static void key_input_cb(struct input_event *evt, void *user_data)
 			if (evt->value) {
 				key_counts[i]++;
 				LOG_INF("KEY%zu pressed (%u)", i, key_counts[i]);
-				if (i == 0) {
-					k_work_submit(&beep_work);
-				} else {
+				if (i != 0) {
 					/* KEY0/1/2 翻转绿色 LED (输入->输出演示) */
 					board_io_led_toggle(1);
 				}
@@ -266,7 +254,6 @@ int board_io_ps_read(uint16_t *ps)
 
 int board_io_init(void)
 {
-	k_work_init(&beep_work, beep_work_handler);
 
 	/* PCF8574 状态跨复位保持: 静音必须最先做 (计划 §10.3 教训 #1)。
 	 * 注: pcf857x 驱动对首次 GPIO_OUTPUT 配置会误报一条 ERR (驱动

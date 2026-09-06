@@ -19,6 +19,7 @@
 #include <zephyr/fs/fs.h>
 #include <zephyr/logging/log.h>
 #include <lvgl.h>
+#include <zephyr/input/input.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -41,16 +42,6 @@ extern const lv_font_t apollo_cjk_16;
 static const lv_font_t *ui_font(void)
 {
 #ifdef CONFIG_APOLLO_FONT_QSPI
-	/* 启动后延迟 20s 再挂字库: 避开与 storage 线程 littlefs 挂载
-	 * 并发的 QSPI 驱动访问窗口 (实测该窗口内读 QSPI 会挂死) */
-	static bool delayed;
-
-	if (!delayed) {
-		delayed = true;
-		if (k_uptime_get() < K_SECONDS(20)) {
-			return &apollo_cjk_16;
-		}
-	}
 	return apollo_font_qspi_ready() ? &apollo_font_qspi : &apollo_cjk_16;
 #else
 	return &apollo_cjk_16;
@@ -107,6 +98,8 @@ static lv_obj_t *label_path;
 static lv_obj_t *label_count;
 static lv_obj_t *mnt_btns[2];
 static char cur_path[128] = "/SD:";
+static const struct device *lcd_dev;
+static bool screen_on = true;
 
 /* ---------------- 通用小工具 ---------------- */
 static void style_card(lv_obj_t *obj, int32_t w, int32_t h)
@@ -221,6 +214,25 @@ static void sens_timer_cb(lv_timer_t *t)
 		lv_label_set_text(sens_val[2], "--");
 	}
 }
+
+/* WK_UP (INPUT_KEY_0) 按下: 切换屏幕亮灭 (背光 + 面板消隐) */
+static void screen_key_cb(struct input_event *evt, void *user_data)
+{
+	ARG_UNUSED(user_data);
+
+	if (evt->type != INPUT_EV_KEY || evt->code != INPUT_KEY_0 ||
+	    evt->value == 0 || lcd_dev == NULL) {
+		return;
+	}
+	screen_on = !screen_on;
+	apollo_display_backlight_set(screen_on);
+	if (screen_on) {
+		display_blanking_off(lcd_dev);
+	} else {
+		display_blanking_on(lcd_dev);
+	}
+}
+INPUT_CALLBACK_DEFINE(NULL, screen_key_cb, NULL);
 
 static void key_timer_cb(lv_timer_t *t)
 {
@@ -656,6 +668,7 @@ static void display_thread_fn(void *p1, void *p2, void *p3)
 
 	const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
 
+	lcd_dev = disp;
 	/* 等 TF/QSPI 挂载完成: 字库读取不与挂载并发 (并发窗口内读 QSPI 会挂) */
 	storage_wait_mounts(K_SECONDS(30));
 

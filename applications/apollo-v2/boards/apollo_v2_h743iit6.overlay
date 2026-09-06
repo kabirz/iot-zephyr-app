@@ -14,3 +14,8 @@
 	sample-point = <875>;	/* per-mille */
 	status = "okay";
 };
+
+/* PA5 (TPAD/STM_ADC) 悬空时读数飘中值 (~2.5V), 使能下拉后空载读 ~0mV */
+&adc1_inp19_pa5 {
+	bias-pull-down;
+};
