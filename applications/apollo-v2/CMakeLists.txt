@@ -23,12 +23,27 @@ target_sources_ifdef(CONFIG_APOLLO_CAN app PRIVATE src/can.c)
 target_sources_ifdef(CONFIG_APOLLO_USB app PRIVATE src/usb.c)
 target_sources_ifdef(CONFIG_APOLLO_DISPLAY app PRIVATE
 	src/display.c
+	src/font_qspi.c
 	${apps_root}/fonts/apollo_cjk_16.c
 )
 # 字体文件用 "lvgl.h" 简单包含
 target_compile_definitions_ifdef(CONFIG_APOLLO_DISPLAY app PRIVATE
 	LV_LVGL_H_INCLUDE_SIMPLE
 )
+target_sources_ifdef(CONFIG_APOLLO_WEB app PRIVATE
+	src/web.c
+	src/ws.c
+)
+
+# 内嵌 Web 首页 -> .inc (编译进固件)
+if(CONFIG_APOLLO_WEB)
+	set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated)
+	generate_inc_file_for_target(app
+		${CMAKE_CURRENT_SOURCE_DIR}/src/web/index.html
+		${gen_dir}/web_index_html.inc)
+	# HTTP 资源描述 iterable section (服务 apollo_web 对应的链接段)
+	zephyr_linker_sources(SECTIONS src/web/sections-rom.ld)
+endif()
 
 # git 短哈希 -> fw_gitver.h (与 libs 固件升级库共用 gen_gitver.py)
 set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated)

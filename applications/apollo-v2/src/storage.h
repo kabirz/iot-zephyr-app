@@ -9,6 +9,7 @@ struct apollo_storage_info {
 	bool qspi_ok;		/* W25Q256 就绪 */
 	bool sdram_ok;		/* W9825G6KH 走样通过 */
 	bool sd_mounted;	/* TF 卡 /SD: 挂载成功 */
+	bool qspi_fs_mounted;	/* QSPI 资源区 /QSPI: (LittleFS) 挂载成功 */
 };
 
 const struct apollo_storage_info *storage_info(void);

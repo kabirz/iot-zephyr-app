@@ -16,6 +16,15 @@ config APOLLO_DISPLAY
 	  IP address, storage and CAN counters, refreshed once a second.
 	  Touch (XPT2046) is wired to the LVGL pointer input.
 
+config APOLLO_WEB
+	bool "Web panel (HTTP :80, info + control)"
+	default y
+	depends on HTTP_SERVER
+	help
+	  Embedded Chinese dashboard on port 80: device info cards
+	  (2s polling), output control buttons, RTC time setting and
+	  reboot. REST: /api/info, /api/ctl, /api/time, /api/reboot.
+
 config APOLLO_STATUS_PERIOD
 	int "Status log period in seconds (0 disables)"
 	default 10

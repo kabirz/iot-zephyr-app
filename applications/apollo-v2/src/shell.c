@@ -16,6 +16,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/flash.h>
 #include <zephyr/storage/disk_access.h>
+#include <zephyr/fs/fs.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,176 @@
 /* main.c: MCUboot 镜像确认 */
 extern int apollo_fw_confirm(void);
 
+#ifdef CONFIG_APOLLO_DISPLAY
+/* font_qspi.c: 安装 QSPI 中文字库 */
+int apollo_font_install(void);
+
+static int cmd_fontinstall(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(sh);
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	return apollo_font_install();
+}
+
+extern void apollo_font_dump_header(char *out, size_t outsz);
+
+static int cmd_fontdump(const struct shell *sh, size_t argc, char **argv)
+{
+	char buf[96];
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	apollo_font_dump_header(buf, sizeof(buf));
+	shell_print(sh, "font partition[0..15]: %s", buf);
+	return 0;
+}
+#endif
+
+/* LittleFS /QSPI: 写读持久化自测: apollo lstest */
+static int cmd_lstest(const struct shell *sh, size_t argc, char **argv)
+{
+	struct fs_file_t f;
+	char rbuf[32] = { 0 };
+	struct fs_dirent de;
+	struct fs_statvfs st;
+	int rc;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	fs_file_t_init(&f);
+	rc = fs_open(&f, "/QSPI:/t.txt", FS_O_CREATE | FS_O_WRITE);
+	shell_print(sh, "open(w) = %d", rc);
+	if (rc) return rc;
+	rc = fs_write(&f, "hello-apollo", 12);
+	shell_print(sh, "write = %d", rc);
+	rc = fs_close(&f);
+	shell_print(sh, "close = %d", rc);
+
+	rc = fs_stat("/QSPI:/t.txt", &de);
+	shell_print(sh, "stat = %d (type=%d size=%u)", rc, de.type, de.size);
+
+	fs_file_t_init(&f);
+	rc = fs_open(&f, "/QSPI:/t.txt", FS_O_READ);
+	shell_print(sh, "open(r) = %d", rc);
+	if (rc == 0) {
+		fs_read(&f, rbuf, 12);
+		fs_close(&f);
+	}
+	shell_print(sh, "read  = '%s' %s", rbuf,
+		    strcmp(rbuf, "hello-apollo") == 0 ? "PERSIST-OK" : "MISMATCH");
+
+	rc = fs_statvfs("/QSPI:", &st);
+	if (rc == 0) {
+		shell_print(sh, "statvfs: %u KB free / %u KB",
+			    (unsigned)(st.f_bfree * st.f_bsize / 1024),
+			    (unsigned)(st.f_blocks * st.f_bsize / 1024));
+	}
+	return 0;
+}
+
+/* /QSPI: 重格式化 (超级块 block_count 错误时修复): apollo lsformat */
+static int cmd_lsformat(const struct shell *sh, size_t argc, char **argv)
+{
+	struct fs_mount_t *mp;
+	struct fs_statvfs st;
+	int rc;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	/* 挂载结构在 storage.c, 经 fs_unmount + fs_mkfs + fs_mount 重建 */
+	extern struct fs_mount_t *apollo_qspi_mountp(void);
+
+	mp = apollo_qspi_mountp();
+	rc = fs_unmount(mp);
+	shell_print(sh, "unmount = %d", rc);
+	rc = fs_mkfs(FS_LITTLEFS, (uintptr_t)mp->storage_dev, NULL, 0);
+	shell_print(sh, "mkfs = %d", rc);
+	rc = fs_mount(mp);
+	shell_print(sh, "mount = %d", rc);
+	rc = fs_statvfs("/QSPI:", &st);
+	if (rc == 0) {
+		shell_print(sh, "statvfs: %u KB total / %u KB free (bsize %u)",
+			    (unsigned)(st.f_blocks * st.f_bsize / 1024),
+			    (unsigned)(st.f_bfree * st.f_bsize / 1024),
+			    st.f_bsize);
+	}
+	return 0;
+}
+
+/* QSPI raw 写读持久化测试: apollo qspit [check]
+ * 无 check: 擦 0x340000 起 4KB, 写 pattern; 有 check: 读回比对 */
+static int cmd_qspit(const struct shell *sh, size_t argc, char **argv)
+{
+	const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(qspi_nor));
+	static uint8_t wbuf[256], rbuf[256];
+	off_t off = 0x340000;
+	int ret;
+
+	if (!device_is_ready(dev)) {
+		shell_error(sh, "qspi not ready");
+		return -ENODEV;
+	}
+	for (int i = 0; i < 256; i++) {
+		wbuf[i] = (uint8_t)(i * 7 + 0x5A);
+	}
+
+	if (argc >= 2 && strcmp(argv[1], "check") == 0) {
+		ret = flash_read(dev, off, rbuf, 256);
+		if (ret != 0) {
+			shell_error(sh, "read failed %d", ret);
+			return ret;
+		}
+		bool ok = memcmp(wbuf, rbuf, 256) == 0;
+
+		shell_print(sh, "check: %s (首8: %02x %02x %02x %02x %02x %02x %02x %02x)",
+			    ok ? "PERSIST-OK" : "MISMATCH",
+			    rbuf[0], rbuf[1], rbuf[2], rbuf[3],
+			    rbuf[4], rbuf[5], rbuf[6], rbuf[7]);
+		return ok ? 0 : -1;
+	}
+
+	ret = flash_erase(dev, off, 4096);
+	shell_print(sh, "erase = %d", ret);
+	if (ret) return ret;
+	ret = flash_write(dev, off, wbuf, 256);
+	shell_print(sh, "write = %d", ret);
+	if (ret) return ret;
+	memset(rbuf, 0, sizeof(rbuf));
+	ret = flash_read(dev, off, rbuf, 256);
+	shell_print(sh, "read = %d, 同会话比对 %s", ret,
+		    memcmp(wbuf, rbuf, 256) == 0 ? "OK" : "FAIL");
+	return 0;
+}
+
+/* RCC_RSR (0x580244D0) 复位原因: apollo rsr [clear] */
+static int cmd_rsr(const struct shell *sh, size_t argc, char **argv)
+{
+	volatile uint32_t *rsr = (volatile uint32_t *)0x580244D0;
+	uint32_t v = *rsr;
+	static const struct {
+		uint8_t bit;
+		const char *name;
+	} flags[] = {
+		{ 16, "RMVF" }, { 17, "CPU" },  { 18, "?" },     { 19, "D1" },
+		{ 20, "D2" },   { 21, "BOR" },  { 22, "PIN" },   { 23, "POR" },
+		{ 24, "SFTR" }, { 25, "IWDG" }, { 26, "WWDG" },  { 27, "LPWR" },
+	};
+
+	shell_print(sh, "RCC_RSR = 0x%08x", v);
+	for (size_t i = 0; i < ARRAY_SIZE(flags); i++) {
+		if (v & BIT(flags[i].bit)) {
+			shell_print(sh, "  %sRSTF", flags[i].name);
+		}
+	}
+	if (argc >= 2 && strcmp(argv[1], "clear") == 0) {
+		*rsr = 0x0001FFFF;	/* RMVF: 清全部标志 */
+		shell_print(sh, "cleared -> 0x%08x", *rsr);
+	}
+	return 0;
+}
 /* QSPI W25Q256 扇区擦除 (救援用): apollo qspie <hex-offset> <hex-len> */
 static int cmd_qspie(const struct shell *sh, size_t argc, char **argv)
 {
@@ -130,6 +301,15 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "qspi     %s", si->qspi_ok ? "ok" : "n/a");
 	shell_print(sh, "sdram    %s", si->sdram_ok ? "ok" : "n/a");
 	shell_print(sh, "tf card  %s", si->sd_mounted ? "/SD: mounted" : "not mounted");
+	shell_print(sh, "qspi fs  %s", si->qspi_fs_mounted ? "/QSPI: mounted" : "not mounted");
+#ifdef CONFIG_APOLLO_DISPLAY
+	{
+		extern bool apollo_font_qspi_ready(void);
+
+		shell_print(sh, "font     %s", apollo_font_qspi_ready() ?
+			    "QSPI (memmap)" : "builtin subset");
+	}
+#endif
 	shell_print(sh, "ipv4     %s%s", net_ip_str() ? net_ip_str() : "(none)",
 		    net_ip_source() == NET_IP_DHCP ? " (dhcp)" :
 		    net_ip_source() == NET_IP_STATIC_FALLBACK ? " (static fallback)" : "");
@@ -304,6 +484,17 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 		      cmd_qspie, 3, 0),
 	SHELL_CMD_ARG(sdump, NULL, "sdump <dec-lba> (TF sector hexdump)",
 		      cmd_sdump, 2, 0),
+	SHELL_CMD_ARG(rsr, NULL, "rsr [clear] (reset cause)", cmd_rsr, 1, 1),
+	SHELL_CMD(lstest, NULL, "littlefs /QSPI: write-read persist test", cmd_lstest),
+	SHELL_CMD(lsformat, NULL, "reformat /QSPI: littlefs", cmd_lsformat),
+	SHELL_CMD_ARG(qspit, NULL, "qspit [check] (raw write/read persist)",
+		      cmd_qspit, 1, 1),
+#ifdef CONFIG_APOLLO_DISPLAY
+	SHELL_CMD(fontinstall, NULL,
+		  "install QSPI font from /QSPI:/font.bin (then reboot)",
+		  cmd_fontinstall),
+	SHELL_CMD(fontdump, NULL, "hexdump font partition header", cmd_fontdump),
+#endif
 	SHELL_SUBCMD_SET_END
 );
 

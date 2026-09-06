@@ -15,6 +15,7 @@
   smp_udp.py <host> test                     # 标记 pending 为试运行 (复位后 swap, 不确认则回滚)
   smp_udp.py <host> confirm                  # 确认当前运行镜像
   smp_udp.py <host> reset                    # 复位重启
+  smp_udp.py <host> fswrite <local> <remote> # 上传文件到设备 fs (如字库)
 可选: --port 1337 --chunk 512 --timeout 2.0
 """
 import argparse
@@ -33,10 +34,12 @@ MGMT_OP_WRITE_RSP = 3
 
 MGMT_GROUP_OS = 0
 MGMT_GROUP_IMAGE = 1
+MGMT_GROUP_FS = 8
 
 IMG_MGMT_ID_STATE = 0
 IMG_MGMT_ID_UPLOAD = 1
 OS_MGMT_ID_RESET = 5
+FS_MGMT_ID_FILE = 0
 
 
 # ---------------- 极简 CBOR ----------------
@@ -147,6 +150,7 @@ class SmpClient:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(timeout)
         self.addr = (host, port)
+        self.timeout = timeout
         self.seq = 0
         self.retries = 10
 
@@ -264,18 +268,78 @@ def cmd_reset(c, _args):
     return 0
 
 
+def cmd_fswrite(c, args):
+    """上传文件到设备文件系统 (fs_mgmt), 如字库 /SD:/font.bin"""
+    with open(args.file, "rb") as f:
+        data = f.read()
+    remote = args.remote
+    total = len(data)
+    print(f"fswrite {args.file} -> {remote}: {total} 字节")
+    off = 0
+    first = True
+    chunk = 512
+    t0 = time.time()
+    t_last = 0.0
+    fails = 0
+    while off < total:
+        end = min(off + chunk, total)
+        payload = {"name": remote, "off": off, "data": data[off:end]}
+        if first:
+            payload["len"] = total
+            first = False
+        try:
+            r = c.write(MGMT_GROUP_FS, FS_MGMT_ID_FILE, payload)
+        except RuntimeError:
+            r = {"rc": -99}
+        err = r.get("rc")
+        if err:
+            # SD 写在 IT 模式下遇负载会偶发失败 (V1 教训 #1 场景):
+            # fs_mgmt 会话支持断点续传, 从最后确认偏移重试
+            fails += 1
+            if fails > 200:
+                print(f"\n重试超限放弃 (off={off}, rc={err})")
+                return 1
+            time.sleep(0.2)
+            c = SmpClient(c.addr[0], c.addr[1], c.timeout)
+            continue
+        ack = r.get("off", off)
+        if ack == off:
+            if chunk > 128:
+                chunk //= 2
+                continue
+            raise RuntimeError("设备未推进偏移")
+        off = ack
+        print(f"\r  {off*100//total}%", end="", flush=True)
+        if args.rate:
+            dt_min = 1.0 / args.rate
+            dt_now = time.time() - t_last
+            if dt_now < dt_min:
+                time.sleep(dt_min - dt_now)
+        t_last = time.time()
+    dt = time.time() - t0
+    print(f"\n完成: {total} 字节 / {dt:.1f}s (重试 {fails} 次)")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="极简 SMP over UDP 客户端")
     ap.add_argument("host")
-    ap.add_argument("command", choices=["list", "upload", "test", "confirm", "reset"])
-    ap.add_argument("file", nargs="?", help="upload: signed .bin")
+    ap.add_argument("command",
+                   choices=["list", "upload", "test", "confirm", "reset", "fswrite"])
+    ap.add_argument("file", nargs="?", help="upload/fswrite: local file")
+    ap.add_argument("remote", nargs="?", help="fswrite: remote path e.g. /SD:/font.bin")
     ap.add_argument("--port", type=int, default=1337)
     ap.add_argument("--chunk", type=int, default=512, help="每包数据字节数")
     ap.add_argument("--timeout", type=float, default=2.0)
+    ap.add_argument("--rate", type=int, default=0,
+                    help="fswrite 限速 (packets/s, 0=不限; 板子供电余量不足时"
+                         "用 ~50 摊薄 QSPI 擦写电流突发)")
     args = ap.parse_args()
 
     if args.command == "upload" and not args.file:
         ap.error("upload 需要文件参数")
+    if args.command == "fswrite" and (not args.file or not args.remote):
+        ap.error("fswrite 需要 <本地文件> <设备路径> 参数")
 
     c = SmpClient(args.host, args.port, args.timeout)
     rc = {
@@ -284,6 +348,7 @@ def main():
         "test": cmd_test,
         "confirm": cmd_confirm,
         "reset": cmd_reset,
+        "fswrite": cmd_fswrite,
     }[args.command](c, args)
     sys.exit(rc or 0)
 

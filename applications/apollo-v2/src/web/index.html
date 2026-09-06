@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>apollo-v2</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%233b82f6'/%3E%3Cstop offset='1' stop-color='%2360a5fa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='42' font-family='Arial,sans-serif' font-size='22' font-weight='700' fill='%23fff' text-anchor='middle'%3EA2%3C/text%3E%3C/svg%3E">
+<style>
+:root{
+	--bg:#f5f6f8;--card:#ffffff;--txt:#1f2430;--sub:#7a8194;--line:#e7e9ee;
+	--acc:#3b82f6;--on:#10b981;--off:#cbd2dd;--warn:#f59e0b;--err:#ef4444;
+	--rad:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--txt);font:14px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--acc);text-decoration:none}
+
+.layout{display:flex;min-height:100vh}
+aside{width:224px;flex:none;background:var(--card);border-right:1px solid var(--line);
+	display:flex;flex-direction:column;padding:18px 14px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:12px;padding:4px 8px 18px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.brand .logo{width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#3b82f6,#60a5fa);
+	display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px;
+	box-shadow:0 2px 6px rgba(59,130,246,.35)}
+.brand h1{font-size:15.5px;font-weight:650;line-height:1.3}
+.brand .hsub{color:var(--sub);font-size:11px}
+nav{display:flex;flex-direction:column;gap:4px}
+nav button{display:flex;align-items:center;gap:11px;border:0;background:none;text-align:left;
+	padding:10px 14px;border-radius:10px;font:inherit;font-size:14px;color:var(--sub);cursor:pointer;transition:.15s}
+nav button svg{width:18px;height:18px;flex:none;opacity:.85}
+nav button:hover{background:#f0f3f8;color:var(--txt)}
+nav button.on{background:var(--acc);color:#fff;font-weight:550;box-shadow:0 2px 8px rgba(59,130,246,.3)}
+nav button.on:hover{background:var(--acc)}
+.side-foot{margin-top:auto;padding:12px 8px 2px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#fafbfc;border:1px solid var(--line);
+	border-radius:99px;padding:3px 12px;font-size:12px;color:var(--sub);width:fit-content}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--err);flex:none}
+.dot.ok{background:var(--on)}
+
+main{flex:1;min-width:0;padding:26px 30px 48px;max-width:1060px;margin:0 auto}
+.topbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px}
+.topbar h2{font-size:19px;font-weight:650}
+.topbar .spacer{flex:1}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--rad);padding:18px 20px;margin-bottom:16px;
+	box-shadow:0 1px 2px rgba(20,30,50,.04)}
+.card h3{font-size:15px;font-weight:650;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.card .tip{font-size:12px;color:var(--sub);margin-bottom:14px}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+
+.kv{display:grid;grid-template-columns:110px 1fr;gap:6px 12px;font-size:13px}
+.kv div:nth-child(odd){color:var(--sub)}
+.kv .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+
+.st-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.st-item{border:1px solid var(--line);border-radius:9px;padding:10px 14px;background:#fafbfc;
+	display:flex;align-items:center;justify-content:space-between}
+.st-item .nm{font-size:13px;color:var(--txt)}
+.badge{display:inline-block;font-size:11px;border-radius:5px;padding:1px 7px;background:#eef2ff;color:#6366f1}
+.badge.g{background:#ecfdf5;color:#059669}
+.badge.y{background:#fffbeb;color:#d97706}
+.badge.r{background:#fef2f2;color:#dc2626}
+
+.do-item{display:flex;align-items:center;justify-content:space-between;border:1px solid var(--line);
+	border-radius:9px;padding:12px 16px;background:#fafbfc;margin-bottom:10px}
+.do-item .nm{font-size:13.5px;font-weight:600}
+.do-item .ds{font-size:12px;color:var(--sub);margin-top:1px}
+.sw{position:relative;width:42px;height:24px;flex:none;cursor:pointer}
+.sw input{opacity:0;width:0;height:0}
+.sw i{position:absolute;inset:0;background:var(--off);border-radius:99px;transition:.2s}
+.sw i:before{content:"";position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;top:3px;left:3px;transition:.2s;
+	box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.sw input:checked+i{background:var(--on)}
+.sw input:checked+i:before{left:21px}
+
+.ai-card{border:1px solid var(--line);border-radius:9px;padding:12px 14px;background:#fafbfc}
+.ai-card .nm{font-size:12px;color:var(--sub);display:flex;justify-content:space-between}
+.ai-card .val{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0 8px}
+.ai-card .val small{font-size:12px;font-weight:500;color:var(--sub);margin-left:3px}
+.bar{height:6px;border-radius:99px;background:#edf0f4;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#60a5fa,#3b82f6);width:0%;transition:.3s}
+
+.key-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+@media(max-width:720px){.key-grid{grid-template-columns:repeat(2,1fr)}}
+.key-chip{border:1px solid var(--line);border-radius:9px;padding:10px;text-align:center;background:#fafbfc}
+.key-chip .nm{font-size:12px;color:var(--sub)}
+.key-chip .ct{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);color:var(--txt);
+	border-radius:8px;padding:6px 16px;font:inherit;font-size:13px;cursor:pointer;transition:.15s}
+.btn:hover{border-color:#c9d2e0;background:#f8fafc}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.pri:hover{background:#2563eb}
+.btn.danger{color:var(--err);border-color:#fecaca}
+.btn.danger:hover{background:#fef2f2}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+input[type=datetime-local]{border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit;
+	background:#fff;color:var(--txt);color-scheme:light}
+
+.up-drop{border:2px dashed var(--line);border-radius:var(--rad);padding:22px;text-align:center;color:var(--sub);
+	cursor:pointer;transition:.15s;font-size:13px}
+.up-drop:hover,.up-drop.hover{border-color:var(--acc);background:#f0f6ff}
+.up-drop b{color:var(--txt)}
+.prog{height:10px;border-radius:99px;background:#edf0f4;overflow:hidden;margin:12px 0 4px;display:none}
+.prog i{display:block;height:100%;background:linear-gradient(90deg,#60a5fa,#3b82f6);width:0%;transition:.2s}
+#toast{position:fixed;right:22px;bottom:22px;background:#1f2430;color:#fff;border-radius:10px;
+	padding:10px 18px;font-size:13px;box-shadow:0 6px 18px rgba(20,30,50,.3);opacity:0;transform:translateY(8px);
+	transition:.25s;pointer-events:none;z-index:9}
+#toast.show{opacity:1;transform:none}
+.page{display:none}
+.page.on{display:block}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<div class="layout">
+<aside>
+	<div class="brand">
+		<div class="logo">A2</div>
+		<div><h1>apollo-v2</h1><div class="hsub" id="fw-mini">STM32H743</div></div>
+	</div>
+	<nav id="nav">
+		<button data-p="dash" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>总览</button>
+		<button data-p="out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v10M7 9l5 5 5-5M5 21h14"/></svg>输出控制</button>
+		<button data-p="sens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h3l3-8 4 16 3-8h7"/></svg>传感与按键</button>
+		<button data-p="sys"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12a7 7 0 0 0 .1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6A7 7 0 0 0 19 12z"/></svg>系统</button>
+	</nav>
+	<div class="side-foot">
+		<span class="chip"><i class="dot" id="net-dot"></i><span id="net-chip">网络</span></span>
+		<span class="chip"><i class="dot" id="fs-dot"></i><span id="fs-chip">存储</span></span>
+	</div>
+</aside>
+
+<main>
+<div class="topbar"><h2 id="pg-title">总览</h2><div class="spacer"></div><span class="chip mono" id="uptime">-</span></div>
+
+<!-- 总览 -->
+<section class="page on" id="pg-dash">
+	<div class="grid g2">
+		<div class="card"><h3>设备信息</h3><div class="tip">固件与运行状态</div>
+			<div class="kv" id="kv-dev"></div>
+		</div>
+		<div class="card"><h3>网络</h3><div class="tip">以太网 (YT8512C)</div>
+			<div class="kv" id="kv-net"></div>
+		</div>
+	</div>
+	<div class="card"><h3>存储</h3><div class="tip">TF / QSPI / SDRAM</div>
+		<div class="st-grid" id="st-grid"></div>
+	</div>
+	<div class="card"><h3>CAN 总线</h3><div class="tip">FDCAN1 @500k</div>
+		<div class="kv" id="kv-can"></div>
+	</div>
+</section>
+
+<!-- 输出控制 -->
+<section class="page" id="pg-out">
+	<div class="card"><h3>板载输出</h3><div class="tip">与 LCD 主页输出卡片 / Modbus 未来的 DO 共用同一路径</div>
+		<div class="do-item"><div><div class="nm">红灯 DS0 (PB1)</div><div class="ds">低电平点亮</div></div>
+			<label class="sw"><input type="checkbox" id="sw-led0"><i></i></label></div>
+		<div class="do-item"><div><div class="nm">绿灯 DS1 (PB0)</div><div class="ds">低电平点亮</div></div>
+			<label class="sw"><input type="checkbox" id="sw-led1"><i></i></label></div>
+		<div class="do-item"><div><div class="nm">蜂鸣器</div><div class="ds">PCF8574 P0</div></div>
+			<label class="sw"><input type="checkbox" id="sw-beep"><i></i></label></div>
+		<div class="do-item" style="margin-bottom:0"><div><div class="nm">LCD 背光</div><div class="ds">PB5</div></div>
+			<label class="sw"><input type="checkbox" id="sw-bl" checked><i></i></label></div>
+	</div>
+</section>
+
+<!-- 传感与按键 -->
+<section class="page" id="pg-sens">
+	<div class="card"><h3>传感器</h3><div class="tip">ADC / AP3216C 光照与接近</div>
+		<div class="grid g3">
+			<div class="ai-card"><div class="nm"><span>ADC 电压</span></div>
+				<div class="val" id="v-adc">-<small>mV</small></div>
+				<div class="bar"><i id="b-adc"></i></div></div>
+			<div class="ai-card"><div class="nm"><span>光照 ALS</span></div>
+				<div class="val" id="v-als">-<small></small></div>
+				<div class="bar"><i id="b-als"></i></div></div>
+			<div class="ai-card"><div class="nm"><span>接近 PS</span></div>
+				<div class="val" id="v-ps">-<small></small></div>
+				<div class="bar"><i id="b-ps"></i></div></div>
+		</div>
+	</div>
+	<div class="card" style="margin-bottom:0"><h3>按键计数</h3><div class="tip">自上电起累计 (上键 WK_UP / KEY0-2)</div>
+		<div class="key-grid" id="key-grid"></div>
+	</div>
+</section>
+
+<!-- 系统 -->
+<section class="page" id="pg-sys">
+	<div class="grid g2">
+		<div class="card"><h3>时间设置</h3><div class="tip">RTC 存储 UTC, 显示为本地 UTC+8</div>
+			<div class="row">
+				<input type="datetime-local" id="dt">
+				<button class="btn pri" id="b-time">设置</button>
+			</div>
+			<div class="tip" style="margin:10px 0 0">当前: <b id="cur-time">-</b></div>
+		</div>
+		<div class="card"><h3>固件升级</h3><div class="tip">上传签名镜像 (zephyr.signed.bin), 完成后自动重启换片</div>
+			<div class="up-drop" id="up-drop">点击选择或拖入 <b>zephyr.signed.bin</b></div>
+			<input type="file" id="up-file" hidden>
+			<div class="prog" id="up-prog"><i id="up-bar"></i></div>
+			<div class="row" style="margin-top:8px">
+				<button class="btn pri" id="b-up" disabled>开始升级</button>
+				<span class="tip" id="up-st" style="margin:0"></span>
+			</div>
+		</div>
+		<div class="card"><h3>中文字库</h3><div class="tip">安装 GB2312 全量字库到 QSPI (font.bin, ~511KB), 完成后自动重启</div>
+			<div class="up-drop" id="font-drop">点击选择或拖入 <b>font.bin</b></div>
+			<input type="file" id="font-file" hidden>
+			<div class="prog" id="font-prog"><i id="font-bar"></i></div>
+			<div class="row" style="margin-top:8px">
+				<button class="btn pri" id="b-font" disabled>安装字库</button>
+				<span class="tip" id="font-st2" style="margin:0">状态: <span id="font-st" class="badge">-</span></span>
+			</div>
+		</div>
+		<div class="card"><h3>维护</h3><div class="tip">重启</div>
+			<div class="row">
+				<button class="btn danger" id="b-reboot">重启设备</button>
+			</div>
+			<div class="tip" style="margin-top:12px">命令行通道: <span class="mono">smp_udp.py &lt;ip&gt; upload</span></div>
+		</div>
+	</div>
+	<div class="card" style="margin-bottom:0"><h3>构建信息</h3>
+		<div class="kv" id="kv-build"></div>
+	</div>
+</section>
+</main>
+</div>
+<div id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+let st={};
+function toast(s){const t=$('toast');t.textContent=s;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2200)}
+async function info(){
+	try{
+		st=await (await fetch('/api/info')).json();
+		render();
+	}catch(e){}
+}
+function render(){
+	if(!st||!st.fw)return;
+	{
+		$('fw-mini').textContent='v'+st.fw;
+		$('uptime').textContent='运行 '+fmtUp(st.uptime_s);
+		const kvd=[['固件版本',st.fw],['运行时间',fmtUp(st.uptime_s)],['设备时间',st.time],['看门狗','未启用']];
+		$('kv-dev').innerHTML=kvd.map(x=>`<div>${x[0]}</div><div class="mono">${x[1]}</div>`).join('');
+		$('kv-net').innerHTML=[['IP 地址',st.ip],['来源',st.net]].map(x=>`<div>${x[0]}</div><div class="mono">${x[1]}</div>`).join('');
+		const sts=[
+			['TF 卡 /SD:',st.sd,'已挂载|未挂载'],
+			['QSPI /QSPI:',st.qspi_fs,'已挂载|未挂载'],
+			['QSPI 闪存',st.qspi,'正常|异常'],
+			['SDRAM 32MB',st.sdram,'正常|异常'],
+			['中文字库',st.font,'QSPI 已装载|未安装']];
+		$('st-grid').innerHTML=sts.map(x=>`<div class="st-item"><span class="nm">${x[0]}</span>
+			<span class="badge ${x[1]?'g':'r'}">${x[1]?x[2].split('|')[0]:x[2].split('|')[1]}</span></div>`).join('');
+		$('fs-dot').className='dot'+(st.sd||st.qspi_fs?' ok':'');
+		$('fs-chip').textContent=(st.sd?'TF ':'')+(st.qspi_fs?'+ QSPI':'存储');
+		$('net-dot').className='dot'+(st.ip?' ok':'');
+		$('net-chip').textContent=st.ip?st.ip:'离线';
+		$('kv-can').innerHTML=(st.can_rx!==undefined?
+			[['接收帧数',st.can_rx],['发送帧数',st.can_tx]]:[['CAN','未启用']])
+			.map(x=>`<div>${x[0]}</div><div class="mono">${x[1]}</div>`).join('');
+		setVal('v-adc','v'+st.adc_mv,st.adc_mv);$('v-adc').innerHTML=st.adc_mv+'<small>mV</small>';
+		$('b-adc').style.width=Math.min(100,st.adc_mv/33)+'%';
+		$('v-als').innerHTML=st.als+'<small></small>';
+		$('b-als').style.width=Math.min(100,st.als/30)+'%';
+		$('v-ps').innerHTML=st.ps+'<small></small>';
+		$('b-ps').style.width=Math.min(100,st.ps/10.23)+'%';
+		if(!$('key-grid').children.length){
+			['上键','键0','键1','键2'].forEach((n,i)=>{
+				const d=document.createElement('div');d.className='key-chip';
+				d.innerHTML=`<div class="nm">${n}</div><div class="ct" id="kc-${i}">0</div>`;
+				$('key-grid').appendChild(d);});
+		}
+		st.keys.forEach((v,i)=>{const e=$('kc-'+i);if(e)e.textContent=v;});
+		$('cur-time').textContent=st.time;
+		const fs=$('font-st');fs.className='badge '+(st.font?'g':'y');fs.textContent=st.font?'已装载':'未安装';
+		$('kv-build').innerHTML=[['构建时间',st.build],['板卡','apollo_v2_h743iit6'],['RTOS','Zephyr 4.4']]
+			.map(x=>`<div>${x[0]}</div><div class="mono">${x[1]}</div>`).join('');
+	}
+}
+function fmtUp(s){s|=0;const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;return(d?d+'天 ':'')+(h?h+'时 ':'')+m+'分'}
+function setVal(){}
+async function post(url,body){try{return await (await fetch(url,{method:'POST',body:JSON.stringify(body||{})})).json()}catch(e){return null}}
+
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
+	document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('on',x===b));
+	document.querySelectorAll('.page').forEach(p=>p.classList.toggle('on',p.id==='pg-'+b.dataset.p));
+	$('pg-title').textContent=b.textContent.replace(/总览|输出控制|传感与按键|系统/,m=>m);
+});
+
+function sw(id,key){$(id).onchange=e=>{post('/api/ctl',{[key]:e.target.checked?1:0}).then(r=>r&&r.ok?toast('已下发'):toast('失败'))}}
+sw('sw-led0','led0');sw('sw-led1','led1');sw('sw-beep','beep');sw('sw-bl','bl');
+$('b-time').onclick=()=>{
+	const v=$('dt').value.replace('T',' ');
+	if(!v)return toast('先选择时间');
+	post('/api/time',{time:v}).then(r=>toast(r&&r.ok?'时间已设置':'设置失败'));
+};
+$('b-reboot').onclick=()=>{
+	if(!confirm('确认重启设备?'))return;
+	post('/api/reboot');toast('重启中 ...');
+	setTimeout(()=>location.reload(),5000);
+};
+
+/* ---------- 中文字库安装 (font_start -> binary -> font_end) ---------- */
+let fontFile=null;
+const fdrop=$('font-drop'),fontInput=$('font-file');
+fdrop.onclick=()=>fontInput.click();
+fdrop.ondragover=e=>{e.preventDefault();fdrop.classList.add('hover')};
+fdrop.ondragleave=()=>fdrop.classList.remove('hover');
+fdrop.ondrop=e=>{e.preventDefault();fdrop.classList.remove('hover');
+	if(e.dataTransfer.files[0])pickFont(e.dataTransfer.files[0])};
+fontInput.onchange=()=>pickFont(fontInput.files[0]);
+function pickFont(f){
+	if(!f)return;
+	fontFile=f;
+	fdrop.innerHTML='已选择 <b>'+f.name+'</b> ('+(f.size/1024|0)+' KB)';
+	$('b-font').disabled=false;
+}
+$('b-font').onclick=async()=>{
+	if(!fontFile)return;
+	if(!ws||ws.readyState!==1)return toast('WebSocket 未连接');
+	$('b-font').disabled=true;
+	$('font-prog').style.display='block';
+	ws.send(JSON.stringify({cmd:'font_start',size:fontFile.size}));
+	toast('正在擦除字库分区 ...');
+	/* 等待擦除完成: 固件擦除期推送 {t:"font"} 进度, 擦完自动切回 info 帧 */
+	await new Promise(resolve=>{
+		const h=e=>{try{
+			const d=JSON.parse(e.data);
+			if(d.t==='font'){result_erase=d.done}
+			else if(result_erase>0){ws.removeEventListener('message',h);resolve()}
+		}catch(_){}};
+		let result_erase=0;
+		ws.addEventListener('message',h);
+	});
+	const buf=new Uint8Array(await fontFile.arrayBuffer());
+	const CH=512;
+	for(let off=0;off<buf.length;off+=CH){
+		ws.send(buf.subarray(off,Math.min(off+CH,buf.length)));
+		$('font-bar').style.width=(off*100/buf.length).toFixed(1)+'%';
+		await new Promise(r=>setTimeout(r,20));
+	}
+	ws.send(JSON.stringify({cmd:'font_end'}));
+	toast('安装完成, 设备重启中 ...');
+	setTimeout(()=>location.reload(),9000);
+};
+/* ---------- WebSocket 实时推送 (断线降级轮询) ---------- */
+let ws=null,ws_ok=false;
+function wsConnect(){
+	try{ws=new WebSocket('ws://'+location.host+'/ws')}catch(e){fallback();return}
+	ws.onopen=()=>{ws_ok=true;toast('实时推送已连接')};
+	ws.onmessage=e=>{try{st=JSON.parse(e.data);render()}catch(_){}}
+	ws.onclose=()=>{ws_ok=false;fallback();setTimeout(wsConnect,3000)};
+	ws.onerror=()=>{try{ws.close()}catch(_){}}
+}
+let pollTimer=null;
+function fallback(){if(!pollTimer)pollTimer=setInterval(async()=>{if(!ws_ok){try{st=await (await fetch('/api/info')).json();render()}catch(_){}}},2000)}
+wsConnect();
+
+/* ---------- 固件升级 (fw_start -> binary 分片 -> fw_end) ---------- */
+let upFile=null;
+const drop=$('up-drop'),upFileInput=$('up-file');
+drop.onclick=()=>upFileInput.click();
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('hover')};
+drop.ondragleave=()=>drop.classList.remove('hover');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('hover');
+	if(e.dataTransfer.files[0])pick(e.dataTransfer.files[0])};
+upFileInput.onchange=()=>pick(upFileInput.files[0]);
+function pick(f){
+	if(!f)return;
+	upFile=f;
+	drop.innerHTML='已选择 <b>'+f.name+'</b> ('+(f.size/1024|0)+' KB)';
+	$('b-up').disabled=false;
+}
+$('b-up').onclick=async()=>{
+	if(!upFile)return;
+	if(!ws||ws.readyState!==1)return toast('WebSocket 未连接');
+	$('b-up').disabled=true;
+	$('up-prog').style.display='block';
+	$('up-st').textContent='请求开始...';
+	ws.send(JSON.stringify({cmd:'fw_start',size:upFile.size}));
+	await new Promise(r=>setTimeout(r,500));
+	const buf=new Uint8Array(await upFile.arrayBuffer());
+	const CH=2048;
+	for(let off=0;off<buf.length;off+=CH){
+		ws.send(buf.subarray(off,Math.min(off+CH,buf.length)));
+		$('up-bar').style.width=(off*100/buf.length).toFixed(1)+'%';
+		$('up-st').textContent='发送 '+(off/1024|0)+'/'+(buf.length/1024|0)+' KB';
+		await new Promise(r=>setTimeout(r,15));	/* 限速, 减小并发压力 */
+	}
+	$('up-st').textContent='结束校验...';
+	ws.send(JSON.stringify({cmd:'fw_end'}));
+	$('up-st').textContent='等待设备重启...';
+	setTimeout(()=>location.reload(),12000);
+};
+
+render();
+</script>
+</body>
+</html>

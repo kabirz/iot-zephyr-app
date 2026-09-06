@@ -10,7 +10,9 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/flash.h>
 #include <zephyr/storage/disk_access.h>
+#include <zephyr/storage/flash_map.h>
 #include <zephyr/fs/fs.h>
+#include <zephyr/fs/littlefs.h>
 #include <ff.h>		/* FATFS: fs_mount_t.fs_data 指向的挂载工作区 */
 #include <zephyr/logging/log.h>
 #include <errno.h>
@@ -37,6 +39,41 @@ static struct fs_mount_t sd_mp = {
 	.mnt_point = SD_MOUNT_POINT,
 	.fs_data = &fatfs_fs,
 };
+
+/* QSPI 资源区 LittleFS (Web 静态资源/字库暂存), 首挂失败自动 mkfs */
+static struct fs_littlefs qspi_lfs;
+static struct fs_mount_t qspi_mp = {
+	.type = FS_LITTLEFS,
+	.mnt_point = "/QSPI:",
+	.fs_data = &qspi_lfs,
+	.storage_dev = (void *)PARTITION_ID(resources_partition),
+};
+
+struct fs_mount_t *apollo_qspi_mountp(void)
+{
+	return &qspi_mp;
+}
+
+static void mount_qspi_lfs(void)
+{
+	int rc = fs_mount(&qspi_mp);
+
+	if (rc != 0) {
+		LOG_INF("QSPI LittleFS 首挂失败 (%d), mkfs ...", rc);
+		rc = fs_mkfs(FS_LITTLEFS,
+			     (uintptr_t)qspi_mp.storage_dev, NULL, 0);
+		if (rc == 0) {
+			rc = fs_mount(&qspi_mp);
+		}
+	}
+	if (rc != 0) {
+		LOG_ERR("QSPI LittleFS 挂载失败 (%d)", rc);
+		return;
+	}
+	info.qspi_fs_mounted = true;
+	LOG_INF("QSPI LittleFS: 挂载于 /QSPI: (%uKB)",
+		PARTITION_SIZE(resources_partition) / 1024);
+}
 
 /* ---------------- QSPI W25Q256: 探测容量 ---------------- */
 static void probe_qspi(void)
@@ -141,6 +178,7 @@ static void storage_thread_fn(void *p1, void *p2, void *p3)
 	probe_qspi();
 	probe_sdram();
 	mount_sd();
+	mount_qspi_lfs();
 }
 
 static struct k_thread storage_thread;

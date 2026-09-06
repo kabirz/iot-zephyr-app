@@ -27,6 +27,7 @@
 #include "app_time.h"
 #include "storage.h"
 #include "net.h"
+#include "font_qspi.h"
 #ifdef CONFIG_APOLLO_CAN
 #include "can.h"
 #endif
@@ -34,6 +35,13 @@
 LOG_MODULE_REGISTER(apollo_display, LOG_LEVEL_INF);
 
 extern const lv_font_t apollo_cjk_16;
+
+/* UI 字体: 优先 QSPI 全量中文字库 (memmap 直读), 未安装回退编译内置的
+ * UI 用词字库 (apps/fonts/apollo_cjk_16.c, 文件名生僻字会缺字) */
+static const lv_font_t *ui_font(void)
+{
+	return apollo_font_qspi_ready() ? &apollo_font_qspi : &apollo_cjk_16;
+}
 
 /* ---------------- 深色主题配色 (设计稿) ---------------- */
 #define COL_BG		lv_color_hex(0x0d1420)	/* 页面背景 */
@@ -83,6 +91,7 @@ static lv_obj_t *key_chips[4];
 static lv_obj_t *files_list;
 static lv_obj_t *label_path;
 static lv_obj_t *label_count;
+static lv_obj_t *mnt_btns[2];
 static char cur_path[128] = "/SD:";
 
 /* ---------------- 通用小工具 ---------------- */
@@ -233,7 +242,34 @@ static void mount_btn_cb(lv_event_t *e)
 
 	strncpy(cur_path, mnt, sizeof(cur_path) - 1);
 	cur_path[sizeof(cur_path) - 1] = '\0';
+	/* 高亮当前挂载点 */
+	for (int i = 0; i < 2; i++) {
+		lv_obj_set_style_bg_color(mnt_btns[i],
+					  strcmp(cur_path, "/SD:") == 0 ?
+					  (i == 0 ? COL_ACCENT : COL_CARD_ON) :
+					  (i == 1 ? COL_ACCENT : COL_CARD_ON), 0);
+	}
 	files_reload();
+}
+
+/* 挂载点根路径 ("/SD:" / "/QSPI:") */
+static bool is_root_path(const char *p)
+{
+	return strcmp(p, "/SD:") == 0 || strcmp(p, "/QSPI:") == 0;
+}
+
+/* 挂载点是否可用 */
+static bool mount_ready(const char *p)
+{
+	const struct apollo_storage_info *si = storage_info();
+
+	if (strncmp(p, "/SD", 3) == 0) {
+		return si->sd_mounted;
+	}
+	if (strncmp(p, "/QSPI", 5) == 0) {
+		return si->qspi_fs_mounted;
+	}
+	return false;
 }
 
 struct dir_entry_info {
@@ -249,18 +285,20 @@ static void dir_entry_cb(lv_event_t *e)
 		return;
 	}
 	if (strcmp(ent->name, "..") == 0) {
-		/* 去掉最后一级; 保留挂载点 "/SD:" */
+		/* 去掉最后一级; 保留挂载点 "/SD:" / "/QSPI:" */
 		size_t len = strlen(cur_path);
 
-		while (len > 4 && cur_path[len - 1] != '/') {
+		while (len > 0 && cur_path[len - 1] != '/') {
 			len--;
 		}
-		if (len > 4) {
+		if (len > 0) {
 			len--;
 		}
 		cur_path[len] = '\0';
 		if (strcmp(cur_path, "/SD") == 0) {
 			strcpy(cur_path, "/SD:");
+		} else if (strcmp(cur_path, "/QSPI") == 0) {
+			strcpy(cur_path, "/QSPI:");
 		}
 	} else {
 		size_t len = strlen(cur_path);
@@ -286,20 +324,32 @@ static void files_reload(void)
 	fs_dir_t_init(&dir);
 	lv_label_set_text(label_path, cur_path);
 
-	if (!storage_info()->sd_mounted && strncmp(cur_path, "/SD", 3) == 0) {
-		lv_list_add_button(files_list, LV_SYMBOL_CLOSE, "TF 未挂载");
-		lv_label_set_text(label_count, "");
-		return;
+	/* 手动行布局 (本配置未启用 flex, lv_list 会全部堆叠在 (0,0)) */
+	static char texts[44][72];
+	struct {
+		const char *icon;
+		struct dir_entry_info *ent;	/* NULL = 提示行 */
+	} rows[44];
+	unsigned nrow = 0;
+
+	if (!mount_ready(cur_path)) {
+		rows[nrow].icon = LV_SYMBOL_CLOSE;
+		strncpy(texts[nrow], strncmp(cur_path, "/QSPI", 5) == 0 ?
+			"QSPI 未挂载" : "TF 未挂载", sizeof(texts[0]) - 1);
+		rows[nrow].ent = NULL;
+		nrow++;
+		goto fill;
 	}
 
 	if (fs_opendir(&dir, cur_path) != 0) {
-		lv_list_add_button(files_list, LV_SYMBOL_WARNING,
-				   "打开目录失败");
-		lv_label_set_text(label_count, "");
-		return;
+		rows[nrow].icon = LV_SYMBOL_WARNING;
+		strncpy(texts[nrow], "打开目录失败", sizeof(texts[0]) - 1);
+		rows[nrow].ent = NULL;
+		nrow++;
+		goto fill;
 	}
 
-	if (strcmp(cur_path, "/SD:") != 0) {
+	if (!is_root_path(cur_path)) {
 		entries[count].is_dir = true;
 		strcpy(entries[count].name, "..");
 		count++;
@@ -333,31 +383,48 @@ static void files_reload(void)
 	}
 
 	for (unsigned i = 0; i < count; i++) {
-		if (entries[i].is_dir) {
-			snprintf(buf, sizeof(buf), "%s  <dir>", entries[i].name);
-		} else {
-			snprintf(buf, sizeof(buf), "%s", entries[i].name);
-		}
-		lv_obj_t *btn = lv_list_add_button(files_list,
-				entries[i].is_dir ? LV_SYMBOL_DIRECTORY
-						  : LV_SYMBOL_FILE,
-				buf);
-		/* 中文文件名: 换 CJK 字体 (字库未覆盖的字显示为缺字框) */
-		lv_obj_t *lbl = lv_obj_get_child(btn, 1);
-
-		if (lbl != NULL) {
-			lv_obj_set_style_text_font(lbl, &apollo_cjk_16, 0);
-			lv_obj_set_style_text_color(lbl, COL_TEXT, 0);
-		}
-		if (entries[i].is_dir) {
-			lv_obj_add_event_cb(btn, dir_entry_cb, LV_EVENT_CLICKED,
-					    &entries[i]);
-		}
+		rows[nrow].icon = entries[i].is_dir ? LV_SYMBOL_DIRECTORY
+						    : LV_SYMBOL_FILE;
+		snprintf(texts[nrow], sizeof(texts[0]), "%s%s", entries[i].name,
+			 entries[i].is_dir ? "  <dir>" : "");
+		rows[nrow].ent = &entries[i];
+		nrow++;
 	}
 
 	if (count == 0) {
-		lv_list_add_button(files_list, LV_SYMBOL_REFRESH, "目录为空");
+		rows[nrow].icon = LV_SYMBOL_REFRESH;
+		strncpy(texts[nrow], "目录为空", sizeof(texts[0]) - 1);
+		rows[nrow].ent = NULL;
+		nrow++;
 	}
+
+fill:
+	for (unsigned i = 0; i < nrow; i++) {
+		lv_obj_t *btn = lv_button_create(files_list);
+
+		lv_obj_set_size(btn, 228, 26);
+		lv_obj_set_pos(btn, 6, (int32_t)i * 28);
+		lv_obj_set_style_bg_color(btn, COL_CARD, 0);
+		lv_obj_set_style_radius(btn, 3, 0);
+		lv_obj_set_style_pad_all(btn, 0, 0);
+
+		lv_obj_t *ic = label_make(btn, rows[i].icon, NULL, COL_ACCENT);
+
+		lv_obj_set_pos(ic, 6, 5);
+
+		lv_obj_t *lbl = label_make(btn, texts[i], ui_font(), COL_TEXT);
+
+		lv_obj_set_pos(lbl, 26, 4);
+		lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+		lv_obj_set_width(lbl, 196);
+		lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_LEFT, 0);
+
+		if (rows[i].ent != NULL && rows[i].ent->is_dir) {
+			lv_obj_add_event_cb(btn, dir_entry_cb, LV_EVENT_CLICKED,
+					    rows[i].ent);
+		}
+	}
+
 	snprintf(buf, sizeof(buf), "%u 项", count);
 	lv_label_set_text(label_count, buf);
 }
@@ -374,10 +441,10 @@ static void build_status_bar(lv_obj_t *scr)
 	lv_obj_set_style_radius(bar, 0, 0);
 	lv_obj_set_style_pad_all(bar, 0, 0);
 
-	label_time = label_make(bar, "--:--:--", &apollo_cjk_16, COL_TEXT);
+	label_time = label_make(bar, "--:--:--", ui_font(), COL_TEXT);
 	lv_obj_align(label_time, LV_ALIGN_LEFT_MID, 8, 0);
 
-	label_date = label_make(bar, "--/--", &apollo_cjk_16, COL_SUB);
+	label_date = label_make(bar, "--/--", ui_font(), COL_SUB);
 	lv_obj_align(label_date, LV_ALIGN_LEFT_MID, 92, 0);
 
 	icon_net = label_make(bar, LV_SYMBOL_WIFI, NULL, COL_OFF);
@@ -396,10 +463,11 @@ static void build_home(void)
 
 	scr_home = lv_obj_create(NULL);
 	lv_obj_set_style_bg_color(scr_home, COL_BG, 0);
+	lv_obj_set_scroll_dir(scr_home, LV_DIR_NONE);
 
 	build_status_bar(scr_home);
 
-	lv_obj_t *sec1 = label_make(scr_home, "输 出", &apollo_cjk_16, COL_SUB);
+	lv_obj_t *sec1 = label_make(scr_home, "输 出", ui_font(), COL_SUB);
 
 	lv_obj_set_pos(sec1, 12, 36);
 
@@ -413,15 +481,15 @@ static void build_home(void)
 		lv_obj_add_event_cb(c->obj, out_card_cb, LV_EVENT_CLICKED,
 				    (void *)(uintptr_t)i);
 
-		c->label = label_make(c->obj, out_names[i], &apollo_cjk_16, COL_TEXT);
+		c->label = label_make(c->obj, out_names[i], ui_font(), COL_TEXT);
 		lv_obj_align(c->label, LV_ALIGN_LEFT_MID, 8, 0);
 
-		c->state = label_make(c->obj, "关", &apollo_cjk_16, COL_OFF);
+		c->state = label_make(c->obj, "关", ui_font(), COL_OFF);
 		lv_obj_align(c->state, LV_ALIGN_RIGHT_MID, -8, 0);
 		c->on = false;
 	}
 
-	lv_obj_t *sec2 = label_make(scr_home, "传 感", &apollo_cjk_16, COL_SUB);
+	lv_obj_t *sec2 = label_make(scr_home, "传 感", ui_font(), COL_SUB);
 
 	lv_obj_set_pos(sec2, 12, 128);
 
@@ -430,15 +498,15 @@ static void build_home(void)
 	for (int i = 0; i < 3; i++) {
 		lv_obj_t *card = lv_obj_create(scr_home);
 
-		style_card(card, 74, 54);
-		lv_obj_set_pos(card, 12 + i * 78, 148);
+		style_card(card, 72, 54);
+		lv_obj_set_pos(card, 8 + i * 75, 148);
 
 		lv_obj_t *name = label_make(card, sens_names[i],
-					    &apollo_cjk_16, COL_SUB);
+					    ui_font(), COL_SUB);
 
 		lv_obj_set_pos(name, 4, 3);
 
-		sens_val[i] = label_make(card, "--", &apollo_cjk_16, COL_TEXT);
+		sens_val[i] = label_make(card, "--", ui_font(), COL_TEXT);
 		lv_obj_set_pos(sens_val[i], 4, 22);
 
 		if (i < 2) {
@@ -453,7 +521,7 @@ static void build_home(void)
 		}
 	}
 
-	lv_obj_t *sec3 = label_make(scr_home, "按 键", &apollo_cjk_16, COL_SUB);
+	lv_obj_t *sec3 = label_make(scr_home, "按 键", ui_font(), COL_SUB);
 
 	lv_obj_set_pos(sec3, 12, 208);
 
@@ -465,7 +533,7 @@ static void build_home(void)
 		lv_obj_set_pos(key_chips[i], 12 + i * 57, 226);
 
 		lv_obj_t *l = label_make(key_chips[i], key_names[i],
-					 &apollo_cjk_16, COL_TEXT);
+					 ui_font(), COL_TEXT);
 
 		lv_obj_center(l);
 	}
@@ -480,7 +548,7 @@ static void build_home(void)
 	lv_obj_t *fb_label = lv_label_create(files_btn);
 
 	lv_label_set_text(fb_label, LV_SYMBOL_DIRECTORY "  文件浏览");
-	lv_obj_set_style_text_font(fb_label, &apollo_cjk_16, 0);
+	lv_obj_set_style_text_font(fb_label, ui_font(), 0);
 	lv_obj_center(fb_label);
 }
 
@@ -491,6 +559,7 @@ static void build_files(void)
 
 	scr_files = lv_obj_create(NULL);
 	lv_obj_set_style_bg_color(scr_files, COL_BG, 0);
+	lv_obj_set_scroll_dir(scr_files, LV_DIR_NONE);
 
 	/* 顶栏: 返回 + 路径 + 计数 */
 	lv_obj_t *bar = lv_obj_create(scr_files);
@@ -513,15 +582,17 @@ static void build_files(void)
 	lv_label_set_text(bl, LV_SYMBOL_LEFT);
 	lv_obj_center(bl);
 
-	label_path = label_make(bar, "/SD:", &apollo_cjk_16, COL_TEXT);
+	label_path = label_make(bar, "/SD:", ui_font(), COL_TEXT);
 	lv_obj_align(label_path, LV_ALIGN_LEFT_MID, 50, 0);
 
-	label_count = label_make(bar, "", &apollo_cjk_16, COL_SUB);
+	label_count = label_make(bar, "", ui_font(), COL_SUB);
 	lv_obj_align(label_count, LV_ALIGN_RIGHT_MID, -6, 0);
 
 	/* 挂载点切换 */
 	for (int i = 0; i < 2; i++) {
-		lv_obj_t *b = lv_button_create(scr_files);
+		mnt_btns[i] = lv_button_create(scr_files);
+
+		lv_obj_t *b = mnt_btns[i];
 
 		lv_obj_set_size(b, 108, 26);
 		lv_obj_set_pos(b, 12 + i * 112, 34);
@@ -532,16 +603,15 @@ static void build_files(void)
 
 		lv_label_set_text(l, mnt_names[i]);
 		lv_obj_center(l);
-		/* QSPI 资源区尚未格式化 littlefs, 先禁用 */
-		if (i == 1) {
-			lv_obj_add_state(b, LV_STATE_DISABLED);
-		}
 	}
 
-	files_list = lv_list_create(scr_files);
+	files_list = lv_obj_create(scr_files);
 	lv_obj_set_size(files_list, 240, 254);
 	lv_obj_set_pos(files_list, 0, 66);
 	lv_obj_set_style_bg_color(files_list, COL_BG, 0);
+	lv_obj_set_style_border_width(files_list, 0, 0);
+	lv_obj_set_style_pad_all(files_list, 0, 0);
+	lv_obj_set_scroll_dir(files_list, LV_DIR_VER);
 }
 
 /* ---------------- 背光 ---------------- */
@@ -581,6 +651,9 @@ static void display_thread_fn(void *p1, void *p2, void *p3)
 		return;
 	}
 	display_blanking_off(disp);
+
+	/* 预热 QSPI 字库 (决定 UI 用哪套字体) */
+	(void)apollo_font_qspi_ready();
 
 	build_home();
 	build_files();

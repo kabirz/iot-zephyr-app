@@ -125,6 +125,9 @@ static void net_thread_fn(void *p1, void *p2, void *p3)
 	dhcp_active = true;
 	net_dhcpv4_start(iface);
 
+#ifdef CONFIG_APOLLO_WEB
+	extern int apollo_web_start(void);
+#endif
 	if (k_sem_take(&lease_sem, K_MSEC(wait_ms)) != 0) {
 		/* 必须显式停掉 DHCP 客户端: 放任其在静态地址上继续
 		 * 广播 Discover 与静态配置共存, 行为未定义 */
@@ -133,6 +136,9 @@ static void net_thread_fn(void *p1, void *p2, void *p3)
 	} else {
 		LOG_INF("net ready (ping 本地址可测链路)");
 	}
+#ifdef CONFIG_APOLLO_WEB
+	apollo_web_start();
+#endif
 }
 
 static struct k_thread net_thread;

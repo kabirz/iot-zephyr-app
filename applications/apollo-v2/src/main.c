@@ -29,17 +29,28 @@ void apollo_usb_start(void);
 
 LOG_MODULE_REGISTER(apollo_main, LOG_LEVEL_INF);
 
-/* 计划 §10.3 教训 #5: 默认 fatal handler 非栈溢出时无限空转 = 完全静默。
- * 改为 printk 直写 UART (deferred log 在挂死时会丢) + 热重启,
- * 把随机冻结变成可见的重启循环。 */
+/* 计划 §10.3 教训 #5 的调试加强版: 打印完整 fault 现场 (PC/LR/CFSR/
+ * HFSR/BFAR) 后停机不重启 —— 重启会销毁证据; 若复位时无此打印,
+ * 则为硬件级复位 (BOR/NRST/看门狗), 与软件 fault 区分开。 */
 void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 {
-	ARG_UNUSED(esf);
-	printk("FATAL ERROR %d @ PC=0x%08lx LR=0x%08lx, warm reboot\n",
-	       reason,
-	       (unsigned long)(esf ? esf->basic.pc : 0),
-	       (unsigned long)(esf ? esf->basic.lr : 0));
-	sys_reboot(SYS_REBOOT_WARM);
+	printk("\n*** FATAL ERROR %u ***\n", reason);
+	if (esf != NULL) {
+		printk("PC =0x%08lx  LR =0x%08lx  PSR=0x%08lx\n",
+		       (unsigned long)esf->basic.pc,
+		       (unsigned long)esf->basic.lr,
+		       (unsigned long)esf->basic.xpsr);
+	}
+	volatile uint32_t *cfsr = (volatile uint32_t *)0xE000ED28;
+	volatile uint32_t *hfsr = (volatile uint32_t *)0xE000ED2C;
+	volatile uint32_t *bfar = (volatile uint32_t *)0xE000ED38;
+
+	printk("CFSR=0x%08lx  HFSR=0x%08lx  BFAR=0x%08lx\n",
+	       (unsigned long)*cfsr, (unsigned long)*hfsr, (unsigned long)*bfar);
+	printk("system HALTED (debug: 保留现场供 openocd/串口排查)\n");
+	for (;;) {
+		__asm__ volatile("wfi");
+	}
 	CODE_UNREACHABLE;
 }
 
