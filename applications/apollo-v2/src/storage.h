@@ -3,6 +3,7 @@
 #define APOLLO_STORAGE_H
 
 #include <stdbool.h>
+#include <zephyr/kernel.h>
 
 /* 存储子系统状态 (供状态行 / apollo info 查询) */
 struct apollo_storage_info {
@@ -13,6 +14,9 @@ struct apollo_storage_info {
 };
 
 const struct apollo_storage_info *storage_info(void);
+
+/* 等待 TF/QSPI 挂载完成 (最多 timeout) */
+void storage_wait_mounts(k_timeout_t timeout);
 
 /* 启动存储线程: QSPI/SDRAM 快速探测 + TF 卡带重试挂载 (后台) */
 void storage_start(void);

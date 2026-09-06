@@ -25,6 +25,14 @@ config APOLLO_WEB
 	  (2s polling), output control buttons, RTC time setting and
 	  reboot. REST: /api/info, /api/ctl, /api/time, /api/reboot.
 
+config APOLLO_FONT_QSPI
+	bool "Load full CJK font from QSPI partition"
+	default y
+	depends on APOLLO_DISPLAY
+	help
+	  On-demand per-glyph reads from the QSPI font partition. Disable
+	  to fall back to the linked-in UI-subset font.
+
 config APOLLO_STATUS_PERIOD
 	int "Status log period in seconds (0 disables)"
 	default 10

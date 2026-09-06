@@ -23,9 +23,9 @@ target_sources_ifdef(CONFIG_APOLLO_CAN app PRIVATE src/can.c)
 target_sources_ifdef(CONFIG_APOLLO_USB app PRIVATE src/usb.c)
 target_sources_ifdef(CONFIG_APOLLO_DISPLAY app PRIVATE
 	src/display.c
-	src/font_qspi.c
 	${apps_root}/fonts/apollo_cjk_16.c
 )
+target_sources_ifdef(CONFIG_APOLLO_FONT_QSPI app PRIVATE src/font_qspi.c)
 # 字体文件用 "lvgl.h" 简单包含
 target_compile_definitions_ifdef(CONFIG_APOLLO_DISPLAY app PRIVATE
 	LV_LVGL_H_INCLUDE_SIMPLE

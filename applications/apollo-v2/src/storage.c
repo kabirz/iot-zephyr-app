@@ -22,6 +22,8 @@
 
 LOG_MODULE_REGISTER(apollo_storage, LOG_LEVEL_INF);
 
+static struct k_sem mounts_sem;
+
 #define QSPI_NODE	DT_NODELABEL(qspi_nor)
 #define SDRAM_NODE	DT_NODELABEL(sdram_mem)
 
@@ -30,6 +32,13 @@ LOG_MODULE_REGISTER(apollo_storage, LOG_LEVEL_INF);
 #define SD_RETRY_MAX	15	/* 共 ~30s, 覆盖慢卡上电 */
 
 static struct apollo_storage_info info;
+static struct k_sem mounts_sem;
+
+/* 供 display 等线程等待 TF/QSPI 挂载完成 (避免与字库读取并发) */
+void storage_wait_mounts(k_timeout_t timeout)
+{
+	k_sem_take(&mounts_sem, timeout);
+}
 
 /* 注意: fs_data 必须指向 FATFS 工作区, 传 NULL 时 f_mount 变成卸载语义
  * (返回 FR_INVALID_DRIVE -> -19), 曾在这里踩坑 */
@@ -179,6 +188,7 @@ static void storage_thread_fn(void *p1, void *p2, void *p3)
 	probe_sdram();
 	mount_sd();
 	mount_qspi_lfs();
+	k_sem_give(&mounts_sem);
 }
 
 static struct k_thread storage_thread;
@@ -186,6 +196,7 @@ static K_THREAD_STACK_DEFINE(storage_stack, CONFIG_APOLLO_STORAGE_STACK_SIZE);
 
 void storage_start(void)
 {
+	k_sem_init(&mounts_sem, 0, 1);
 	k_thread_create(&storage_thread, storage_stack,
 			K_THREAD_STACK_SIZEOF(storage_stack),
 			storage_thread_fn, NULL, NULL, NULL,

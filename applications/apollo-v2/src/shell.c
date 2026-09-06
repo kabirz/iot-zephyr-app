@@ -34,10 +34,11 @@
 /* main.c: MCUboot 镜像确认 */
 extern int apollo_fw_confirm(void);
 
-#ifdef CONFIG_APOLLO_DISPLAY
 /* font_qspi.c: 安装 QSPI 中文字库 */
+#ifdef CONFIG_APOLLO_FONT_QSPI
 int apollo_font_install(void);
 
+#ifdef CONFIG_APOLLO_FONT_QSPI
 static int cmd_fontinstall(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(sh);
@@ -58,7 +59,8 @@ static int cmd_fontdump(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "font partition[0..15]: %s", buf);
 	return 0;
 }
-#endif
+#endif /* CONFIG_APOLLO_FONT_QSPI */
+#endif /* CONFIG_APOLLO_DISPLAY */
 
 /* LittleFS /QSPI: 写读持久化自测: apollo lstest */
 static int cmd_lstest(const struct shell *sh, size_t argc, char **argv)
@@ -302,12 +304,12 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "sdram    %s", si->sdram_ok ? "ok" : "n/a");
 	shell_print(sh, "tf card  %s", si->sd_mounted ? "/SD: mounted" : "not mounted");
 	shell_print(sh, "qspi fs  %s", si->qspi_fs_mounted ? "/QSPI: mounted" : "not mounted");
-#ifdef CONFIG_APOLLO_DISPLAY
+#if defined(CONFIG_APOLLO_DISPLAY) && defined(CONFIG_APOLLO_FONT_QSPI)
 	{
 		extern bool apollo_font_qspi_ready(void);
 
 		shell_print(sh, "font     %s", apollo_font_qspi_ready() ?
-			    "QSPI (memmap)" : "builtin subset");
+			    "QSPI (on-demand)" : "builtin subset");
 	}
 #endif
 	shell_print(sh, "ipv4     %s%s", net_ip_str() ? net_ip_str() : "(none)",
@@ -489,7 +491,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(lsformat, NULL, "reformat /QSPI: littlefs", cmd_lsformat),
 	SHELL_CMD_ARG(qspit, NULL, "qspit [check] (raw write/read persist)",
 		      cmd_qspit, 1, 1),
-#ifdef CONFIG_APOLLO_DISPLAY
+#ifdef CONFIG_APOLLO_FONT_QSPI
 	SHELL_CMD(fontinstall, NULL,
 		  "install QSPI font from /QSPI:/font.bin (then reboot)",
 		  cmd_fontinstall),

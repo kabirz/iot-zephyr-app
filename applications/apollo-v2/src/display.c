@@ -40,7 +40,21 @@ extern const lv_font_t apollo_cjk_16;
  * UI 用词字库 (apps/fonts/apollo_cjk_16.c, 文件名生僻字会缺字) */
 static const lv_font_t *ui_font(void)
 {
+#ifdef CONFIG_APOLLO_FONT_QSPI
+	/* 启动后延迟 20s 再挂字库: 避开与 storage 线程 littlefs 挂载
+	 * 并发的 QSPI 驱动访问窗口 (实测该窗口内读 QSPI 会挂死) */
+	static bool delayed;
+
+	if (!delayed) {
+		delayed = true;
+		if (k_uptime_get() < K_SECONDS(20)) {
+			return &apollo_cjk_16;
+		}
+	}
 	return apollo_font_qspi_ready() ? &apollo_font_qspi : &apollo_cjk_16;
+#else
+	return &apollo_cjk_16;
+#endif
 }
 
 /* ---------------- 深色主题配色 (设计稿) ---------------- */
@@ -642,6 +656,9 @@ static void display_thread_fn(void *p1, void *p2, void *p3)
 
 	const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
 
+	/* 等 TF/QSPI 挂载完成: 字库读取不与挂载并发 (并发窗口内读 QSPI 会挂) */
+	storage_wait_mounts(K_SECONDS(30));
+
 	if (gpio_is_ready_dt(&lcd_bl)) {
 		gpio_pin_configure_dt(&lcd_bl, GPIO_OUTPUT_ACTIVE);
 	}
@@ -651,9 +668,6 @@ static void display_thread_fn(void *p1, void *p2, void *p3)
 		return;
 	}
 	display_blanking_off(disp);
-
-	/* 预热 QSPI 字库 (决定 UI 用哪套字体) */
-	(void)apollo_font_qspi_ready();
 
 	build_home();
 	build_files();

@@ -21,7 +21,9 @@
 #include "storage.h"
 #include "net.h"
 #include "display.h"
+#ifdef CONFIG_APOLLO_FONT_QSPI
 #include "font_qspi.h"
+#endif
 #ifdef CONFIG_APOLLO_CAN
 #include "can.h"
 #endif
@@ -139,7 +141,11 @@ int web_build_info_json(char *json, size_t bufsz)
 		si->sdram_ok ? "true" : "false",
 		si->sd_mounted ? "true" : "false",
 		si->qspi_fs_mounted ? "true" : "false",
+#ifdef CONFIG_APOLLO_FONT_QSPI
 		apollo_font_qspi_ready() ? "true" : "false",
+#else
+		"false",
+#endif
 		adc,
 		als_ok ? "" : "\"err\":", als, ps_ok ? "" : "\"err\":", ps,
 		k[0], k[1], k[2], k[3]
