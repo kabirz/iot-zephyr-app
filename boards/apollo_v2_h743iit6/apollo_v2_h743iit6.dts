@@ -336,6 +336,13 @@ touch_spi: touch-spi {
 				label = "resources";
 				reg = <0x00340000 0x00400000>;	/* 4MB */
 			};
+
+			/* 中文字库分区: GB2312 一级 3755 字 + ASCII 16px 4bpp,
+			 * AF16 格式, 运行时经 QSPI memmap 直读 (0x90000000+0x740000) */
+			font_partition: partition@740000 {
+				label = "font";
+				reg = <0x00740000 0x00400000>;	/* 4MB */
+			};
 		};
 	};
 };
