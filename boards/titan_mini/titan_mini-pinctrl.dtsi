@@ -53,6 +53,15 @@
 		};
 	};
 
+	iic1_default: iic1_default {
+		group1 {
+			/* SCL1 SDA1 (板上 10K 上拉, IMU 总线) */
+			psels = <RA_PSEL(RA_PSEL_I2C, 5, 12)>,
+				<RA_PSEL(RA_PSEL_I2C, 5, 11)>;
+			drive-strength = "medium";
+		};
+	};
+
 	ospi0_default: ospi0_default {
 		group1 {
 			/* sclk sio0-3 (W25Q64JVSSIQ, quad) */

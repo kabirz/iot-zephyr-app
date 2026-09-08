@@ -12,6 +12,8 @@
  *  - Main crystal 24 MHz (EXTAL/XTAL), sub crystal 32.768 kHz (XCIN/XCOUT)
  *  - SWD debug on J6 (SWDIO = P210, SWCLK = P211)
  *  - SD card on SDHI0 (PD01/02/03/04/05/07, DAT3 = P111)
+ *  - IMU LSM6DS3TR-C on IIC1 (SDA1 = P511, SCL1 = P512), addr 0x6A,
+ *    INT1 = P412 (IMU_INT1)
  *  - QSPI NOR flash W25Q64JVSSIQ (8 MB) on OSPI-B/XSPI0 channel 0, CS1
  */
 
@@ -19,6 +21,7 @@
 
 #include <renesas/ra/ra8/r7ka8p1kflcac_cm85.dtsi>
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/dt-bindings/flash_controller/xspi.h>
 #include "titan_mini-pinctrl.dtsi"
@@ -184,6 +187,10 @@
 	status = "okay";
 };
 
+&ioport5 {
+	status = "okay";
+};
+
 &ioportd {
 	status = "okay";
 };
@@ -248,6 +255,25 @@
 	sdmmc {
 		compatible = "zephyr,sdmmc-disk";
 		disk-name = "SD";
+		status = "okay";
+	};
+};
+
+/* IMU 总线 IIC1 (NVIC 12-15: 0-3 sci2, 4-7 sci1, 8 irq4, 9-11 sdhc0) */
+&iic1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&iic1_default>;
+	pinctrl-names = "default";
+	interrupts = <12 1>, <13 1>, <14 1>, <15 1>;
+	interrupt-names = "rxi", "txi", "tei", "eri";
+	status = "okay";
+
+	/* LSM6DS3TR-C: WHO_AM_I 0x6A 与 LSM6DSL 相同, 寄存器兼容 */
+	lsm6ds3tr_c: imu@6a {
+		compatible = "st,lsm6dsl";
+		reg = <0x6a>;
 		status = "okay";
 	};
 };

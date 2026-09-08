@@ -7,6 +7,7 @@
  *  - RGB 流水灯 (共阳低有效: G=P108, R=P109, B=P110) + LOG 心跳
  *  - 用户按键 SW2 (P201/IRQ4) 中断计数, 200ms 软件防抖
  *  - SD 卡: SDHI0 + FATFS 挂载 /SD:, 读写校验
+ *  - IMU: LSM6DS3TR-C (IIC1 @0x6A) 1Hz 加速度/陀螺仪采样
  *  - QSPI Flash: W25Q64 擦写读校验
  *  - kernel reboot 命令验证 CONFIG_REBOOT
  */
@@ -15,6 +16,10 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/logging/log.h>
+
+#if defined(CONFIG_SENSOR)
+#include <zephyr/drivers/sensor.h>
+#endif
 
 #if defined(CONFIG_FILE_SYSTEM)
 #include <zephyr/drivers/flash.h>
@@ -186,6 +191,42 @@ static void led_flow(void)
 }
 
 K_THREAD_DEFINE(led_flow_tid, 2048, led_flow, NULL, NULL, NULL, 5, 0, 2000);
+
+#if defined(CONFIG_SENSOR)
+static void imu_poll(void)
+{
+	const struct device *imu = DEVICE_DT_GET(DT_NODELABEL(lsm6ds3tr_c));
+	struct sensor_value acc[3], gyr[3];
+	int ret;
+
+	if (!device_is_ready(imu)) {
+		LOG_ERR("IMU not ready");
+		return;
+	}
+
+	LOG_INF("IMU %s ready (LSM6DS3TR-C @0x6A)", imu->name);
+
+	while (1) {
+		ret = sensor_sample_fetch(imu);
+		if (ret < 0) {
+			LOG_ERR("IMU sample fetch failed: %d", ret);
+			return;
+		}
+
+		sensor_channel_get(imu, SENSOR_CHAN_ACCEL_XYZ, acc);
+		sensor_channel_get(imu, SENSOR_CHAN_GYRO_XYZ, gyr);
+
+		LOG_INF("IMU acc[m/s2]: %.2f %.2f %.2f  gyr[dps]: %.1f %.1f %.1f",
+			sensor_value_to_double(&acc[0]), sensor_value_to_double(&acc[1]),
+			sensor_value_to_double(&acc[2]), sensor_value_to_double(&gyr[0]),
+			sensor_value_to_double(&gyr[1]), sensor_value_to_double(&gyr[2]));
+
+		k_sleep(K_SECONDS(1));
+	}
+}
+
+K_THREAD_DEFINE(imu_tid, 2048, imu_poll, NULL, NULL, NULL, 5, 0, 3000);
+#endif /* CONFIG_SENSOR */
 
 int main(void)
 {
