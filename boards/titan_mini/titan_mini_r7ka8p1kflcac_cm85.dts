@@ -11,6 +11,8 @@
  *      R = P109, G = P108, B = P110
  *  - Main crystal 24 MHz (EXTAL/XTAL), sub crystal 32.768 kHz (XCIN/XCOUT)
  *  - SWD debug on J6 (SWDIO = P210, SWCLK = P211)
+ *  - SD card on SDHI0 (PD01/02/03/04/05/07, DAT3 = P111)
+ *  - QSPI NOR flash W25Q64JVSSIQ (8 MB) on OSPI-B/XSPI0 channel 0, CS1
  */
 
 /dts-v1/;
@@ -18,11 +20,51 @@
 #include <renesas/ra/ra8/r7ka8p1kflcac_cm85.dtsi>
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/flash_controller/xspi.h>
 #include "titan_mini-pinctrl.dtsi"
 
 / {
 	model = "RT-Thread Titan Mini (RA8P1)";
 	compatible = "renesas,ra8p1", "renesas,ra8";
+
+	soc {
+		/*
+		 * QSPI NOR W25Q64JVSSIQ (8 MB) on OSPI-B/XSPI0 channel 0, CS1.
+		 * DISABLED: Zephyr 的 renesas,ra-ospi-b-nor 驱动只支持 Octal
+		 * XSPI 模式 (按 Cypress S28HL 系列写死), W25Q64 为标准 Quad
+		 * NOR, init 时报 "XSPI mode DUAL|QUAD currently not support"
+		 * 后优雅失败. 需驱动扩展 Quad 支持后才能打开.
+		 * 引脚: SCK=P808 SIO0=P100 SIO1=P803 SIO2=P103 SIO3=P101 CS1=P104.
+		 */
+		ospi0: ospi@40268000 {
+			compatible = "renesas,ra-ospi-b";
+			reg = <0x40268000 0x19c>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			clocks = <&octaspiclk MSTPB 16>;
+			pinctrl-0 = <&ospi0_default>;
+			pinctrl-names = "default";
+			status = "disabled";
+
+			/* W25Q64JVSSIQ on CS1, memory mapped at 0x90000000 */
+			w25q64: flash@90000000 {
+				compatible = "renesas,ra-ospi-b-nor";
+				reg = <0x90000000 DT_SIZE_M(8)>;
+				protocol-mode = <XSPI_QUAD_MODE>;
+				data-rate = <XSPI_STR_TRANSFER>;
+				ospi-max-frequency = <DT_FREQ_M(50)>;
+				write-block-size = <1>;
+				status = "disabled";
+
+				pages_layout: pages_layout {
+					pages_layout_4k: pages_layout_4k {
+						pages-count = <2048>;
+						pages-size = <DT_SIZE_K(4)>;
+					};
+				};
+			};
+		};
+	};
 
 	chosen {
 		zephyr,sram = &sram0;
@@ -125,6 +167,13 @@
 	status = "okay";
 };
 
+/* 600 MHz / 10 = 60 MHz OSPI input clock */
+&octaspiclk {
+	clocks = <&pll2p>;
+	div = <10>;
+	status = "okay";
+};
+
 &uclk {
 	clocks = <&pll2r>;
 	div = <10>;
@@ -132,6 +181,10 @@
 };
 
 &ioport1 {
+	status = "okay";
+};
+
+&ioportd {
 	status = "okay";
 };
 
@@ -180,6 +233,21 @@
 
 	uart2: uart {
 		current-speed = <115200>;
+		status = "okay";
+	};
+};
+
+/* SD card slot (SDHI0, 4-bit, card-detect on PD07) */
+&sdhc0 {
+	pinctrl-0 = <&sdhc0_default>;
+	pinctrl-names = "default";
+	interrupts = <9 12>, <10 12>, <11 12>;
+	interrupt-names = "accs", "card", "dma-req";
+	status = "okay";
+
+	sdmmc {
+		compatible = "zephyr,sdmmc-disk";
+		disk-name = "SD";
 		status = "okay";
 	};
 };
