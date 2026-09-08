@@ -4,7 +4,9 @@
  *
  * RT-Thread Titan Mini board (Renesas RA8P1, R7KA8P1KFLCAC, CM85 core)
  * Schematic: Titan_Mini HW V1.0
- *  - Debug UART on header H1: SCI2, TXD2 = P801, RXD2 = P802
+ *  - Debug UART on U18 (RPi 40-pin header, pins 8/10): SCI1,
+ *      TXD1 = P707, RXD1 = P706
+ *  - Secondary UART on header H1: SCI2, TXD2 = P801, RXD2 = P802
  *  - RGB user LED (XL-1615RGBC-RF, common anode, active low):
  *      R = P109, G = P108, B = P110
  *  - Main crystal 24 MHz (EXTAL/XTAL), sub crystal 32.768 kHz (XCIN/XCOUT)
@@ -25,8 +27,8 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &code_mram_cm85;
 		zephyr,flash-controller = &mram_ctrl;
-		zephyr,console = &uart2;
-		zephyr,shell-uart = &uart2;
+		zephyr,console = &uart1;
+		zephyr,shell-uart = &uart1;
 	};
 
 	aliases {
@@ -120,11 +122,29 @@
 	status = "okay";
 };
 
+&ioport7 {
+	status = "okay";
+};
+
 &ioport8 {
 	status = "okay";
 };
 
-/* Debug UART on H1 (1=GND, 2=RXD2, 3=TXD2) */
+/* Debug UART on U18 (RPi 40-pin header, pin 8=TXD1/P707, pin 10=RXD1/P706) */
+&sci1 {
+	pinctrl-0 = <&sci1_default>;
+	pinctrl-names = "default";
+	interrupts = <4 1>, <5 1>, <6 1>, <7 1>;
+	interrupt-names = "rxi", "txi", "tei", "eri";
+	status = "okay";
+
+	uart1: uart {
+		current-speed = <115200>;
+		status = "okay";
+	};
+};
+
+/* Secondary UART on H1 (1=GND, 2=RXD2, 3=TXD2) */
 &sci2 {
 	pinctrl-0 = <&sci2_default>;
 	pinctrl-names = "default";

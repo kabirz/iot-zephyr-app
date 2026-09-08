@@ -3,12 +3,26 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Titan Mini board pinctrl (schematic: Titan_Mini HW V1.0)
- * Debug UART on H1: SCI2 TXD2 = P801, RXD2 = P802
+ * Debug UART on U18 (RPi 40-pin): SCI1 TXD1 = P707, RXD1 = P706
+ * Secondary UART on H1: SCI2 TXD2 = P801, RXD2 = P802
  */
 
 #include <zephyr/dt-bindings/pinctrl/renesas/pinctrl-ra.h>
 
 &pinctrl {
+	sci1_default: sci1_default {
+		group1 {
+			/* tx */
+			psels = <RA_PSEL(RA_PSEL_SCI_1, 7, 7)>;
+			drive-strength = "medium";
+		};
+
+		group2 {
+			/* rx */
+			psels = <RA_PSEL(RA_PSEL_SCI_1, 7, 6)>;
+		};
+	};
+
 	sci2_default: sci2_default {
 		group1 {
 			/* tx */

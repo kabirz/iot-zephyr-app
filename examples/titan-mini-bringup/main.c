@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Titan Mini (Renesas RA8P1) 硬件 bringup:
- *  - UART shell 直接跑在调试串口上 (zephyr,shell-uart = uart2 / H1, 115200-8N1)
+ *  - UART shell 直接跑在调试串口上 (zephyr,shell-uart = uart1 / U18, 115200-8N1)
  *  - LOG 心跳 + 绿灯闪烁 (P108)
  *  - kernel reboot 命令验证 CONFIG_REBOOT
  */
@@ -36,7 +36,7 @@ int main(void)
 	}
 
 	LOG_INF("Titan Mini (Renesas RA8P1) HW bringup");
-	LOG_INF("debug UART: H1, TXD2=P801 RXD2=P802, 115200-8N1");
+	LOG_INF("debug UART: U18, TXD1=P707 RXD1=P706, 115200-8N1");
 	LOG_INF("shell ready, try: kernel version | kernel reboot");
 
 	return 0;
