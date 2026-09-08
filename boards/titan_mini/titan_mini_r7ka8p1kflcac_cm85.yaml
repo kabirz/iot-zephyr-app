@@ -1,0 +1,13 @@
+identifier: titan_mini/r7ka8p1kflcac/cm85
+name: RT-Thread Titan Mini (RA8P1 CM85)
+type: mcu
+arch: arm
+ram: 1664
+flash: 768
+toolchain:
+  - zephyr
+  - gnuarmemb
+supported:
+  - gpio
+  - uart
+vendor: renesas

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_TITAN_MINI
+	bool "RT-Thread Titan Mini (RA8P1)"
+	select SOC_R7KA8P1KFLCAC_CM85 if BOARD_TITAN_MINI_R7KA8P1KFLCAC_CM85

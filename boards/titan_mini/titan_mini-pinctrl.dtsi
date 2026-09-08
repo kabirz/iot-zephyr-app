@@ -1,0 +1,24 @@
+/*
+ * Copyright (c) 2026 Titan Mini contributors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Titan Mini board pinctrl (schematic: Titan_Mini HW V1.0)
+ * Debug UART on H1: SCI2 TXD2 = P801, RXD2 = P802
+ */
+
+#include <zephyr/dt-bindings/pinctrl/renesas/pinctrl-ra.h>
+
+&pinctrl {
+	sci2_default: sci2_default {
+		group1 {
+			/* tx */
+			psels = <RA_PSEL(RA_PSEL_SCI_2, 8, 1)>;
+			drive-strength = "medium";
+		};
+
+		group2 {
+			/* rx */
+			psels = <RA_PSEL(RA_PSEL_SCI_2, 8, 2)>;
+		};
+	};
+};

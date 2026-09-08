@@ -4,7 +4,7 @@
 
 ## 项目
 
-**iot-zephyr-app** — Zephyr RTOS west manifest 仓库，同时本身是一个 Zephyr module。包含五个应用、四块板子：
+**iot-zephyr-app** — Zephyr RTOS west manifest 仓库，同时本身是一个 Zephyr module。包含五个应用、五块板子：
 
 - `applications/angle-handler` — 激光测距手持控制器（角度采集 + OLED + CAN/nRF24 + OTA），STM32F103RCT6（板 `nrf24_f103rct6`）
 - `applications/n2e-gw` — 数据中转网关（nRF24 ↔ W5500 UDP），STM32F103RCT6（板 `nrf24_f103rct6`）
@@ -16,7 +16,7 @@
 
 - `west.yml` — manifest，Zephyr v4.4.0，import 上游 mcuboot / cmsis / hal_stm32 / mbedtls / fatfs 等。
 - `zephyr/module.yml` — 本仓库作为 Zephyr module 的声明（`name: iot_zephyr_app`，board_root / dts_root，build cmake/kconfig）。
-- `boards/` — board_root：`nrf24_f103rct6`（F103）、`io_edge_f407vet6`（F407）、`apollo_v2_h743iit6`（H743 阿波罗 V2）、`gd32h759_btb`。
+- `boards/` — board_root：`nrf24_f103rct6`（F103）、`io_edge_f407vet6`（F407）、`apollo_v2_h743iit6`（H743 阿波罗 V2）、`gd32h759_btb`、`titan_mini`（RA8P1 RT-Thread Titan Mini，调试串口 H1 SCI2 P801/P802，烧录默认 pyocd）。
 - `dts/` — dts_root，自定义 binding（`nordic,nrf24l01p.yaml`）。
 - `libs/` — 固件升级库（`can_fw_upgrade`、`udp_fw_upgrade`）+ 配置头生成（`gen_gitver.py`、`gen_keyhash.py`）。**只有一个顶层 `CMakeLists.txt`**，子模块源码直接在此用 `zephyr_sources_ifdef` / `zephyr_include_directories_ifdef` 汇总。
 - `drivers/` — 自定义驱动（`nrf24l01p`）。

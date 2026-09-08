@@ -1,0 +1,6 @@
+board:
+  name: titan_mini
+  full_name: RT-Thread Titan Mini (Renesas RA8P1)
+  vendor: renesas
+  socs:
+    - name: r7ka8p1kflcac
