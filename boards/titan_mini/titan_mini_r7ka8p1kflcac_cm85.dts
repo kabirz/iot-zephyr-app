@@ -17,6 +17,7 @@
 
 #include <renesas/ra/ra8/r7ka8p1kflcac_cm85.dtsi>
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 #include "titan_mini-pinctrl.dtsi"
 
 / {
@@ -35,6 +36,18 @@
 		led0 = &led_g;
 		led1 = &led_r;
 		led2 = &led_b;
+		sw0 = &button_sw2;
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+
+		/* USER/BOOT button SW2 on P201/MD (IRQ4), press = low */
+		button_sw2: sw2 {
+			gpios = <&ioport2 1 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "User Button SW2";
+			zephyr,code = <INPUT_KEY_0>;
+		};
 	};
 
 	leds {
@@ -119,6 +132,19 @@
 };
 
 &ioport1 {
+	status = "okay";
+};
+
+&ioport2 {
+	status = "okay";
+	port-irqs = <&port_irq4>;
+	port-irq-names = "port-irq4";
+	port-irq4-pins = <1>; /* P201 */
+};
+
+/* SW2 on P201, NVIC slot 8 (0-3: sci2, 4-7: sci1) */
+&port_irq4 {
+	interrupts = <8 12>;
 	status = "okay";
 };
 
