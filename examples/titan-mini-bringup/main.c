@@ -3,26 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Titan Mini (Renesas RA8P1) 硬件 bringup:
- *  - TX 验证: 串口心跳 + LED 闪烁 (绿灯 P108)
- *  - RX 验证: 输入一行回车, 原样回显
- * 调试串口: H1 (1=GND, 2=RXD2=P802, 3=TXD2=P801), 115200-8N1
+ *  - UART shell 直接跑在调试串口上 (zephyr,shell-uart = uart2 / H1, 115200-8N1)
+ *  - LOG 心跳 + 绿灯闪烁 (P108)
+ *  - kernel reboot 命令验证 CONFIG_REBOOT
  */
 
 #include <zephyr/kernel.h>
-#include <zephyr/console/console.h>
 #include <zephyr/drivers/gpio.h>
-#include <string.h>
-#include <stdio.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(titan_bringup, LOG_LEVEL_INF);
 
 static const struct gpio_dt_spec led_g = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 
 static void heartbeat(void)
 {
-	int i = 0;
-
 	while (1) {
 		gpio_pin_toggle_dt(&led_g);
-		printk("heartbeat %d: uptime %d s\n", i++, (int)(k_uptime_get() / 1000));
+		LOG_INF("heartbeat: uptime %d s", (int)(k_uptime_get() / 1000));
 		k_sleep(K_SECONDS(2));
 	}
 }
@@ -31,31 +29,15 @@ K_THREAD_DEFINE(heartbeat_tid, 2048, heartbeat, NULL, NULL, NULL, 5, 0, 2000);
 
 int main(void)
 {
-	int ret;
+	int ret = gpio_pin_configure_dt(&led_g, GPIO_OUTPUT_INACTIVE);
 
-	printk("\n");
-	printk("========================================\n");
-	printk("Titan Mini (Renesas RA8P1) HW bringup\n");
-	printk("UART: SCI2 @ 115200-8N1, H1: TXD2=P801 RXD2=P802\n");
-	printk("build: " __DATE__ " " __TIME__ "\n");
-	printk("========================================\n");
-
-	ret = gpio_pin_configure_dt(&led_g, GPIO_OUTPUT_INACTIVE);
 	if (ret < 0) {
-		printk("ERROR: LED config failed (%d)\n", ret);
-	} else {
-		printk("user LED (green) blinking\n");
+		LOG_ERR("LED config failed (%d)", ret);
 	}
 
-	printk("type a line + Enter to test RX\n");
-
-	console_getline_init();
-
-	while (1) {
-		char *line = console_getline();
-
-		printk("RX (%zu chars): %s\n", strlen(line), line);
-	}
+	LOG_INF("Titan Mini (Renesas RA8P1) HW bringup");
+	LOG_INF("debug UART: H1, TXD2=P801 RXD2=P802, 115200-8N1");
+	LOG_INF("shell ready, try: kernel version | kernel reboot");
 
 	return 0;
 }
