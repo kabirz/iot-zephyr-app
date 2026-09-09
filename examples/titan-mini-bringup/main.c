@@ -8,6 +8,7 @@
  *  - 用户按键 SW2 (P201/IRQ4) 中断计数, 200ms 软件防抖
  *  - SD 卡: SDHI0 + FATFS 挂载 /SD:, 读写校验
  *  - IMU: LSM6DS3TR-C (IIC1 @0x6A) 1Hz 加速度/陀螺仪采样
+ *  - SDRAM: W9825G6KH-6 32MB@0x68000000 数据线/地址线/大块 pattern 测试
  *  - QSPI Flash: W25Q64 擦写读校验
  *  - kernel reboot 命令验证 CONFIG_REBOOT
  */
@@ -226,6 +227,84 @@ static void imu_poll(void)
 }
 
 K_THREAD_DEFINE(imu_tid, 2048, imu_poll, NULL, NULL, NULL, 5, 0, 3000);
+
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(sdram0), okay)
+#define SDRAM_BASE 0x68000000UL
+#define SDRAM_SIZE (32UL * 1024 * 1024)
+
+static int sdram_test(void)
+{
+	volatile uint16_t *s16 = (volatile uint16_t *)SDRAM_BASE;
+	volatile uint32_t *s32 = (volatile uint32_t *)SDRAM_BASE;
+	uint32_t t0, ms;
+	int err = 0;
+
+	/* 1) 数据总线: 16 位走位 1/0, 检查粘连/断路线 */
+	for (int i = 0; i < 16; i++) {
+		uint16_t v = BIT(i);
+		s16[0] = v;
+		if (s16[0] != v) {
+			LOG_ERR("SDRAM DQ: write 0x%04x read 0x%04x (bit %d)", v, s16[0], i);
+			err++;
+		}
+		s16[0] = (uint16_t)~v;
+		if (s16[0] != (uint16_t)~v) {
+			LOG_ERR("SDRAM DQ: write ~0x%04x read 0x%04x (bit %d)", v, s16[0], i);
+			err++;
+		}
+	}
+	if (err) {
+		return -EIO;
+	}
+	LOG_INF("SDRAM data bus (16-bit walking): OK");
+
+	/* 2) 地址总线: 按地址写地址值再回读 (覆盖 A0-A12 行/列 + BA) */
+	t0 = k_uptime_get_32();
+	for (uint32_t off = 0; off < SDRAM_SIZE; off += 0x20000) { /* 128KB 步进 */
+		s32[off / 4] = 0xA5000000 | off;
+	}
+	for (uint32_t off = 0; off < SDRAM_SIZE; off += 0x20000) {
+		if (s32[off / 4] != (0xA5000000 | off)) {
+			LOG_ERR("SDRAM addr test fail @0x%08x: 0x%08x", off, s32[off / 4]);
+			err++;
+			if (err > 8) {
+				break;
+			}
+		}
+	}
+	if (err) {
+		return -EIO;
+	}
+	LOG_INF("SDRAM address bus (256 points): OK");
+
+	/* 3) 大块 pattern: 4MB 递增写读 (远超 DCache, 强制真实 DRAM 访问) */
+	t0 = k_uptime_get_32();
+	{
+		uint32_t n = 4UL * 1024 * 1024 / 4;
+
+		for (uint32_t i = 0; i < n; i++) {
+			s32[i] = i ^ 0x5A5A0000;
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			if (s32[i] != (i ^ 0x5A5A0000)) {
+				LOG_ERR("SDRAM pattern fail @+0x%x: 0x%08x", i * 4, s32[i]);
+				err++;
+				if (err > 8) {
+					break;
+				}
+			}
+		}
+	}
+	ms = k_uptime_get_32() - t0;
+	if (err) {
+		return -EIO;
+	}
+	LOG_INF("SDRAM 4MB pattern: OK in %u ms", ms);
+
+	return 0;
+}
+#endif /* sdram0 */
+
 #endif /* CONFIG_SENSOR */
 
 int main(void)
@@ -257,6 +336,10 @@ int main(void)
 	LOG_INF("debug UART: U18, TXD1=P707 RXD1=P706, 115200-8N1");
 	LOG_INF("RGB flow: G(P108) -> R(P109) -> B(P110), %d ms/step", LED_FLOW_STEP_MS);
 	LOG_INF("shell ready, try: kernel version | kernel reboot");
+
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(sdram0), okay)
+	sdram_test();
+#endif
 
 #if defined(CONFIG_FILE_SYSTEM)
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(w25q64), okay)

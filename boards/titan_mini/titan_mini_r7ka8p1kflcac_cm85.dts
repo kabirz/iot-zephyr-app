@@ -14,6 +14,7 @@
  *  - SD card on SDHI0 (PD01/02/03/04/05/07, DAT3 = P111)
  *  - IMU LSM6DS3TR-C on IIC1 (SDA1 = P511, SCL1 = P512), addr 0x6A,
  *    INT1 = P412 (IMU_INT1)
+ *  - SDRAM W9825G6KH-6 (32 MB, 16-bit) at 0x68000000
  *  - QSPI NOR flash W25Q64JVSSIQ (8 MB) on OSPI-B/XSPI0 channel 0, CS1
  */
 
@@ -23,6 +24,7 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/i2c/i2c.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/memory-controller/renesas,ra-sdram.h>
 #include <zephyr/dt-bindings/flash_controller/xspi.h>
 #include "titan_mini-pinctrl.dtsi"
 
@@ -82,6 +84,14 @@
 		led1 = &led_r;
 		led2 = &led_b;
 		sw0 = &button_sw2;
+	};
+
+	sdram0: sdram@68000000 {
+		compatible = "zephyr,memory-region", "mmio-sram";
+		device_type = "memory";
+		reg = <0x68000000 DT_SIZE_M(32)>;
+		zephyr,memory-region = "SDRAM";
+		status = "okay";
 	};
 
 	buttons {
@@ -275,5 +285,30 @@
 		compatible = "st,lsm6dsl";
 		reg = <0x6a>;
 		status = "okay";
+	};
+};
+
+/* SDRAM W9825G6KH-6: 32MB 16-bit, CL=3, 时序同 ek_ra8p1 (兼容 -6 级颗粒) */
+&sdram {
+	pinctrl-0 = <&sdram_default>;
+	pinctrl-names = "default";
+	status = "okay";
+	auto-refresh-interval = <SDRAM_AUTO_REFRESH_INTERVAL_10CYCLES>;
+	auto-refresh-count = <SDRAM_AUTO_REFRESH_COUNT_8TIMES>;
+	precharge-cycle-count = <SDRAM_AUTO_PRECHARGE_CYCLE_3CYCLES>;
+	multiplex-addr-shift = "9-bit";
+	endian-mode = "little-endian";
+	continuous-access;
+	bus-width = "16-bit";
+
+	bank@0 {
+		reg = <0>;
+		renesas,ra-sdram-timing = <SDRAM_TRAS_6CYCLES
+					   SDRAM_TRCD_3CYCLES
+					   SDRAM_TRP_3CYCLES
+					   SDRAM_TWR_2CYCLES
+					   SDRAM_TCL_3CYCLES
+					   937
+					   SDRAM_TREFW_8CYCLES>;
 	};
 };

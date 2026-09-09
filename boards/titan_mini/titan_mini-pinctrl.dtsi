@@ -62,6 +62,51 @@
 		};
 	};
 
+	sdram_default: sdram_default {
+		group1 {
+			/* SDRAM W9825G6KH-6 (32MB, 16-bit), 引脚集与官方 BSP pin_data 一致 */
+			psels = <RA_PSEL(RA_PSEL_BUS, 1, 12)>, /* DQ3  P112 */
+				<RA_PSEL(RA_PSEL_BUS, 1, 13)>, /* DQ4  P113 */
+				<RA_PSEL(RA_PSEL_BUS, 1, 14)>, /* DQ5  P114 */
+				<RA_PSEL(RA_PSEL_BUS, 1, 15)>, /* DQ6  P115 */
+				<RA_PSEL(RA_PSEL_BUS, 3, 0)>, /* DQ2  P300 */
+				<RA_PSEL(RA_PSEL_BUS, 3, 1)>, /* DQ1  P301 */
+				<RA_PSEL(RA_PSEL_BUS, 3, 2)>, /* DQ0  P302 */
+				<RA_PSEL(RA_PSEL_BUS, 5, 3)>, /* A5   P503 */
+				<RA_PSEL(RA_PSEL_BUS, 5, 4)>, /* A6   P504 */
+				<RA_PSEL(RA_PSEL_BUS, 5, 5)>, /* A7   P505 */
+				<RA_PSEL(RA_PSEL_BUS, 5, 6)>, /* A8   P506 */
+				<RA_PSEL(RA_PSEL_BUS, 5, 7)>, /* A9   P507 */
+				<RA_PSEL(RA_PSEL_BUS, 5, 8)>, /* A10  P508 */
+				<RA_PSEL(RA_PSEL_BUS, 5, 9)>, /* A11  P509 */
+				<RA_PSEL(RA_PSEL_BUS, 5, 10)>, /* A12 P510 */
+				<RA_PSEL(RA_PSEL_BUS, 6, 8)>, /* BA0  P608 */
+				<RA_PSEL(RA_PSEL_BUS, 6, 9)>, /* DQ7  P609 */
+				<RA_PSEL(RA_PSEL_BUS, 6, 10)>, /* DQ12 P610 */
+				<RA_PSEL(RA_PSEL_BUS, 6, 11)>, /* DQ13 P611 */
+				<RA_PSEL(RA_PSEL_BUS, 6, 12)>, /* DQ14 P612 */
+				<RA_PSEL(RA_PSEL_BUS, 6, 13)>, /* DQ15 P613 */
+				<RA_PSEL(RA_PSEL_BUS, 6, 14)>, /* DQM0 P614 */
+				<RA_PSEL(RA_PSEL_BUS, 8, 13)>, /* SDCS P813 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 0)>, /* A4   PA00 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 1)>, /* A3   PA01 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 2)>, /* A2   PA02 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 3)>, /* A1   PA03 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 4)>, /* A0   PA04 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 5)>, /* DQM1 PA05 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 6)>, /* CKE  PA06 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 8)>, /* WE   PA08 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 9)>, /* CAS  PA09 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 10)>, /* RAS PA10 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 11)>, /* DQ8 PA11 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 12)>, /* DQ9 PA12 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 13)>, /* DQ10 PA13 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 14)>, /* DQ11 PA14 */
+				<RA_PSEL(RA_PSEL_BUS, 10, 15)>, /* SDCLK PA15 */
+				<RA_PSEL(RA_PSEL_BUS, 13, 0)>; /* BA1  PD00 */
+		};
+	};
+
 	ospi0_default: ospi0_default {
 		group1 {
 			/* sclk sio0-3 (W25Q64JVSSIQ, quad) */
