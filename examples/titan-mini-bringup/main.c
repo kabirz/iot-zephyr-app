@@ -9,6 +9,7 @@
  *  - SD 卡: SDHI0 + FATFS 挂载 /SD:, 读写校验
  *  - IMU: LSM6DS3TR-C (IIC1 @0x6A) 1Hz 加速度/陀螺仪采样
  *  - SDRAM: W9825G6KH-6 32MB@0x68000000 数据线/地址线/大块 pattern 测试
+ *  - 千兆以太网: RTL8211F MDIO 总线扫描诊断 (铜口待硬件修复)
  *  - QSPI Flash: W25Q64 擦写读校验
  *  - kernel reboot 命令验证 CONFIG_REBOOT
  */
@@ -17,6 +18,11 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/logging/log.h>
+
+#if defined(CONFIG_MDIO)
+#include <zephyr/drivers/mdio.h>
+#include <zephyr/net/mii.h>
+#endif
 
 #if defined(CONFIG_SENSOR)
 #include <zephyr/drivers/sensor.h>
@@ -307,6 +313,32 @@ static int sdram_test(void)
 
 #endif /* CONFIG_SENSOR */
 
+#if defined(CONFIG_MDIO)
+static void mdio_scan(void)
+{
+	const struct device *mdio = DEVICE_DT_GET(DT_NODELABEL(mdio0));
+	uint16_t val;
+	int ret;
+
+	if (!device_is_ready(mdio)) {
+		LOG_ERR("mdio0 not ready");
+		return;
+	}
+
+	LOG_INF("MDIO scan (reg2 PHYID1):");
+	for (uint8_t addr = 0; addr < 32; addr++) {
+		ret = mdio_read(mdio, addr, MII_PHYID1R, &val);
+		if (addr < 4) {
+			LOG_INF("  addr %u: ret=%d val=0x%04x", addr, ret, val);
+		}
+		if (ret == 0 && val != 0xFFFF && val != 0x0000) {
+			LOG_INF("  ** addr %u: PHYID1=0x%04x", addr, val);
+		}
+	}
+	LOG_INF("MDIO scan done");
+}
+#endif
+
 int main(void)
 {
 	int ret = 0;
@@ -339,6 +371,10 @@ int main(void)
 
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(sdram0), okay)
 	sdram_test();
+#endif
+
+#if defined(CONFIG_MDIO)
+	mdio_scan();
 #endif
 
 #if defined(CONFIG_FILE_SYSTEM)

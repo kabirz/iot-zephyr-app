@@ -14,6 +14,9 @@
  *  - SD card on SDHI0 (PD01/02/03/04/05/07, DAT3 = P111)
  *  - IMU LSM6DS3TR-C on IIC1 (SDA1 = P511, SCL1 = P512), addr 0x6A,
  *    INT1 = P412 (IMU_INT1)
+ *  - Gigabit Ethernet: RTL8211F-CG PHY on eth1 (RGMII1), MDIO on mdio0
+ *    (ET0_MDC/MDIO = PC11/PC12, PSEL 0x18), PHY addr 0x01, reset = PA07,
+ *    25 MHz xtal on PHY; 当前限速 100M (千兆 RGMII 时序待调)
  *  - SDRAM W9825G6KH-6 (32 MB, 16-bit) at 0x68000000
  *  - QSPI NOR flash W25Q64JVSSIQ (8 MB) on OSPI-B/XSPI0 channel 0, CS1
  */
@@ -77,6 +80,7 @@
 		zephyr,flash-controller = &mram_ctrl;
 		zephyr,console = &uart1;
 		zephyr,shell-uart = &uart1;
+		zephyr,entropy = &trng;
 	};
 
 	aliases {
@@ -193,7 +197,46 @@
 	status = "okay";
 };
 
+/* Ethernet switch clocks (同 ek_ra8p1: 250M/500M/25M) */
+&eswclk {
+	clocks = <&pllp>;
+	div = <4>;
+	status = "okay";
+};
+
+&eswphyclk {
+	clocks = <&pllp>;
+	div = <2>;
+	status = "okay";
+};
+
+&ethphyclk {
+	clocks = <&pllr>;
+	div = <16>;
+	status = "okay";
+};
+
+&trng {
+	status = "okay";
+};
+
 &ioport1 {
+	status = "okay";
+};
+
+&ioport3 {
+	status = "okay";
+};
+
+&ioport9 {
+	status = "okay";
+};
+
+&ioporta {
+	status = "okay";
+};
+
+&ioportc {
 	status = "okay";
 };
 
@@ -310,5 +353,44 @@
 					   SDRAM_TCL_3CYCLES
 					   937
 					   SDRAM_TREFW_8CYCLES>;
+	};
+};
+
+/* Gigabit Ethernet: RTL8211F-CG on eth1/RGMII1 (NVIC 24 gwdi) */
+&eswm {
+	interrupts = <24 1>;
+	interrupt-names = "gwdi";
+	status = "okay";
+};
+
+&eth1 {
+	phy-connection-type = "rgmii";
+	local-mac-address = [02 00 00 50 01 01];
+	phy-clock-type = "xtal";
+	phy-handle = <&rtl8211f>;
+	pinctrl-0 = <&eth1_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+/*
+ * PHY 管理总线在 mdio0 (ET0_MDC/ET0_MDIO = PC11/PC12), 数据通路在 eth1
+ * (RGMII1) — 板子原理图如此, mdio 驱动 init 会自行把 ETHA0 切到工作模式.
+ */
+&mdio0 {
+	pinctrl-0 = <&mdio0_default>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	rtl8211f: phy@1 {
+		compatible = "realtek,rtl8211f";
+		reg = <1>;
+		/* 驱动按裸极性写 set(0)/set(1), 须声明 ACTIVE_HIGH (同 NXP rtl8211f 板):
+		 * set(0)=物理低=复位, set(1)=物理高=释放 */
+		reset-gpios = <&ioporta 7 GPIO_ACTIVE_HIGH>; /* ET1_RESET PA07 */
+		/* 千兆 RGMII DDR 时序待调, 先限 100M (时序调好后删除) */
+		default-speeds = "100BASE Full-Duplex";
+		/* 无 int-gpios: PHY 驱动用周期轮询监测链路 (省 IRQ31) */
+		status = "okay";
 	};
 };
