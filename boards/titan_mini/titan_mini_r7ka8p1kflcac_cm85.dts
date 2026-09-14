@@ -16,7 +16,7 @@
  *    INT1 = P412 (IMU_INT1)
  *  - Gigabit Ethernet: RTL8211F-CG PHY on eth1 (RGMII1), MDIO on mdio0
  *    (ET0_MDC/MDIO = PC11/PC12, PSEL 0x18), PHY addr 0x01, reset = PA07,
- *    25 MHz xtal on PHY; 当前限速 100M (千兆 RGMII 时序待调)
+ *    25 MHz xtal on PHY, 千兆 RGMII 经 renesas,no-txc-delay 修复
  *  - SDRAM W9825G6KH-6 (32 MB, 16-bit) at 0x68000000
  *  - QSPI NOR flash W25Q64JVSSIQ (8 MB) on OSPI-B/XSPI0 channel 0, CS1
  */
@@ -365,6 +365,8 @@
 
 &eth1 {
 	phy-connection-type = "rgmii";
+	/* RTL8211F strap 自带 RXC 2ns 延迟, 再叠 MAC TXCIDE 会错出千兆采样窗 */
+	renesas,no-txc-delay;
 	local-mac-address = [02 00 00 50 01 01];
 	phy-clock-type = "xtal";
 	phy-handle = <&rtl8211f>;
@@ -388,8 +390,6 @@
 		/* 驱动按裸极性写 set(0)/set(1), 须声明 ACTIVE_HIGH (同 NXP rtl8211f 板):
 		 * set(0)=物理低=复位, set(1)=物理高=释放 */
 		reset-gpios = <&ioporta 7 GPIO_ACTIVE_HIGH>; /* ET1_RESET PA07 */
-		/* 千兆 RGMII DDR 时序待调, 先限 100M (时序调好后删除) */
-		default-speeds = "100BASE Full-Duplex";
 		/* 无 int-gpios: PHY 驱动用周期轮询监测链路 (省 IRQ31) */
 		status = "okay";
 	};
