@@ -1,0 +1,9 @@
+/*
+ * LVGL 指针输入绑定 GT911
+ */
+/ {
+	lvgl_pointer_input_generic: lvgl_pointer_input {
+		compatible = "zephyr,lvgl-pointer-input";
+		input = <&gt911>;
+	};
+};

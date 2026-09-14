@@ -130,6 +130,42 @@
 		};
 	};
 
+	lcdif_default: lcdif_default {
+		group1 {
+			/* GLCDC RGB565: DATA0-15 (接 RGB888 屏高 16 位 R[7:3]G[7:2]B[7:3]) */
+			psels = <RA_PSEL(RA_PSEL_GLCDC, 9, 14)>, /* DATA0  P914 */
+				<RA_PSEL(RA_PSEL_GLCDC, 9, 15)>, /* DATA1  P915 */
+				<RA_PSEL(RA_PSEL_GLCDC, 9, 3)>, /* DATA2  P903 */
+				<RA_PSEL(RA_PSEL_GLCDC, 9, 2)>, /* DATA3  P902 */
+				<RA_PSEL(RA_PSEL_GLCDC, 9, 10)>, /* DATA4 P910 */
+				<RA_PSEL(RA_PSEL_GLCDC, 9, 11)>, /* DATA5 P911 */
+				<RA_PSEL(RA_PSEL_GLCDC, 9, 12)>, /* DATA6 P912 */
+				<RA_PSEL(RA_PSEL_GLCDC, 9, 13)>, /* DATA7 P913 */
+				<RA_PSEL(RA_PSEL_GLCDC, 9, 4)>, /* DATA8  P904 */
+				<RA_PSEL(RA_PSEL_GLCDC, 2, 7)>, /* DATA9  P207 */
+				<RA_PSEL(RA_PSEL_GLCDC, 11, 7)>, /* DATA10 PB07 */
+				<RA_PSEL(RA_PSEL_GLCDC, 11, 6)>, /* DATA11 PB06 */
+				<RA_PSEL(RA_PSEL_GLCDC, 11, 5)>, /* DATA12 PB05 */
+				<RA_PSEL(RA_PSEL_GLCDC, 11, 1)>, /* DATA13 PB01 */
+				<RA_PSEL(RA_PSEL_GLCDC, 11, 4)>, /* DATA14 PB04 */
+				<RA_PSEL(RA_PSEL_GLCDC, 11, 3)>, /* DATA15 PB03 */
+				<RA_PSEL(RA_PSEL_GLCDC, 5, 15)>, /* CLK   P515 */
+				<RA_PSEL(RA_PSEL_GLCDC, 8, 6)>, /* TCON0(HSYNC) P806 */
+				<RA_PSEL(RA_PSEL_GLCDC, 8, 5)>, /* TCON1(VSYNC) P805 */
+				<RA_PSEL(RA_PSEL_GLCDC, 5, 13)>; /* TCON3(DE)     P513 */
+			drive-strength = "high";
+		};
+	};
+
+	iic0_default: iic0_default {
+		group1 {
+			/* SDA0 P409, SCL0 P410 (触摸 GT911 总线, 板上 10K 上拉) */
+			psels = <RA_PSEL(RA_PSEL_I2C, 4, 9)>,
+				<RA_PSEL(RA_PSEL_I2C, 4, 10)>;
+			drive-strength = "medium";
+		};
+	};
+
 	mdio0_default: mdio0_default {
 		group1 {
 			/* MDC ET0_MDC PC11, MDIO ET0_MDIO PC12 (板子 MDIO 走通道 0);

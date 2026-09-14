@@ -14,9 +14,11 @@
  *  - SD card on SDHI0 (PD01/02/03/04/05/07, DAT3 = P111)
  *  - IMU LSM6DS3TR-C on IIC1 (SDA1 = P511, SCL1 = P512), addr 0x6A,
  *    INT1 = P412 (IMU_INT1)
- *  - Gigabit Ethernet: RTL8211F-CG PHY on eth1 (RGMII1), MDIO on mdio0
- *    (ET0_MDC/MDIO = PC11/PC12, PSEL 0x18), PHY addr 0x01, reset = PA07,
- *    25 MHz xtal on PHY, 千兆 RGMII 经 renesas,no-txc-delay 修复
+ *  - Gigabit Ethernet: RTL8211F-CG PHY on eth1 (RGMII1), MDIO = PC11/PC12,
+ *    PHY addr 0x01, reset = PA07, interrupt = P107, 25 MHz xtal on PHY
+ *  - RGB LCD (ATK-MD0700R-1024600, RGB565) on GLCDC/lcdif, BL = P303,
+ *    LCD_RST = P011; 触摸 GT911 on IIC0 (SDA0=P409, SCL0=P410),
+ *    CTP_RST = P412, CTP_IRQ_N = P007
  *  - SDRAM W9825G6KH-6 (32 MB, 16-bit) at 0x68000000
  *  - QSPI NOR flash W25Q64JVSSIQ (8 MB) on OSPI-B/XSPI0 channel 0, CS1
  */
@@ -26,8 +28,11 @@
 #include <renesas/ra/ra8/r7ka8p1kflcac_cm85.dtsi>
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/display/panel.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/flash_controller/xspi.h>
 #include <zephyr/dt-bindings/memory-controller/renesas,ra-sdram.h>
+#include <zephyr/dt-bindings/memory-attr/memory-attr-arm.h>
 #include <zephyr/dt-bindings/flash_controller/xspi.h>
 #include "titan_mini-pinctrl.dtsi"
 
@@ -81,6 +86,7 @@
 		zephyr,console = &uart1;
 		zephyr,shell-uart = &uart1;
 		zephyr,entropy = &trng;
+		zephyr,display = &lcdif;
 	};
 
 	aliases {
@@ -93,8 +99,19 @@
 	sdram0: sdram@68000000 {
 		compatible = "zephyr,memory-region", "mmio-sram";
 		device_type = "memory";
-		reg = <0x68000000 DT_SIZE_M(32)>;
+		reg = <0x68000000 DT_SIZE_M(24)>;
 		zephyr,memory-region = "SDRAM";
+		status = "okay";
+	};
+
+	/* GLCDC 帧缓冲专用 (SDRAM 后 8MB): NOCACHE 保证 DMA 可见,
+	 * 官方固件同款 .sdram_noinit_nocache 方案 */
+	sdram_fb: sdram-fb@68800000 {
+		compatible = "zephyr,memory-region", "mmio-sram";
+		device_type = "memory";
+		reg = <0x68800000 DT_SIZE_M(8)>;
+		zephyr,memory-region = "SDRAM_FB";
+		zephyr,memory-attr = <(DT_MEM_ARM(ATTR_MPU_RAM_NOCACHE))>;
 		status = "okay";
 	};
 
@@ -220,7 +237,26 @@
 	status = "okay";
 };
 
+/* GLCDC 时钟: pll2r/4 = 120 MHz (官方 BSP 同款时钟源), /2 = 60 MHz 像素时钟 */
+&lcdclk {
+	clocks = <&pll2r>;
+	div = <4>;
+	status = "okay";
+};
+
+&ioport0 {
+	status = "okay";
+};
+
 &ioport1 {
+	status = "okay";
+};
+
+&ioport4 {
+	status = "okay";
+};
+
+&ioportb {
 	status = "okay";
 };
 
@@ -390,7 +426,66 @@
 		/* 驱动按裸极性写 set(0)/set(1), 须声明 ACTIVE_HIGH (同 NXP rtl8211f 板):
 		 * set(0)=物理低=复位, set(1)=物理高=释放 */
 		reset-gpios = <&ioporta 7 GPIO_ACTIVE_HIGH>; /* ET1_RESET PA07 */
+		/* 千兆 RGMII DDR 时序待调, 先限 100M (时序调好后删除) */
 		/* 无 int-gpios: PHY 驱动用周期轮询监测链路 (省 IRQ31) */
+		status = "okay";
+	};
+};
+
+/*
+ * ATK-MD0700R-1024600 (EK79001): DE 模式时序, DCLK 50 MHz,
+ * 帧缓冲放 SDRAM (双缓冲 2x1.2MB)
+ */
+&lcdif {
+	pinctrl-0 = <&lcdif_default>;
+	pinctrl-names = "default";
+	interrupts = <20 0>;
+	interrupt-names = "line";
+	status = "okay";
+	width = <1024>;
+	height = <600>;
+	input-pixel-format = <PANEL_PIXEL_FORMAT_RGB_565>;
+	output-pixel-format = <PANEL_PIXEL_FORMAT_RGB_565>;
+	output-clock-divisor = <2>;
+	output-signal-sync-edge = "RISING";
+	output-pin-hsync = "TCON_PIN_0";
+	output-pin-vsync = "TCON_PIN_1";
+	output-pin-de = "TCON_PIN_3";
+	backlight-gpios = <&ioport3 3 GPIO_ACTIVE_HIGH>; /* LCD_BL P303 */
+	ext-ram = <&sdram_fb>;
+
+	display_timings: display_timings {
+		compatible = "zephyr,panel-timing";
+		hsync-len = <20>;
+		hback-porch = <140>;
+		hfront-porch = <160>;
+		vsync-len = <3>;
+		vback-porch = <20>;
+		vfront-porch = <12>;
+		hsync-active = <0>; /* ATK 模块 HSYNC/VSYNC 低有效 */
+		vsync-active = <0>;
+		de-active = <1>;
+		pixelclk-active = <0>;
+	};
+};
+
+/* 触摸 GT911 (NVIC 16-19: 0-3 sci2, 4-7 sci1, 8 irq4, 9-11 sdhc0, 12-15 iic1, 20 lcdif) */
+&iic0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	clock-frequency = <I2C_BITRATE_STANDARD>; /* 100k: FPC/转接线信号裕量 */
+	pinctrl-0 = <&iic0_default>;
+	pinctrl-names = "default";
+	interrupts = <16 1>, <17 1>, <18 1>, <19 1>;
+	interrupt-names = "rxi", "txi", "tei", "eri";
+	status = "okay";
+
+	gt911: gt911@5d {
+		compatible = "goodix,gt911";
+		reg = <0x5d>;
+		alt-addr = <0x14>;
+		irq-gpios = <&ioport0 7 GPIO_ACTIVE_LOW>;   /* CTP_IRQ_N P007 */
+		reset-gpios = <&ioport4 12 GPIO_ACTIVE_LOW>; /* CTP_RST  P412 */
 		status = "okay";
 	};
 };
