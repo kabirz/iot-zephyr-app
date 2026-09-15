@@ -8,6 +8,8 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/ipc/ipc_service.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/sys/util.h>
 #include <string.h>
 
 static const struct device *ipc0_dev = DEVICE_DT_GET(DT_NODELABEL(ipc0));
@@ -16,6 +18,13 @@ static K_SEM_DEFINE(bound_sem, 0, 1);
 
 static void ep_recv(const void *data, size_t len, void *priv)
 {
+	char buf[64];
+
+	len = MIN(len, sizeof(buf) - 1);
+	memcpy(buf, data, len);
+	buf[len] = '\0';
+	printk("CM33 RX (%zu bytes): %s\n", len, buf);
+
 	/* echo 回 CM85 */
 	(void)ipc_service_send(&ept, data, len);
 }
@@ -35,6 +44,8 @@ static struct ipc_ept_cfg ep_cfg = {
 
 int main(void)
 {
+	printk("CM33 (secondary core) booted, console on uart2\n");
+
 	if (!device_is_ready(ipc0_dev)) {
 		return -ENODEV;
 	}

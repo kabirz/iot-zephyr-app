@@ -35,3 +35,8 @@
 	interrupts = <94 1>;
 	status = "okay";
 };
+
+/* uart2 让给 CM33 作调试控制台 (CM33 变体 dts 已声明) */
+&sci2 {
+	status = "disabled";
+};

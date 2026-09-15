@@ -14,7 +14,7 @@ CM85（主核）+ CM33（副核）核间通信验证例程。
 | IPC 共享内存 | sram1 顶部 4 KB：TX 0x2219F000（2 KB）+ RX 0x2219F800（2 KB），CM33 侧 sram1 相应缩为 636 KB |
 | 核间通知 | 硬件邮箱 `mbox0`（`renesas,ra-ipc-mbox` 驱动），NVIC 槽位 94 |
 | IPC 协议 | Zephyr IPC service，icmsg 后端 |
-| CM33 控制台 | 无（uart1 被 CM85 占用，副核日志走 IPC 回传） |
+| CM33 调试控制台 | uart2（SCI2，H1 排针 3=TXD2/P801、2=RXD2/P802），115200-8N1；CM85 例程侧已禁用 sci2 让出 |
 
 ## 编译
 
@@ -54,7 +54,10 @@ west flash -d build/titan_rpmsg --domain titan-mini-rpmsg
 
 > 注意：烧录顺序**先 remote 再主核**——pyocd 按域擦写，两个域的擦除范围不重叠，顺序其实都行；但先烧副核可避免主核起来后（若 CM33 区域还是空/旧代码）产生一次无效启动。
 
-烧完按复位（或 `pyocd reset`），观察调试串口（U18 排针 TXD1=P707 / RXD1=P706，115200-8N1）。
+烧完按复位（或 `pyocd reset`），两路串口各自输出：
+
+- **CM85**：U18 排针 TXD1=P707 / RXD1=P706（本例程 `/dev/ttyUSB0`）
+- **CM33**：H1 排针 1=GND、2=RXD2/P802、3=TXD2/P801（本例程 `/dev/ttyACM1`，经 ST-Link VCP）
 
 ## 运行与验证
 

@@ -5,13 +5,16 @@
  * Titan Mini CM33 (副核) 变体:
  *  - 代码: code_mram_cm33 @0x20C0000 (256KB, 与 CM85 镜像 0x2000000 不冲突)
  *  - RAM:  sram1 @0x22100000 (640KB, CM33 专用; 顶部 4KB 留给 IPC 共享内存)
- *  - 无控制台 (uart1 被 CM85 占用; 远核日志走 IPC)
+ *  - 调试控制台: uart2 (SCI2, H1 排针 3=TXD2/P801, 2=RXD2/P802);
+ *    CM85 侧使用 uart2 时需在其 app overlay 中禁用 sci2 (外设单核独占)
  */
 
 /dts-v1/;
 
 #include <renesas/ra/ra8/r7ka8p1kflcac_cm33.dtsi>
 #include <freq.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include "titan_mini-pinctrl.dtsi"
 
 / {
 	model = "RT-Thread Titan Mini (RA8P1 CM33)";
@@ -21,6 +24,8 @@
 		zephyr,sram = &sram1;
 		zephyr,flash = &code_mram_cm33;
 		zephyr,flash-controller = &mram_ctrl;
+		zephyr,console = &uart2;
+		zephyr,shell-uart = &uart2;
 	};
 };
 
@@ -73,3 +78,20 @@
 	};
 };
 
+/* 调试 UART: H1 (1=GND, 2=RXD2/P802, 3=TXD2/P801), NVIC 槽位 0-3 (CM33 独立 NVIC) */
+&ioport8 {
+	status = "okay";
+};
+
+&sci2 {
+	pinctrl-0 = <&sci2_default>;
+	pinctrl-names = "default";
+	interrupts = <0 1>, <1 1>, <2 1>, <3 1>;
+	interrupt-names = "rxi", "txi", "tei", "eri";
+	status = "okay";
+
+	uart2: uart {
+		current-speed = <115200>;
+		status = "okay";
+	};
+};
