@@ -18,6 +18,20 @@
 
 LOG_MODULE_REGISTER(titan_lvgl, LOG_LEVEL_INF);
 
+/* 显示驱动 init (85) 一开背光就先关掉: 此时帧缓冲未渲染, 会白闪,
+ * 且 GT911 探测(92) + 触摸恢复还要 ~1s. 首帧就绪后由 main 点亮. */
+static int backlight_off_early(void)
+{
+	const struct device *display = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+
+	if (device_is_ready(display)) {
+		return display_blanking_on(display);
+	}
+	return 0;
+}
+
+SYS_INIT(backlight_off_early, POST_KERNEL, 86);
+
 static lv_obj_t *count_label;
 static int counter;
 
@@ -155,6 +169,9 @@ int main(void)
 		LOG_INF("display ready, %ux%u", caps.x_resolution, caps.y_resolution);
 	}
 
+	/* 双保险: 背光保持关闭直到首帧渲染完成 */
+	display_blanking_on(display);
+
 	gpio_pin_configure_dt(&lcd_rst, GPIO_OUTPUT_ACTIVE);
 	k_sleep(K_MSEC(20));
 	gpio_pin_set_dt(&lcd_rst, 0);
@@ -163,6 +180,13 @@ int main(void)
 	touch_recover();
 
 	ui_init();
+
+	/* 渲染首帧到帧缓冲, 再点亮背光 (blanking off = 背光开) */
+	lv_obj_invalidate(lv_screen_active());
+	lv_refr_now(NULL);
+	display_blanking_off(display);
+	LOG_INF("first frame rendered, backlight on");
+
 	LOG_INF("LVGL running, touch the screen");
 
 	while (1) {
