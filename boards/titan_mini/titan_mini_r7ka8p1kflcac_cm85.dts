@@ -254,6 +254,15 @@
 
 &ioport4 {
 	status = "okay";
+
+	/* 上电即按住 GT911 复位: 防止其僵尸态锁死 I2C 总线导致启动卡死白屏
+	 * (gt911 驱动初始化时再接管此脚做正规复位脉冲) */
+	touch-rst-hog {
+		gpio-hog;
+		gpios = <12 GPIO_ACTIVE_LOW>;
+		output-low;
+		line-name = "CTP_RST";
+	};
 };
 
 &ioportb {
