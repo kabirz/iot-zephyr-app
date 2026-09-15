@@ -1,0 +1,75 @@
+/*
+ * Copyright (c) 2026 Titan Mini contributors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Titan Mini CM33 (副核) 变体:
+ *  - 代码: code_mram_cm33 @0x20C0000 (256KB, 与 CM85 镜像 0x2000000 不冲突)
+ *  - RAM:  sram1 @0x22100000 (640KB, CM33 专用; 顶部 4KB 留给 IPC 共享内存)
+ *  - 无控制台 (uart1 被 CM85 占用; 远核日志走 IPC)
+ */
+
+/dts-v1/;
+
+#include <renesas/ra/ra8/r7ka8p1kflcac_cm33.dtsi>
+#include <freq.h>
+
+/ {
+	model = "RT-Thread Titan Mini (RA8P1 CM33)";
+	compatible = "renesas,ra8p1", "renesas,ra";
+
+	chosen {
+		zephyr,sram = &sram1;
+		zephyr,flash = &code_mram_cm33;
+		zephyr,flash-controller = &mram_ctrl;
+	};
+};
+
+/* 24 MHz 主晶振 + PLL (与 CM85 侧一致, 时钟树由 CM85 在 boot 时先配好) */
+&xtal {
+	clock-frequency = <DT_FREQ_M(24)>;
+	mosel = <0>;
+	#clock-cells = <0>;
+	status = "okay";
+};
+
+&pll {
+	status = "okay";
+
+	pllp: pllp {
+		status = "okay";
+	};
+
+	pllq: pllq {
+		status = "okay";
+	};
+
+	pllr: pllr {
+		status = "okay";
+	};
+};
+
+&pll2 {
+	clocks = <&xtal>;
+	div = <3>;
+	mul = <300 0>;
+	status = "okay";
+
+	pll2p {
+		div = <4>;
+		freq = <DT_FREQ_M(600)>;
+		status = "okay";
+	};
+
+	pll2q {
+		div = <3>;
+		freq = <DT_FREQ_M(800)>;
+		status = "okay";
+	};
+
+	pll2r {
+		div = <5>;
+		freq = <DT_FREQ_M(480)>;
+		status = "okay";
+	};
+};
+

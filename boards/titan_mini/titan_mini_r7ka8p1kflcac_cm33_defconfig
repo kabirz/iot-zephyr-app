@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# 副核最小配置: 无控制台 (日志经 IPC), GPIO 按需
+CONFIG_GPIO=y

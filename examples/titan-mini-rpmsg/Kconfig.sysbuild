@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+
+source "share/sysbuild/Kconfig"
+
+config REMOTE_BOARD
+	string
+	default "titan_mini/r7ka8p1kflcac/cm33" if $(BOARD) = "titan_mini"

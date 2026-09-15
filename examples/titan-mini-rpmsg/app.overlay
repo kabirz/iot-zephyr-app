@@ -1,0 +1,37 @@
+/*
+ * CM85 侧 IPC: 共享内存在 sram1 顶部 4KB (0x2219F000),
+ * 核间通知走硬件邮箱 mbox0 (与 CM33 overlay 镜像 tx/rx)
+ */
+/ {
+	ipc {
+		ipc0: ipc0 {
+			compatible = "zephyr,ipc-icmsg";
+			dcache-alignment = <32>;
+			tx-region = <&sram_tx>;
+			rx-region = <&sram_rx>;
+			mboxes = <&mbox0 0>, <&mbox0 0>;
+			mbox-names = "rx", "tx";
+			status = "okay";
+		};
+	};
+
+	soc {
+		reserved-memory {
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			sram_rx: memory@2219f000 {
+				reg = <0x2219f000 0x800>;
+			};
+
+			sram_tx: memory@2219f800 {
+				reg = <0x2219f800 0x800>;
+			};
+		};
+	};
+};
+
+&mbox0 {
+	interrupts = <94 1>;
+	status = "okay";
+};
