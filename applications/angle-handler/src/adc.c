@@ -125,13 +125,14 @@ void adc_read_thread(void)
 			k_usleep(500);
 		}
 
-		/* 平均后转 1° 精度 (trim_avg 返回 0.1° 单位, /10 取整).
+		/* 平均后按 1° 量化, 再 ×10 以 0.1° 单位上报 (trim_avg 返回 0.1° 单位,
+		 * /10 取整后 ×10; ADC 实际精度达不到 0.1°, 故不保留个位小数).
 		 * 死区: 平均值落在 (-1°, +1°) 即 (-10, +10) 的 0.1° 值统一归 0°,
 		 * 消除摇杆居中时的微小抖动. */
 		int x_avg = trim_avg(x_samples, XY_SAMPLE_COUNT);
 		int y_avg = trim_avg(y_samples, XY_SAMPLE_COUNT);
-		int x_degree = (x_avg > -10 && x_avg < 10) ? 0 : x_avg / 10;
-		int y_degree = (y_avg > -10 && y_avg < 10) ? 0 : y_avg / 10;
+		int x_degree = (x_avg > -10 && x_avg < 10) ? 0 : x_avg / 10 * 10;
+		int y_degree = (y_avg > -10 && y_avg < 10) ? 0 : y_avg / 10 * 10;
 
 		if (x_degree != global_params.x_degree ||
 		    y_degree != global_params.y_degree) {
@@ -147,7 +148,7 @@ void adc_read_thread(void)
 		buf[4] = global_params.h_button;
 		buf[5] = buf[6] = buf[7] = 0xff;
 		if (global_params.log) {
-			LOG_INF("x: %d, y: %d, button: %d",
+			LOG_INF("x: %d (0.1deg), y: %d (0.1deg), button: %d",
 				global_params.x_degree, global_params.y_degree, global_params.h_button);
 		}
 		send_handler_state(buf, 8);

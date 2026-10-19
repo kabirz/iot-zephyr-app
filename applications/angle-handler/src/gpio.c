@@ -96,7 +96,7 @@ static void btn_display_work_handler(struct k_work *work)
 	buf[4] = global_params.h_button;
 	buf[5] = buf[6] = buf[7] = 0xff;
 	if (global_params.log) {
-		LOG_INF("x: %d, y: %d, button: %d",
+		LOG_INF("x: %d (0.1deg), y: %d (0.1deg), button: %d",
 			global_params.x_degree, global_params.y_degree, global_params.h_button);
 	}
 	send_handler_state(buf, 8);
