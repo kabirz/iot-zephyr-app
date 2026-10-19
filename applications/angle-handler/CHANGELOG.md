@@ -1,5 +1,19 @@
 # 手柄 变更记录
 
+## v1.0.3（2026-10-19）
+
+- 发布标签：`v1.0.3-angle-handler`
+- 发布提交：`19360f3`
+- 提交时间：`2026-10-19 21:59:44 +0800`
+
+### 自 v1.0.2-angle-handler 以来的改动
+
+- `19360f3` 发布手柄 v1.0.3：版本号改为 `1.0.3`，`EXTRAVERSION` 设为 `release`（`applications/angle-handler/VERSION`）
+- `93e9da3` 摇杆 X/Y 角度上报单位从 1° 整数改为 0.1°：内部仍保留 10 次采样去极值平均、±1° 中心死区与 1° 量化，最终结果 ×10 后经 HANDLER_STATE 帧 (0x1E3) 上报（-200~+200 代表 -20.0°~+20.0°），与 USER_GUIDE.md / CLAUDE.md 中已定义的协议对齐；ADC 与 GPIO 上报日志补充 (0.1deg) 单位标注（`applications/angle-handler/src/adc.c`、`applications/angle-handler/src/gpio.c`）
+- `ef03fff` 支持 MCUboot 引导程序内 CAN 固件升级：CAN1 使能（`zephyr,canbus` 及 PA11/PA12 引脚配置）从应用 overlay 上移到板级 DTS 统一定义，README 补充带 CAN 升级 bootloader 的 sysbuild 构建命令（`applications/angle-handler/boards/nrf24_f103rct6.overlay`、`applications/angle-handler/README.md`）
+- `2806fa6` 构建脚本改用 `target_sources_ifdef(CONFIG_SHELL ...)` 条件编译 shell 源文件，移除 `rf24_shell.c` 内的文件级 `#ifdef CONFIG_SHELL` 保护（`applications/angle-handler/CMakeLists.txt`、`applications/angle-handler/src/rf24_shell.c`）
+- `6a4c018` 追加 v1.0.2 的变更记录文档（`applications/angle-handler/CHANGELOG.md`）
+
 ## v1.0.2（2026-08-07）
 
 - 发布标签：`v1.0.2-angle-handler`
