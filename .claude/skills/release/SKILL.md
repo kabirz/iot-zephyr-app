@@ -57,6 +57,22 @@ description: Use when the user asks to release/publish a firmware version for an
    - POSIX：`<venv_path>/bin/python`
 
    用 `<python> --version` 和 `<python> -m west --version` 验证，两条都必须成功。
+6. **Zephyr 补丁已打上**（严格检查，`zephyr/patches/` 下每个 patch 逐个反向校验，
+   全部通过才继续；任一失败立即中止）。不要只看 `git status` / `git describe` 猜测，
+   必须逐个 patch 做内容级验证：
+
+   ```shell
+   ZEPHYR_DIR="$(west topdir)/zephyr"   # venv 场景可用 <python> -m west topdir
+   for p in zephyr/patches/*.patch; do
+     git -C "$ZEPHYR_DIR" apply --reverse --check "$PWD/$p" || {
+       echo "NOT APPLIED: $p"; exit 1; }
+   done
+   ```
+
+   能反向应用 = 补丁内容已在 zephyr 树上（`git am` 提交或 `git apply` 脏树均可识别）。
+   失败说明 `west patch apply` 没跑过、或 zephyr 树被 `west patch clean` 还原了：
+   先 `west patch apply` 再重跑本预检。**绝不允许跳过该检查继续发版**——
+   缺补丁编出的固件功能不完整（io-edge-hub 的 DTCM/日志时区、laser-ctrl 的 7 位串口修复）。
 
 ## 3. 改写 VERSION 文件
 
