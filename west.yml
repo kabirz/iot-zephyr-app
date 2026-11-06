@@ -3,17 +3,15 @@
 
 manifest:
   defaults:
-    remote: kabirz
+    remote: zephyr
 
   remotes:
-    - name: zephyr_site
+    - name: zephyr
       url-base: https://github.com/zephyrproject-rtos
-    - name: kabirz
-      url-base: https://github.com/kabirz
 
   projects:
     - name: zephyr
-      revision: app-main
+      revision: v4.4.2
       path: zephyr
       import:
         name-allowlist:

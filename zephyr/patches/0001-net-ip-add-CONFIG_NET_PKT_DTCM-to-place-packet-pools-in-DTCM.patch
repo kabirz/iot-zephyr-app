@@ -1,0 +1,216 @@
+From d29ef06cc3725a92fe007b9787f28ab369fab227 Mon Sep 17 00:00:00 2001
+From: kabirz <jxwazxzhp@126.com>
+Date: Fri, 6 Nov 2026 12:02:54 +0800
+Subject: [PATCH] net: ip: add CONFIG_NET_PKT_DTCM to place packet pools in
+ DTCM
+
+Add an option to place the rx/tx net_pkt slabs, the rx/tx net_buf
+pools and the net_context array in .dtcm_bss (zephyr,dtcm chosen
+node, e.g. STM32F4 CCM RAM), freeing the same amount of SRAM.
+
+DTCM is CPU-only (not DMA-accessible), so the option requires all
+network DMA access to be routed elsewhere.
+
+Squashed from upstream-branch commits 3806cddf293 and 9bc836ca791.
+---
+ subsys/net/ip/Kconfig        | 19 ++++++++
+ subsys/net/ip/net_context.c  |  8 ++++
+ subsys/net/ip/net_pkt.c      | 24 ++++++++++
+ subsys/net/ip/net_pkt_dtcm.h | 93 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 144 insertions(+)
+ create mode 100644 subsys/net/ip/net_pkt_dtcm.h
+
+diff --git a/subsys/net/ip/Kconfig b/subsys/net/ip/Kconfig
+index 322340a916c..6aee0d4f526 100644
+--- a/subsys/net/ip/Kconfig
++++ b/subsys/net/ip/Kconfig
+@@ -753,6 +753,25 @@ config NET_BUF_DATA_SIZE
+ 	help
+ 	  This value tells what is the fixed size of each network buffer.
+ 
++config NET_PKT_DTCM
++	bool "Place network packet buffers in DTCM"
++	depends on ARM && NET_BUF_FIXED_DATA_SIZE
++	help
++	  Place the rx/tx net_pkt slabs and the rx/tx net_buf pools
++	  (metadata and data) in the DTCM section (.dtcm_bss) as
++	  provided by the zephyr,dtcm chosen node (e.g. STM32 CCM RAM).
++	  This frees the same amount of SRAM for other uses.
++
++	  Uses .dtcm_bss (not noinit) so that arch_bss_zero() clears
++	  these pools on warm reboot (watchdog / soft reset).
++
++	  DTCM is only accessible by the CPU, not by DMA. This option may
++	  only be used when all network device drivers in the system use
++	  programmed I/O (no DMA), or when the driver copies data between
++	  its own DMA-safe buffers and the network buffers. Enabling it
++	  with a DMA-based driver will cause transfer errors / data
++	  corruption.
++
+ config NET_PKT_BUF_RX_DATA_POOL_SIZE
+ 	int "Size of the RX memory pool where buffers are allocated from"
+ 	default 4096 if NET_L2_ETHERNET
+diff --git a/subsys/net/ip/net_context.c b/subsys/net/ip/net_context.c
+index a70e11a0a4a..fbf9580f232 100644
+--- a/subsys/net/ip/net_context.c
++++ b/subsys/net/ip/net_context.c
+@@ -77,7 +77,15 @@ LOG_MODULE_REGISTER(net_ctx, CONFIG_NET_CONTEXT_LOG_LEVEL);
+ 
+ #define NET_MAX_CONTEXT CONFIG_NET_MAX_CONTEXTS
+ 
++#if defined(CONFIG_NET_PKT_DTCM)
++/* Context array in DTCM (.dtcm_noinit): entries are fully initialized
++ * on first use (net_context_init), noinit semantics are equivalent.
++ * See net_pkt_dtcm.h for the DTCM/DMA restriction. */
++#include "net_pkt_dtcm.h"
++NET_DEFINE_DTCM(struct net_context, contexts, NET_MAX_CONTEXT);
++#else
+ static struct net_context contexts[NET_MAX_CONTEXT];
++#endif
+ 
+ /* We need to lock the contexts array as these APIs are typically called
+  * from applications which are usually run in task context.
+diff --git a/subsys/net/ip/net_pkt.c b/subsys/net/ip/net_pkt.c
+index 3d8c9732b4c..a5ca13c5475 100644
+--- a/subsys/net/ip/net_pkt.c
++++ b/subsys/net/ip/net_pkt.c
+@@ -129,6 +129,29 @@ BUILD_ASSERT(CONFIG_NET_BUF_DATA_SIZE >= 96);
+ #error "Minimum value for CONFIG_NET_BUF_TX_COUNT is 1"
+ #endif
+ 
++#if defined(CONFIG_NET_PKT_DTCM)
++/*
++ * DTCM pool variants: see net_pkt_dtcm.h (DTCM not DMA-accessible,
++ * only valid with programmed-IO network drivers).
++ */
++#include "net_pkt_dtcm.h"
++
++NET_PKT_SLAB_DEFINE_DTCM(rx_pkts, CONFIG_NET_PKT_RX_COUNT);
++NET_PKT_SLAB_DEFINE_DTCM(tx_pkts, CONFIG_NET_PKT_TX_COUNT);
++
++#if defined(CONFIG_NET_BUF_FIXED_DATA_SIZE)
++
++NET_BUF_POOL_FIXED_DEFINE_DTCM(rx_bufs, CONFIG_NET_BUF_RX_COUNT, CONFIG_NET_BUF_DATA_SIZE,
++			       CONFIG_NET_PKT_BUF_USER_DATA_SIZE, NULL);
++NET_BUF_POOL_FIXED_DEFINE_DTCM(tx_bufs, CONFIG_NET_BUF_TX_COUNT, CONFIG_NET_BUF_DATA_SIZE,
++			       CONFIG_NET_PKT_BUF_USER_DATA_SIZE, NULL);
++
++#else /* !CONFIG_NET_BUF_FIXED_DATA_SIZE */
++#error "CONFIG_NET_PKT_DTCM requires CONFIG_NET_BUF_FIXED_DATA_SIZE"
++#endif /* CONFIG_NET_BUF_FIXED_DATA_SIZE */
++
++#else /* !CONFIG_NET_PKT_DTCM */
++
+ NET_PKT_SLAB_DEFINE(rx_pkts, CONFIG_NET_PKT_RX_COUNT);
+ NET_PKT_SLAB_DEFINE(tx_pkts, CONFIG_NET_PKT_TX_COUNT);
+ 
+@@ -150,6 +173,7 @@ NET_BUF_POOL_VAR_ALIGN_DEFINE(tx_bufs, CONFIG_NET_BUF_TX_COUNT,
+ 			      CONFIG_NET_PKT_BUF_TX_DATA_ALLOC_ALIGN_LEN);
+ 
+ #endif /* CONFIG_NET_BUF_FIXED_DATA_SIZE */
++#endif /* CONFIG_NET_PKT_DTCM */
+ 
+ /* Allocation tracking is only available if separately enabled */
+ #if defined(CONFIG_NET_DEBUG_NET_PKT_ALLOC)
+diff --git a/subsys/net/ip/net_pkt_dtcm.h b/subsys/net/ip/net_pkt_dtcm.h
+new file mode 100644
+index 00000000000..0f7a2a78612
+--- /dev/null
++++ b/subsys/net/ip/net_pkt_dtcm.h
+@@ -0,0 +1,93 @@
++/*
++ * Copyright (c) 2026 Kabirz.
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * DTCM variants of the network packet pool / context array definitions.
++ *
++ * When CONFIG_NET_PKT_DTCM is set, the rx/tx net_pkt slabs, the rx/tx
++ * net_buf pools (metadata + data) and the net_context array are placed
++ * in the .dtcm_bss section provided by the zephyr,dtcm chosen node
++ * (e.g. STM32F4 CCM RAM). This frees the same amount of SRAM.
++ *
++ * .dtcm_bss (not noinit) is used so that arch_bss_zero() clears these
++ * pools on warm reboot (watchdog / soft reset). Without this, stale
++ * net_pkt / net_context data in DTCM causes EADDRINUSE bind failures.
++ *
++ * Restriction: DTCM is only accessible by the CPU, not by DMA. Only
++ * valid when all network device drivers use programmed I/O. See
++ * CONFIG_NET_PKT_DTCM Kconfig help for details.
++ */
++
++#ifndef ZEPHYR_SUBSYS_NET_IP_NET_PKT_DTCM_H_
++#define ZEPHYR_SUBSYS_NET_IP_NET_PKT_DTCM_H_
++
++#include <zephyr/kernel.h>
++#include <zephyr/toolchain.h>
++#include <zephyr/net/net_pkt.h>
++#include <zephyr/net/net_context.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/** @cond INTERNAL_HIDDEN */
++
++#if defined(CONFIG_NET_PKT_DTCM)
++
++/* Upstream K_MEM_SLAB_DEFINE() hardcodes __noinit_named(); use the
++ * _IN_SECT form to point the slab buffer at .dtcm_bss while the
++ * k_mem_slab descriptor itself stays wherever STRUCT_SECTION_ITERABLE
++ * places it. */
++#define NET_PKT_SLAB_DEFINE_DTCM(name, count)					     \
++	K_MEM_SLAB_DEFINE_IN_SECT(name, __dtcm_bss_section,			     \
++				  sizeof(struct net_pkt), count, 4);		     \
++	NET_PKT_ALLOC_STATS_DEFINE(pkt_alloc_stats_##name, name)
++
++/* Mirror of _NET_BUF_ARRAY_DEFINE() from net_buf.h with the metadata
++ * array in .dtcm_bss. Keep in sync with upstream when updating. */
++#define _NET_BUF_ARRAY_DEFINE_IN_DTCM(_name, _count, _ud_size)			       \
++	struct _net_buf_##_name { uint8_t b[sizeof(struct net_buf)];		       \
++				  uint8_t ud[_ud_size]; } __net_buf_align;	       \
++	BUILD_ASSERT(_ud_size <= UINT8_MAX);					       \
++	BUILD_ASSERT(offsetof(struct net_buf, user_data) ==			       \
++		     offsetof(struct _net_buf_##_name, ud), "Invalid offset");	       \
++	BUILD_ASSERT(__alignof__(struct net_buf) ==				       \
++		     __alignof__(struct _net_buf_##_name), "Invalid alignment");      \
++	BUILD_ASSERT(sizeof(struct _net_buf_##_name) ==			       \
++		     ROUND_UP(sizeof(struct net_buf) + _ud_size, __alignof__(struct net_buf)), \
++		     "Size cannot be determined");				       \
++	static struct _net_buf_##_name _net_buf_##_name[_count] __dtcm_bss_section
++
++/* Mirror of NET_BUF_POOL_FIXED_DEFINE() from net_buf.h with the
++ * metadata array and the data array in .dtcm_bss. Keep in sync with
++ * upstream when updating. */
++#define NET_BUF_POOL_FIXED_DEFINE_DTCM(_name, _count, _data_size, _ud_size, _destroy)     \
++	_NET_BUF_ARRAY_DEFINE_IN_DTCM(_name, _count, _ud_size);		       \
++	static uint8_t __dtcm_bss_section					       \
++	net_buf_data_##_name[_count][_data_size] __net_buf_align;		       \
++	static const struct net_buf_pool_fixed net_buf_fixed_##_name = {	       \
++		.data_pool = (uint8_t *)net_buf_data_##_name,			       \
++	};									       \
++	static const struct net_buf_data_alloc net_buf_fixed_alloc_##_name = {       \
++		.cb = &net_buf_fixed_cb,					       \
++		.alloc_data = (void *)&net_buf_fixed_##_name,			       \
++		.max_alloc_size = _data_size,					       \
++	};									       \
++	static STRUCT_SECTION_ITERABLE(net_buf_pool, _name) =			       \
++		NET_BUF_POOL_INITIALIZER(_name, &net_buf_fixed_alloc_##_name,	       \
++					 _net_buf_##_name, _count, _ud_size,	       \
++					 _destroy)
++
++/* Array of plain objects placed in .dtcm_bss (zeroed on warm reboot). */
++#define NET_DEFINE_DTCM(_type, _name, _count)					       \
++	static _type __dtcm_bss_section _name[_count]
++
++#endif /* CONFIG_NET_PKT_DTCM */
++
++/** @endcond */
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* ZEPHYR_SUBSYS_NET_IP_NET_PKT_DTCM_H_ */
+-- 
+2.53.0
+

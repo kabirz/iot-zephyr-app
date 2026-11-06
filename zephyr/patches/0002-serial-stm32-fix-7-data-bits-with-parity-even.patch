@@ -1,0 +1,40 @@
+From 8203499498620e528a607a19b4698e7d6d13c92a Mon Sep 17 00:00:00 2001
+From: kabirz <jxwazxzhp@126.com>
+Date: Mon, 17 Aug 2026 19:37:32 +0800
+Subject: [PATCH] serial: stm32: fix 7 data bits with parity even
+
+When parity is enabled and data bits = 7, the hardware uses 8-bit width
+(7 data + 1 parity), not 9-bit. Correct the cfg2ll_databits logic and
+strip the parity bit when reading back in fifo_read_with_u8.
+
+Signed-off-by: kabirz <jxwazxzhp@126.com>
+---
+ drivers/serial/uart_stm32.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/serial/uart_stm32.c b/drivers/serial/uart_stm32.c
+index 39c3810354b..4153f298bf9 100644
+--- a/drivers/serial/uart_stm32.c
++++ b/drivers/serial/uart_stm32.c
+@@ -505,7 +505,7 @@ static inline uint32_t uart_stm32_cfg2ll_databits(enum uart_config_data_bits db,
+ 	case UART_CFG_DATA_BITS_8:
+ 	default:
+ #ifdef STM32_USART_DATAWIDTH_9_BIT
+-		if (p != UART_CFG_PARITY_NONE) {
++		if (p != UART_CFG_PARITY_NONE && db != UART_CFG_DATA_BITS_7) {
+ 			return STM32_USART_DATAWIDTH_9_BIT;
+ 		}
+ #endif
+@@ -1002,6 +1002,9 @@ static void fifo_read_with_u8(USART_TypeDef *usart, void *rx_data, const int off
+ 	uint8_t *data = (uint8_t *)rx_data;
+ 
+ 	data[offset] = LL_USART_ReceiveData8(usart);
++	if (LL_USART_GetParity(usart) != LL_USART_PARITY_NONE &&
++		LL_USART_GetDataWidth(usart) == LL_USART_DATAWIDTH_8B)
++		data[offset] &= 0x7f;
+ }
+ 
+ static int uart_stm32_fifo_read(const struct device *dev, uint8_t *rx_data, const int size)
+-- 
+2.53.0
+

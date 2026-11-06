@@ -13,7 +13,8 @@
 
 ## 仓库布局
 
-- `west.yml` — manifest，Zephyr v4.4.0，import 上游 mcuboot / cmsis / hal_stm32 / littlefs / mbedtls / zcbor 等。
+- `west.yml` — manifest，官方 Zephyr **v4.4.2**（`zephyr_site` remote），import 上游 mcuboot / cmsis / hal_stm32 / littlefs / mbedtls / zcbor 等。
+- `zephyr/patches.yml` + `zephyr/patches/` — 对官方 Zephyr 的本地补丁（`west patch apply` 打上，见「Zephyr 补丁」）。
 - `zephyr/module.yml` — 本仓库作为 Zephyr module 的声明（`name: iot_zephyr_app`，board_root / dts_root，build cmake/kconfig）。
 - `boards/` — board_root：`nrf24_f103rct6`（F103）、`io_edge_f407vet6`（F407）、`laser_f103ret7`（F103RET6 激光控制）。
 - `dts/` — dts_root，自定义 binding（`nordic,nrf24l01p.yaml`）。
@@ -26,6 +27,7 @@
 
 ```shell
 west update
+west patch apply     # 给官方 Zephyr 打本地补丁（west update 后必须执行一次）
 west build -b nrf24_f103rct6 applications/angle-handler --sysbuild
 west build -b nrf24_f103rct6 applications/n2e-gw --sysbuild
 west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild "-Dmcuboot_EXTRA_CONF_FILE=$PWD/applications/io-edge-hub/sysbuild/mcuboot.conf;$PWD/libs/can_fw_upgrade/mcuboot_can.conf"   # 让 MCUboot 支持 CAN 固件升级
@@ -37,6 +39,7 @@ west flash --domain angle-handler
 ## 关键约定
 
 - **module 入口**：`zephyr/module.yml`；根 `CMakeLists.txt` → `add_subdirectory(libs drivers)`；根 `Kconfig` → `rsource libs/Kconfig drivers/Kconfig`。
+- **Zephyr 补丁**：不维护 Zephyr fork，直接用官方 `v4.4.2` + `zephyr/patches/*.patch`（4 个：`NET_PKT_DTCM`、STM32 串口 7 数据位偶校验、`LOG_OUTPUT_TIMEZONE_OFFSET`、ARP 队列上限），由 Zephyr 自带的 `west patch` 命令管理（`patches.yml` 里 `path` 相对 `zephyr/patches/`，含 sha256 校验；改 patch 后需同步更新 sha256sum）。新增本地改动一律做成 patch，不要再 fork。`apply-command: git am` 使补丁落为**真实提交**（zephyr 树保持干净，`BUILD_VERSION` 显示 `v4.4.2-4-g<hash>`）。**`west patch apply` 非幂等**：重复执行会失败（并留下 `.git/rebase-apply` 残留），重打前先 `west patch clean`（其 `checkout-command` 会 `git am --abort` + `git reset --hard v4.4.2` 清场）。**升级 Zephyr 版本时**，`west.yml` 的 `revision` 与 `patches.yml` 的 `checkout-command` 里写死的 `v4.4.2` 要同步改。
 - **MCUboot 签名**：每个 app 自带 `boards/${BOARD}.pem`（RSA-2048），在 `sysbuild.conf` 用 `${APP_DIR}/boards/${BOARD}.pem` 引用。各 app 密钥独立、镜像互不通用。
 - **固件升级**：`libs/` 的 `can_fw_upgrade` / `udp_fw_upgrade` 由对应 `CONFIG_*_FW_UPGRADE` 控制；签名密钥哈希头由 `gen_keyhash.py` 在 configure 期生成。
 - **版本字符串**：`gen_gitver.py` 编译期注入 6 位 git commit hash（`FW_GIT_VERSION`），无 git 时 fallback `000000`。

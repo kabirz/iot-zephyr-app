@@ -1,0 +1,79 @@
+From c10e8eb4fb1f2412ce2115374332ae3a2a16022a Mon Sep 17 00:00:00 2001
+From: kabirz <jxwazxzhp@126.com>
+Date: Tue, 20 Oct 2026 22:11:43 +0800
+Subject: [PATCH] net: arp: cap packets queued per pending ARP entry
+
+Packets sent to an address whose ARP resolution is still pending are queued until resolution or ARP_REQUEST_TIMEOUT (2 s). The queue was unbounded (only duplicate packet pointers were filtered), so a peer that never answers ARP could hold every queued packet for the full timeout and exhaust the shared TX net_pkt/net_buf pools, starving unrelated TX users such as ICMP echo replies, ARP replies, UDP responses and DHCP.
+
+Signed-off-by: kabirz <jxwazxzhp@126.com>
+---
+ subsys/net/l2/ethernet/Kconfig | 12 ++++++++++++
+ subsys/net/l2/ethernet/arp.c   | 21 ++++++++++++++++++++-
+ 2 files changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/subsys/net/l2/ethernet/Kconfig b/subsys/net/l2/ethernet/Kconfig
+index 5cdffa0b5be..7d0035629bf 100644
+--- a/subsys/net/l2/ethernet/Kconfig
++++ b/subsys/net/l2/ethernet/Kconfig
+@@ -80,6 +80,18 @@ config NET_ARP_TABLE_SIZE
+ 	help
+ 	  Each entry in the ARP table consumes 48 bytes of memory.
+ 
++config NET_ARP_PENDING_QUEUE_LEN
++	int "Max packets queued per pending ARP entry"
++	depends on NET_ARP
++	default 3
++	help
++	  Packets sent to an address whose ARP resolution is still pending are
++	  queued until resolution or ARP_REQUEST_TIMEOUT (2s). Because every
++	  queued packet holds a TX net_pkt/net_buf from the shared pools, an
++	  unresponsive peer would otherwise drain the pools and starve all
++	  other TX users (ICMP echo replies, ARP replies, UDP). Packets
++	  beyond this limit are dropped with -ENOBUFS.
++
+ config NET_ARP_GRATUITOUS
+ 	bool "Support gratuitous ARP requests/replies."
+ 	depends on NET_ARP
+diff --git a/subsys/net/l2/ethernet/arp.c b/subsys/net/l2/ethernet/arp.c
+index 12cb9c4629c..215b1323e9c 100644
+--- a/subsys/net/l2/ethernet/arp.c
++++ b/subsys/net/l2/ethernet/arp.c
+@@ -12,6 +12,7 @@
+ LOG_MODULE_REGISTER(net_arp, CONFIG_NET_ARP_LOG_LEVEL);
+ 
+ #include <errno.h>
++#include <zephyr/sys/sflist.h>
+ #include <zephyr/net/net_core.h>
+ #include <zephyr/net/net_pkt.h>
+ #include <zephyr/net/net_if.h>
+@@ -441,8 +442,26 @@ int net_arp_prepare(struct net_pkt *pkt,
+ 			 * in the pending list and if so, resend the request, otherwise just
+ 			 * append the packet to the request fifo list.
+ 			 * Ensure the packet reference is incremented to account for the queue
+-			 * holding the reference.
++			 * holding the reference. The queue is capped so that a peer that never
++			 * answers ARP cannot exhaust the shared TX net_pkt pool: every queued
++			 * packet is held until ARP_REQUEST_TIMEOUT and an unbounded queue
++			 * starves other TX users (ICMP echo replies, ARP replies, UDP).
+ 			 */
++			size_t qlen = 0;
++
++			for (sys_sfnode_t *n =
++				     sys_sflist_peek_head(&entry->pending_queue._queue.data_q);
++			     n != NULL; n = sys_sflist_peek_next(n)) {
++				qlen++;
++			}
++
++			if (qlen >= CONFIG_NET_ARP_PENDING_QUEUE_LEN) {
++				NET_DBG("Pending ARP queue for %s full, dropping pkt %p",
++					net_sprint_ipv4_addr(addr), pkt);
++				k_mutex_unlock(&arp_mutex);
++				return -ENOBUFS;
++			}
++
+ 			pkt = net_pkt_ref(pkt);
+ 			if (k_queue_unique_append(&entry->pending_queue._queue, pkt)) {
+ 				NET_DBG("Pending ARP request for %s, queuing pkt %p",
+-- 
+2.53.0
+

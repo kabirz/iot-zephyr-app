@@ -17,9 +17,11 @@
 
 ```
 .
-├── west.yml                 # west manifest (Zephyr v4.4.0)
-├── zephyr/                  # 本仓库作为 Zephyr module 的声明
-│   └── module.yml
+├── west.yml                 # west manifest (官方 Zephyr v4.4.2)
+├── zephyr/                  # 本仓库作为 Zephyr module 的声明 + Zephyr 本地补丁
+│   ├── module.yml
+│   ├── patches.yml          # west patch 清单 (含 sha256)
+│   └── patches/             # 4 个对官方 Zephyr 的补丁
 ├── boards/                  # board_root: nrf24_f103rct6 / io_edge_f407vet6 / laser_f103ret7
 ├── dts/                     # dts_root: 自定义 binding
 ├── libs/                    # 固件升级库 (CAN/UDP) + 配置头生成脚本
@@ -45,6 +47,7 @@
 west init -m <this_git_url> iot-zephyr-app
 cd iot-zephyr-app
 west update
+west patch apply               # 给官方 Zephyr 打本地补丁 (west update 后必须执行)
 west package pip --install     # 安装 zephyr/requirements.txt
 ```
 

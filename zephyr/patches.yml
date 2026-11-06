@@ -1,0 +1,32 @@
+checkout-command: sh -c 'git am --abort >/dev/null 2>&1; git reset --hard v4.4.2'
+
+patches:
+  - path: 0001-net-ip-add-CONFIG_NET_PKT_DTCM-to-place-packet-pools-in-DTCM.patch
+    sha256sum: e13420e76c5ad3821410cc1367a33f2030edefc30cd731f64705a7bd1175895b
+    module: zephyr
+    author: kabirz
+    email: jxwazxzhp@126.com
+    date: 2026-11-06
+    apply-command: git am
+    comments: Squashed from fork commits 3806cddf293 and 9bc836ca791
+  - path: 0002-serial-stm32-fix-7-data-bits-with-parity-even.patch
+    sha256sum: 05c53bec1bda1e03ad182244e65a0e951b485397a7d50262542ed724ee9f5c5c
+    module: zephyr
+    author: kabirz
+    email: jxwazxzhp@126.com
+    date: 2026-08-17
+    apply-command: git am
+  - path: 0003-logging-add-LOG_OUTPUT_TIMEZONE_OFFSET-config-for-timestamp.patch
+    sha256sum: ecf4ad9a500d37d4bc4399c00a3babf43f7fd932178d8f18a4ee702a718f2a71
+    module: zephyr
+    author: kabirz
+    email: jxwazxzhp@126.com
+    date: 2026-08-19
+    apply-command: git am
+  - path: 0004-net-arp-cap-packets-queued-per-pending-ARP-entry.patch
+    sha256sum: d823ddfed4782808a2e40e8f82644815467d3bb6534c7b588ec3d30a5e24d063
+    module: zephyr
+    author: kabirz
+    email: jxwazxzhp@126.com
+    date: 2026-10-20
+    apply-command: git am

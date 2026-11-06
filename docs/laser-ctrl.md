@@ -18,8 +18,8 @@ west build -b laser_f103ret7 applications/laser-ctrl --sysbuild
 
 ## Zephyr 依赖
 
-- manifest：本仓库 `west.yml`（Zephyr v4.4.0 / `app-main` fork）
-- 串口 7 数据位 + 校验位的 STM32 修复已包含在该 fork（`serial: stm32: fix 7 data bits with parity even`），无需额外打补丁
+- manifest：本仓库 `west.yml` — 官方 Zephyr **v4.4.2**（不再维护 fork）
+- 本地差异通过 `zephyr/patches/` 的补丁提供（`west update` 后执行 `west patch apply`），其中包含本应用依赖的 STM32 串口 7 数据位 + 偶校验修复（`serial: stm32: fix 7 data bits with parity even`）
 
 ## 源码结构
 

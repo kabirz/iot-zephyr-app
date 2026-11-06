@@ -1,0 +1,60 @@
+From 72acf83cb11e09b28a3bffd05f4303916fe53954 Mon Sep 17 00:00:00 2001
+From: kabirz <jxwazxzhp@126.com>
+Date: Wed, 19 Aug 2026 10:17:40 +0800
+Subject: [PATCH] logging: add LOG_OUTPUT_TIMEZONE_OFFSET config for timestamp
+ timezone
+
+Add a new Kconfig option LOG_OUTPUT_TIMEZONE_OFFSET to apply timezone
+offset to log timestamps. The offset (in hours) is added to UTC time
+before formatting in DATE_TIMESTAMP and ISO8601_TIMESTAMP modes.
+
+Example: set CONFIG_LOG_OUTPUT_TIMEZONE_OFFSET=8 for UTC+8.
+---
+ subsys/logging/Kconfig.formatting | 8 ++++++++
+ subsys/logging/log_output.c       | 4 ++--
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/subsys/logging/Kconfig.formatting b/subsys/logging/Kconfig.formatting
+index e09ee05050b..23d0669df74 100644
+--- a/subsys/logging/Kconfig.formatting
++++ b/subsys/logging/Kconfig.formatting
+@@ -239,6 +239,14 @@ config LOG_OUTPUT_FORMAT_CUSTOM_TIMESTAMP
+ 
+ endchoice
+ 
++config LOG_OUTPUT_TIMEZONE_OFFSET
++	int "Timezone offset in hours from UTC"
++	range -12 14
++	default 0
++	help
++	  Timezone offset applied to log timestamps. For example, set to 8 for UTC+8.
++	  The offset is added to the UTC time from gmtime_r() to display local time.
++
+ config LOG_BACKEND_CRLF_NONE
+ 	bool "Prevent adding CR and LF in logger"
+ 	help
+diff --git a/subsys/logging/log_output.c b/subsys/logging/log_output.c
+index 2e591574f55..33b30a01996 100644
+--- a/subsys/logging/log_output.c
++++ b/subsys/logging/log_output.c
+@@ -209,7 +209,7 @@ static int timestamp_print(const struct log_output *output,
+ #if defined(CONFIG_POSIX_C_LANG_SUPPORT_R)
+ 			} else if (IS_ENABLED(CONFIG_LOG_OUTPUT_FORMAT_DATE_TIMESTAMP)) {
+ 				struct tm tm_timestamp = {0};
+-				time_t time_seconds = total_seconds;
++				time_t time_seconds = total_seconds + (CONFIG_LOG_OUTPUT_TIMEZONE_OFFSET * 3600);
+ 
+ 				gmtime_r(&time_seconds, &tm_timestamp);
+ #if defined(CONFIG_REQUIRES_FULL_LIBC)
+@@ -229,7 +229,7 @@ static int timestamp_print(const struct log_output *output,
+ #endif /* CONFIG_REQUIRES_FULL_LIBC */
+ 			} else if (IS_ENABLED(CONFIG_LOG_OUTPUT_FORMAT_ISO8601_TIMESTAMP)) {
+ 				struct tm tm_timestamp = {0};
+-				time_t time_seconds = total_seconds;
++				time_t time_seconds = total_seconds + (CONFIG_LOG_OUTPUT_TIMEZONE_OFFSET * 3600);
+ 
+ 				gmtime_r(&time_seconds, &tm_timestamp);
+ #if defined(CONFIG_REQUIRES_FULL_LIBC)
+-- 
+2.53.0
+
