@@ -140,6 +140,6 @@ n2e-gw/
   Kconfig                    -- 线程栈/优先级配置
   prj.conf                   -- 应用配置 (含网络栈)
   VERSION
-  CLAUDE.md
+  AGENTS.md
   README.md
 ```

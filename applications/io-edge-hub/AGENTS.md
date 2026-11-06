@@ -1,4 +1,4 @@
-# CLAUDE.md -- io-edge-hub
+# AGENTS.md -- io-edge-hub
 
 ## 项目愿景
 

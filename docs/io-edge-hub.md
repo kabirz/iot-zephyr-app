@@ -91,7 +91,7 @@
 ```
 ~/code/app/apps/                          # iot-zephyr-app 仓库根目录
 ├── CMakeLists.txt                        # 顶层 CMake
-├── CLAUDE.md                             # 仓库规范
+├── AGENTS.md                             # 仓库规范
 ├── libs/                                 # 共享库
 │   ├── CMakeLists.txt                    # 生成 fw_gitver.h / fw_keyhash.h
 │   ├── udp_fw_upgrade/                   # UDP 固件升级库 (端口 8600)
@@ -1588,8 +1588,8 @@ Web 服务不进 SYS_INIT (iface 未 up 时 bind/listen 行为未定义), 由 `m
 ```
 ~/code/app/apps/                             # iot-zephyr-app 仓库根目录
 ├── CMakeLists.txt                           # 顶层 CMake
-├── CLAUDE.md                                # 仓库规范
-├── west.yml                                 # West 依赖管理清单 (含 canopen-zephyr module, v3.5)
+├── AGENTS.md                                # 仓库规范
+├── west.yml                                 # West 依赖管理清单
 │
 ├── libs/                                    # 共享库 (已存在)
 │   ├── CMakeLists.txt                       # 生成 fw_gitver.h / fw_keyhash.h
@@ -1610,7 +1610,7 @@ Web 服务不进 SYS_INIT (iface 未 up 时 bind/listen 行为未定义), 由 `m
         ├── sysbuild.conf                    # Sysbuild 配置 (MCUboot SWAP_SCRATCH)
         ├── sysbuild/mcuboot.conf            # MCUboot 镜像配置 (BOOT_MAX_IMG_SECTORS 等)
         ├── VERSION                          # 版本号文件
-        ├── README.md / USER_GUIDE.md / CLAUDE.md / CHANGELOG.md
+        ├── README.md / USER_GUIDE.md / AGENTS.md / CHANGELOG.md
         │
         ├── boards/
         │   ├── io_edge_f407vet6.overlay     # 设备树覆盖 (W5500/ADC/RS485/DI/DO/LED/RTC)
@@ -2624,7 +2624,7 @@ cd tools && cmake . && make
 - 编译命令: `west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild` (建议 `--build-dir` 独立目录, 默认 `build/` 可能被其他应用占用)。
 - debug 镜像 ~261KB, release (`-DCONF_FILE=prj_release.conf`) ~142KB (slot0 上限 448KB, 余量充足)。
 - `LOG=n` (release) 时 `log_process()` / `log_set_timestamp_func()` 需 `#ifdef CONFIG_LOG` 保护。
-- 项目文档: `applications/io-edge-hub/` 下新增 `README.md` / `USER_GUIDE.md` / `CLAUDE.md`。
+- 项目文档: `applications/io-edge-hub/` 下新增 `README.md` / `USER_GUIDE.md` / `AGENTS.md`。
 
 ---
 
@@ -2678,7 +2678,6 @@ cd tools && cmake . && make
 | **src/ 目录重组** | `modbus/` 混装 IO 采样/历史/设置加载 | `modbus/` 只留 function/tcp/rtu; `dio.c`+`adc.c` → `io/`; `history.c` → `history/`; `init.c` → `settings/` | IO 采样/历史记录/参数加载并非 Modbus 功能, 按功能域拆分 (`git mv` 保留历史) |
 | **历史记录落盘** | §4.2 表述为 k_fifo + 系统工作队列 (2048B) | **专用工作队列** `hist_work_q` (4096B, §4.2 修正) | 独立于系统工作队列, LittleFS 写盘不阻塞 Modbus RAW ADU 异步处理; 2048 栈深度溢出 → double fault 静默复位 |
 | **HTTP 升级通道** | 仅 UDP + CAN 固件升级 | Web `/api/upgrade` 第三通道 (浏览器直传镜像 → slot1 + MCUboot 验签) | 运维便利; 与 UDP/CAN 共用 MCUboot 签名机制 |
-| **west manifest** | 无 CANopen | `west.yml` 新增 `canopen-zephyr` module (`modules/canopen-zephyr`, submodule CANopenNode v4) | 为 CANopen 业务预留 (Zephyr 4.4+ 移除内置 CANopen 集成) |
 | **寄存器写路径统一** | Modbus 回调 + UDP 直接改数组 | 新增公共入口 `io_write_holding`/`io_write_do_bit`/`io_read_holding` (init.h), Modbus/Web/Shell 全部经此 | 单一副作用路径, 多通道行为一致 (Web `web_cmd_exec_*` 与 shell `io reg` 均复用) |
 
 ---

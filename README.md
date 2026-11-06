@@ -28,8 +28,7 @@
 │   ├── n2e-gw/              # 网关应用
 │   └── io-edge-hub/         # IO 采集边缘节点 (F407VET6)
 ├── scripts/                 # west 自定义命令 (west archive)
-├── tools/                   # 辅助工具脚本
-└── .github/workflows/       # CI
+└── tools/                   # 辅助工具脚本
 ```
 
 ## 环境要求

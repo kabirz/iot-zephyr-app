@@ -1,4 +1,4 @@
-# CLAUDE.md -- angle-handler
+# AGENTS.md -- angle-handler
 
 ## 项目愿景
 

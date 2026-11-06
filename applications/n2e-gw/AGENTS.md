@@ -1,4 +1,4 @@
-# CLAUDE.md -- n2e-gw
+# AGENTS.md -- n2e-gw
 
 ## 项目愿景
 

@@ -19,27 +19,11 @@ manifest:
         name-allowlist:
           - cmsis_6
           - hal_stm32
-          - hal_renesas
-          - fatfs
           - littlefs
           - mbedtls
           - mcuboot
           - tf-psa-crypto
-          - lvgl
           - zcbor
-
-    - name: canopen
-      repo-path: canopen-zephyr
-      revision: 7e0a7f10c6aeb951ea82b2458611640351f41739
-      path: modules/canopen-zephyr
-      submodules:
-        - path: CANopenNode
-
-    - name: hal_gigadevice
-      revision: main
-      path: modules/hal/gigadevice
-      groups:
-        - hal
 
   self:
     path: apps
