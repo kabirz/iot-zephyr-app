@@ -1,0 +1,11 @@
+#
+# Copyright (c) 2025 kabirz
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+description: This is a representation of the spi laser.
+
+compatible: "spi,laser"
+
+include: [spi-device.yaml]

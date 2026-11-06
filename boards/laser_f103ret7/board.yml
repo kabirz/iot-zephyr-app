@@ -1,0 +1,6 @@
+board:
+  name: laser_f103ret7
+  full_name: laser f103ret7
+  vendor: st
+  socs:
+    - name: stm32f103xe

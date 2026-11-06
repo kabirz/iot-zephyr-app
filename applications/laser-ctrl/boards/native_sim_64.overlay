@@ -1,0 +1,23 @@
+/{
+	chosen {
+		zephyr,canbus = &can0;
+		zephyr,settings-partition = &storage_partition;
+	};
+	aliases {
+		laser-serial = &uart1;
+	};
+};
+
+&uart1 {
+	status = "okay";
+};
+
+&can0 {
+	status = "okay";
+	can-transceiver {
+		min-bitrate = <15000>;
+		max-bitrate = <1000000>;
+	};
+	host-interface = "vcan0";
+};
+

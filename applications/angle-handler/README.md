@@ -35,9 +35,6 @@
 # 标准构建（含 MCUBoot sysbuild）
 west build -b nrf24_f103rct6 . --sysbuild
 
-# 带 shell 和 imgmgr 调试工具
-west build -b nrf24_f103rct6 . --sysbuild -Dangle-handler_SNIPPET=imgmgr-shell
-
 # MCUboot 内置 CAN 固件升级 (bootloader 探测等待, 见 libs/can_fw_upgrade)
 # (在 apps 仓库根执行; mcuboot_EXTRA_CONF_FILE 会顶替 sysbuild 自动注入的
 #  sysbuild/mcuboot.conf, 两个片段必须一起列出)

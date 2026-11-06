@@ -1,0 +1,19 @@
+identifier: laser_f103ret7
+name: laser F103RET7 Board
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+ram: 64
+flash: 512
+supported:
+  - gpio
+  - i2c
+  - spi
+  - pwm
+  - watchdog
+  - adc
+  - counter
+  - usbd
+vendor: st

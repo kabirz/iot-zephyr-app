@@ -79,9 +79,6 @@ main() + SYS_INIT
 ```shell
 # 标准构建（带 MCUBoot sysbuild）
 west build -b nrf24_f103rct6 . --sysbuild
-
-# 带 shell 和 imgmgr snippet
-west build -b nrf24_f103rct6 . --sysbuild -Dangle-handler_SNIPPET=imgmgr-shell
 ```
 
 ### 烧录

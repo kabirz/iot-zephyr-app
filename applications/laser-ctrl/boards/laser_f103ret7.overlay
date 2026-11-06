@@ -1,0 +1,35 @@
+
+/{
+	chosen {
+		zephyr,canbus = &can1;
+	};
+	aliases {
+		laser-serial = &usart2;
+	};
+};
+
+&usart2 {
+	pinctrl-0 = <&usart2_tx_pa2 &usart2_rx_pa3>;
+	pinctrl-names = "default";
+	current-speed = <19200>;
+	status = "okay";
+};
+
+&can1 {
+	pinctrl-0 = <&can_rx_pa11 &can_tx_pa12>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&spi2 {
+	pinctrl-0 = <&spi2_sck_master_pb13 &spi2_miso_master_pb14 &spi2_mosi_master_pb15>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiob 12 GPIO_ACTIVE_LOW>;
+	status = "okay";
+	spi_laser_fpga: spi_laser_fpga@0 {
+		compatible = "spi,laser";
+		spi-max-frequency = <DT_FREQ_M(1)>;
+		reg = <0>;
+	};
+};
+

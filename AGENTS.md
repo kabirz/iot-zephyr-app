@@ -4,17 +4,18 @@
 
 ## 项目
 
-**iot-zephyr-app** — Zephyr RTOS west manifest 仓库，同时本身是一个 Zephyr module。包含三个应用、两块板子：
+**iot-zephyr-app** — Zephyr RTOS west manifest 仓库，同时本身是一个 Zephyr module。包含四个应用、三块板子：
 
 - `applications/angle-handler` — 激光测距手持控制器（角度采集 + OLED + CAN/nRF24 + OTA），STM32F103RCT6（板 `nrf24_f103rct6`）
 - `applications/n2e-gw` — 数据中转网关（nRF24 ↔ W5500 UDP），STM32F103RCT6（板 `nrf24_f103rct6`）
 - `applications/io-edge-hub` — 工业 IO 采集边缘网关（16DI/8DO/4AI + Modbus TCP/RTU + LittleFS/FTP + UDP+CAN 双通道固件升级 + MCUboot SWAP_SCRATCH），STM32F407VET6（板 `io_edge_f407vet6`）
+- `applications/laser-ctrl` — 激光测距设备主控（串口激光模块 + CAN 上报 + FPGA SPI 配置 + 外部 Flash + MCUboot OTA），STM32F103RET6（板 `laser_f103ret7`）
 
 ## 仓库布局
 
 - `west.yml` — manifest，Zephyr v4.4.0，import 上游 mcuboot / cmsis / hal_stm32 / littlefs / mbedtls / zcbor 等。
 - `zephyr/module.yml` — 本仓库作为 Zephyr module 的声明（`name: iot_zephyr_app`，board_root / dts_root，build cmake/kconfig）。
-- `boards/` — board_root：`nrf24_f103rct6`（F103）、`io_edge_f407vet6`（F407）。
+- `boards/` — board_root：`nrf24_f103rct6`（F103）、`io_edge_f407vet6`（F407）、`laser_f103ret7`（F103RET6 激光控制）。
 - `dts/` — dts_root，自定义 binding（`nordic,nrf24l01p.yaml`）。
 - `libs/` — 固件升级库（`can_fw_upgrade`、`udp_fw_upgrade`）+ 配置头生成（`gen_gitver.py`、`gen_keyhash.py`）。**只有一个顶层 `CMakeLists.txt`**，子模块源码直接在此用 `zephyr_sources_ifdef` / `zephyr_include_directories_ifdef` 汇总。
 - `drivers/` — 自定义驱动（`nrf24l01p`）。
@@ -28,6 +29,7 @@ west update
 west build -b nrf24_f103rct6 applications/angle-handler --sysbuild
 west build -b nrf24_f103rct6 applications/n2e-gw --sysbuild
 west build -b io_edge_f407vet6 applications/io-edge-hub --sysbuild "-Dmcuboot_EXTRA_CONF_FILE=$PWD/applications/io-edge-hub/sysbuild/mcuboot.conf;$PWD/libs/can_fw_upgrade/mcuboot_can.conf"   # 让 MCUboot 支持 CAN 固件升级
+west build -b laser_f103ret7 applications/laser-ctrl --sysbuild
 west archive --no-rebuild -o angle-handler
 west flash --domain angle-handler
 ```
